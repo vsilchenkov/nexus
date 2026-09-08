@@ -60,6 +60,10 @@ const nodeColumns = `
 	circuit_breaker_threshold, circuit_breaker_cooldown_sec,
 	async_ack_spec, group_id`
 
+// nodeGroupFKConstraint — имя FK nodes.group_id → node_groups.id (§99). Задано
+// явно в миграции 0042.
+const nodeGroupFKConstraint = "nodes_group_id_fkey"
+
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
 	return r.scan(row)
@@ -371,6 +375,12 @@ INSERT INTO nodes (
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return domain.ErrNodeAlreadyExists
 		}
+		// §99: группу удалили между открытием формы и сохранением. Это ошибка
+		// ЗНАЧЕНИЯ ПОЛЯ (чинится выбором другой группы), а не сбой сервера, —
+		// иначе оператор получил бы «внутреннюю ошибку» без единой подсказки.
+		if isFKViolationOn(err, nodeGroupFKConstraint) {
+			return domain.ErrNodeGroupNotFound
+		}
 		return fmt.Errorf("create node: %w", err)
 	}
 	return nil
@@ -456,6 +466,9 @@ RETURNING updated_at`
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return domain.ErrNodeAlreadyExists
+		}
+		if isFKViolationOn(err, nodeGroupFKConstraint) {
+			return domain.ErrNodeGroupNotFound
 		}
 		return fmt.Errorf("update node: %w", err)
 	}

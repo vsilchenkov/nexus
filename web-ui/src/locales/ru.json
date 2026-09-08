@@ -130,7 +130,8 @@
       "all_statuses": "Все статусы",
       "group": "Группа",
       "all_groups": "Все группы",
-      "no_group": "Без группы"
+      "no_group": "Без группы",
+      "group_gone": "Группа удалена"
     },
     "group": { "count": "узлов: {{count}}" },
     "view": { "table": "Таблица", "cards": "Карточки" },

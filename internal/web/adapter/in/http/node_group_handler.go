@@ -201,6 +201,8 @@ func (h *NodeGroupHandler) replyDomainError(c *gin.Context, err error, op string
 		h.replyCode(c, http.StatusConflict, "node_group.already_exists")
 	case errors.Is(err, domain.ErrNodeGroupInUse):
 		h.replyCode(c, http.StatusConflict, "node_group.in_use")
+	case errors.Is(err, domain.ErrNodeGroupTooManyToReorder):
+		h.replyCode(c, http.StatusConflict, "node_group.too_many_to_reorder")
 	default:
 		h.replyServerError(c, err, op)
 	}

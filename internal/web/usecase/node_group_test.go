@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -293,6 +294,27 @@ func TestNodeGroupUC_Move_Invalid(t *testing.T) {
 	assert.ErrorIs(t, uc.Move(ctx, SystemActor(), "нет-такой", MoveUp),
 		domain.ErrNodeGroupNotFound)
 	assert.Empty(t, repo.reorderCalls)
+}
+
+// TestNodeGroupUC_Move_CatalogTooLarge (ревизия §99): Move переприсваивает
+// порядок ВСЕМ группам, поэтому читает справочник целиком. Если он перерос
+// лимит чтения, сдвиг тронул бы только начало, а хвост остался бы со старой
+// шкалой и перемешался. Отказ честнее молчаливой перетасовки.
+func TestNodeGroupUC_Move_CatalogTooLarge(t *testing.T) {
+	t.Parallel()
+	repo := newMemNodeGroupRepo()
+	uc := newNodeGroupUC(repo)
+	ctx := context.Background()
+
+	names := make([]string, 0, maxGroupsForReorder)
+	for i := range maxGroupsForReorder {
+		names = append(names, fmt.Sprintf("Группа %04d", i))
+	}
+	gs := seedGroups(t, uc, names...)
+
+	err := uc.Move(ctx, SystemActor(), gs[len(gs)-1].ID, MoveUp)
+	assert.ErrorIs(t, err, domain.ErrNodeGroupTooManyToReorder)
+	assert.Empty(t, repo.reorderCalls, "порядок не должен переписываться частично")
 }
 
 func listNames(t *testing.T, uc *NodeGroupUsecase) []string {

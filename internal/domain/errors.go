@@ -200,6 +200,7 @@ var (
 	ErrNodeGroupSortOrderRange    = errors.New("domain: node group sort_order must be 0..100000")
 	ErrNodeGroupInUse             = errors.New("domain: node group is used by nodes and cannot be deleted")
 	ErrNodeGroupInvalidDirection  = errors.New("domain: node group move direction must be up or down")
+	ErrNodeGroupTooManyToReorder  = errors.New("domain: too many node groups to reorder")
 
 	// §95: справочник маскирования логов узлов (log_mask_patterns).
 	ErrLogMaskNotFound          = errors.New("domain: log mask pattern not found")

@@ -130,7 +130,8 @@
       "all_statuses": "All statuses",
       "group": "Group",
       "all_groups": "All groups",
-      "no_group": "No group"
+      "no_group": "No group",
+      "group_gone": "Group deleted"
     },
     "group": { "count": "{{count}} node(s)" },
     "view": { "table": "Table", "cards": "Cards" },

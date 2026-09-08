@@ -120,6 +120,22 @@ describe("GroupField", () => {
     expect(screen.queryByText("node.group_combo.create")).toBeNull();
   });
 
+  // Создание из комбобокса — та самая ветка, ради которой POST сделан
+  // идемпотентным: пользователь не разбирает конфликты, а получает группу.
+  it("создание из списка шлёт POST и сразу выбирает созданную группу", async () => {
+    apiGet.mockResolvedValue({ items: [] });
+    apiPost.mockResolvedValue(group("g-new", "Новая"));
+    const onChange = renderField("");
+    const input = await openDropdown();
+    fireEvent.change(input, { target: { value: "  Новая  " } });
+    fireEvent.click(await screen.findByText("node.group_combo.create"));
+
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith("/api/node-groups", { name: "Новая" }),
+    );
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith("g-new"));
+  });
+
   it("менеджеру предлагается создать группу с введённым именем", async () => {
     apiGet.mockResolvedValue({ items: [] });
     renderField("");

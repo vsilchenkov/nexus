@@ -280,6 +280,29 @@ describe("Overview: группировка узлов (§99.5)", () => {
     expect(groupHeaders()).toHaveLength(0);
   });
 
+  // Ревизия §99: без опции-заглушки браузер показал бы в селекте первую опцию
+  // («Все группы»), тогда как фильтр продолжает действовать и список пуст —
+  // экран читался бы как сломанный.
+  it("фильтр на удалённую группу честно называет причину пустого списка", async () => {
+    renderOverview("/?group=g-gone");
+    await waitFor(() => expect(screen.getByText("overview.filter.group_gone")).toBeInTheDocument());
+
+    const select = screen.getByLabelText("overview.filter.group") as HTMLSelectElement;
+    expect(select.value).toBe("g-gone");
+    expect(select.selectedOptions[0].textContent).toBe("overview.filter.group_gone");
+    // Список действительно пуст — фильтр не сброшен молча.
+    expect(pathOrder()).toHaveLength(0);
+  });
+
+  it("у существующей группы заглушки нет — селект показывает её имя", async () => {
+    renderOverview("/?group=g1");
+    await waitFor(() => expect(pathOrder()).toEqual(["erp-a", "erp-b", "erp-c"]));
+
+    const select = screen.getByLabelText("overview.filter.group") as HTMLSelectElement;
+    expect(select.selectedOptions[0].textContent).toBe("1С Обмен");
+    expect(screen.queryByText("overview.filter.group_gone")).toBeNull();
+  });
+
   // Гонка: группу удалили в соседней вкладке. Узел важнее своей метки (§99.9).
   it("узел со ссылкой на исчезнувшую группу показывается без группы", async () => {
     groups = [grp("g2", "Маркетплейсы", 20)];

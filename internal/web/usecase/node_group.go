@@ -18,6 +18,13 @@ const (
 	MoveDown MoveDirection = "down"
 )
 
+// maxGroupsForReorder — потолок справочника, при котором сдвиг стрелками ещё
+// корректен. Move переприсваивает порядок ВСЕМ группам, поэтому обязан прочитать
+// их все; читать страницами нельзя (хвост сохранил бы старую шкалу и
+// перемешался бы). Справочник групп по природе небольшой — десятки записей, — и
+// тысяча выбрана как заведомо недостижимый в эксплуатации предел.
+const maxGroupsForReorder = 1000
+
 // NodeGroupUsecase — справочник групп узлов (§99): управление из Настроек и
 // идемпотентное создание из комбобокса формы узла.
 type NodeGroupUsecase struct {
@@ -136,12 +143,21 @@ func (u *NodeGroupUsecase) Move(ctx context.Context, actor Actor, id string, dir
 	if dir != MoveUp && dir != MoveDown {
 		return domain.ErrNodeGroupInvalidDirection
 	}
-	// Лимит 0 — весь справочник: порядок переприсваивается целиком, и работать
-	// с его частью нельзя (позиции за пределами страницы получили бы чужие
-	// значения).
-	groups, err := u.repo.List(ctx, "", 0)
+	// Порядок переприсваивается ЦЕЛИКОМ, поэтому читать справочник страницами
+	// нельзя: группы за пределами страницы сохранили бы старые sort_order и
+	// перемешались бы с только что переприсвоенными. Лимит задан явно и с
+	// запасом — дефолт репозитория (200) для этой операции не годится, он
+	// рассчитан на выдачу списка, а не на перестроение.
+	groups, err := u.repo.List(ctx, "", maxGroupsForReorder)
 	if err != nil {
 		return err
+	}
+	// Справочник перерос лимит: сдвиг тронул бы только его начало, а хвост
+	// остался бы со старой шкалой. Отказ честнее молчаливой перетасовки.
+	if len(groups) >= maxGroupsForReorder {
+		u.logger.Error("node group move rejected: catalog exceeds reorder limit",
+			u.logger.Int("limit", maxGroupsForReorder))
+		return domain.ErrNodeGroupTooManyToReorder
 	}
 	idx := -1
 	for i, g := range groups {

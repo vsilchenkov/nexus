@@ -46,6 +46,11 @@ var nodeValidationErrors = []nodeFieldError{
 	{domain.ErrNodeWebhookSigHeaderRequired, "node.validation.webhook_sig_header_required", "webhook_signature_header"},
 	{domain.ErrNodeWebhookSigSecretRequired, "node.validation.webhook_sig_secret_required", "incoming_auth_credentials"},
 	{domain.ErrNodeInvalidTemplateID, "node.validation.template_id", "clickhouse_template_id"},
+	// §99: ссылка на несуществующую группу — ошибка поля «Группа», а не 500.
+	// Приходит двумя путями: из домена (значение не UUID) и из PG (FK 23503,
+	// группу удалили между открытием формы и сохранением).
+	{domain.ErrNodeInvalidGroupID, "node.validation.group_id", "group_id"},
+	{domain.ErrNodeGroupNotFound, "node.validation.group_id", "group_id"},
 	{domain.ErrNodeExternalTableTemplateConflict, "node.validation.external_table_conflict", "clickhouse_template_id"},
 	{domain.ErrNodeLogsNotConfigured, "node.validation.logs_not_configured", "clickhouse_table"},
 	{domain.ErrNodeClickHouseTableInvalid, "node.validation.clickhouse_table_format", "clickhouse_table"},

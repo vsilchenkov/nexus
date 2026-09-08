@@ -619,6 +619,14 @@ export default function Overview() {
   // Групп нет вовсе (или ни один видимый узел не сгруппирован) → плоский список,
   // как до §99: одинокая безымянная секция добавила бы разметку ни о чём.
   const grouped = hasGroupedSections(sections);
+  // Фильтр ссылается на группу, которой в справочнике уже нет. Справочник
+  // должен быть ЗАГРУЖЕН — пока он едет, любой id «неизвестен», и подставлять
+  // пункт «группа удалена» было бы враньём в другую сторону.
+  const unknownGroupFilter =
+    groupsQ.isSuccess &&
+    groupFilter !== "" &&
+    groupFilter !== GROUP_NONE &&
+    !groups.some((g) => g.id === groupFilter);
 
   // statusFilterPending — фильтр по статусу выбран, но метрики, из которых
   // статус выводится, ещё не пришли. В сквозном режиме это окно длится до
@@ -766,6 +774,14 @@ export default function Overview() {
                 {g.name}
               </option>
             ))}
+            {/* Фильтр указывает на группу, которой в справочнике нет (пришли по
+                ссылке, группу удалили в соседней вкладке). Без этой опции
+                браузер показал бы первую — «Все группы», — тогда как фильтр
+                продолжает действовать и список пуст: экран читался бы как
+                сломанный. Пункт называет причину честно. */}
+            {unknownGroupFilter && (
+              <option value={groupFilter}>{t("overview.filter.group_gone")}</option>
+            )}
           </Select>
         )}
         <Seg
@@ -871,7 +887,6 @@ export default function Overview() {
         (view === "table" ? (
           <NodeTable
             sections={sections}
-            grouped={grouped}
             collapsed={collapsed}
             onToggleGroup={toggleGroup}
             throughput={throughput}
@@ -962,7 +977,6 @@ function useStatus() {
 
 function NodeTable({
   sections,
-  grouped,
   collapsed,
   onToggleGroup,
   throughput,
@@ -974,9 +988,6 @@ function NodeTable({
   // sections — узлы, разложенные по группам (§99.5). Секция без группы всегда
   // первая и заголовка не имеет.
   sections: NodeSection[];
-  // grouped — есть ли хоть одна группа: без них список рендерится плоским, как
-  // до §99.
-  grouped: boolean;
   collapsed: Set<string>;
   onToggleGroup: (id: string) => void;
   throughput: Map<string, Throughput>;
@@ -995,8 +1006,9 @@ function NodeTable({
   const navigate = useNavigate();
   // colSpan заголовка группы обязан совпадать с числом колонок, иначе строка
   // схлопнется в первую ячейку. Колонок семь, плюс «Команда» в сквозном режиме.
+  // Флаг «есть ли группы» таблице не нужен: заголовок рисуется у секции с
+  // группой, а без групп секция ровно одна и безымянная — разметка та же.
   const colSpan = teamNames ? 8 : 7;
-  void grouped; // раскладка таблицы одинакова с группами и без них
   return (
     <Card className="overflow-hidden p-0">
       <div className="overflow-x-auto">

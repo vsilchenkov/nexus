@@ -251,3 +251,53 @@ func groupNames(gs []*domain.NodeGroup) []string {
 	}
 	return out
 }
+
+// TestNodeGroup_Repo_NodeWithMissingGroup: узел ссылается на группу, которой
+// нет. Сценарий не выдуманный: оператор открыл форму, коллега удалил пустую
+// группу в соседней вкладке, оператор сохраняет.
+//
+// Ревизия §99: до правки FK-нарушение уезжало в fmt.Errorf → 500 «внутренняя
+// ошибка», и починить форму по такому ответу было нечем. Теперь это доменная
+// ошибка, которую handler показывает у поля «Группа».
+func TestNodeGroup_Repo_NodeWithMissingGroup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	logger := logging.NewNoop()
+	cipher, _ := crypto.NewCipher(testEncryptionKey)
+	repo := pgrepo.NewNodeGroupRepoPg(pool, logger)
+	nodeRepo := pgrepo.NewNodeRepoPg(pool, cipher, logger)
+	teamID := resolveDefaultTeamID(t, ctx, pool)
+
+	const ghost = "8f2c1a94-7d31-4b0e-9a11-2c3d4e5f6071"
+
+	// Create с несуществующей группой.
+	n := &domain.Node{Path: "ghost/create", RootMethod: domain.RootMethodRequest, TargetURL: "https://example.com"}
+	n.SetDefaults()
+	n.TeamID = teamID
+	n.GroupID = ghost
+	if err := nodeRepo.Create(ctx, n); !errors.Is(err, domain.ErrNodeGroupNotFound) {
+		t.Fatalf("create with missing group err = %v, want ErrNodeGroupNotFound", err)
+	}
+
+	// Update существующего узла на несуществующую группу.
+	live := makeNodeInGroup(t, ctx, nodeRepo, teamID, "ghost/update", "")
+	live.GroupID = ghost
+	if err := nodeRepo.Update(ctx, live); !errors.Is(err, domain.ErrNodeGroupNotFound) {
+		t.Fatalf("update with missing group err = %v, want ErrNodeGroupNotFound", err)
+	}
+
+	// Контроль: та же операция с РЕАЛЬНОЙ группой проходит — значит ошибка выше
+	// приходит именно от FK группы, а не от любого другого ограничения узла.
+	g := &domain.NodeGroup{Name: "Живая", CreatedBy: "admin"}
+	if err := repo.Create(ctx, g); err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	live.GroupID = g.ID
+	if err := nodeRepo.Update(ctx, live); err != nil {
+		t.Fatalf("update with existing group: %v", err)
+	}
+}

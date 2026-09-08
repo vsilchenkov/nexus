@@ -52,7 +52,12 @@ CREATE INDEX node_groups_order_idx ON node_groups (sort_order, name);
 -- ON DELETE RESTRICT — второй уровень защиты к guard-проверке usecase
 -- (usage_count > 0 → ErrNodeGroupInUse): удалить используемую группу не даст и
 -- СУБД, даже если запись создана в обход usecase.
-ALTER TABLE nodes ADD COLUMN group_id UUID NULL REFERENCES node_groups(id) ON DELETE RESTRICT;
+-- Имя ограничения задано ЯВНО, а не отдано автогенерации: репозиторий узла
+-- отличает по нему «сослались на несуществующую группу» от прочих нарушений FK
+-- (у nodes их три: root_method, team_id, group_id) и превращает 23503 в
+-- понятную ошибку поля формы вместо 500.
+ALTER TABLE nodes ADD COLUMN group_id UUID NULL
+    CONSTRAINT nodes_group_id_fkey REFERENCES node_groups(id) ON DELETE RESTRICT;
 
 -- Под счётчик использования on-read (COUNT(*) FROM nodes WHERE group_id = ...)
 -- и под группировку списка. Частичный: узлов без группы может быть большинство,

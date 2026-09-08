@@ -5,15 +5,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NodeGroupsPanel } from "./NodeGroups";
 import { type NodeGroup } from "../../api/client";
 
-const { apiGet, apiPost, apiDel } = vi.hoisted(() => ({
+const { apiGet, apiPost, apiPatch, apiDel } = vi.hoisted(() => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  apiPatch: vi.fn(),
   apiDel: vi.fn(),
 }));
 
 vi.mock("../../api/client", async () => {
   const actual = await vi.importActual<typeof import("../../api/client")>("../../api/client");
-  return { ...actual, api: { get: apiGet, post: apiPost, patch: vi.fn(), del: apiDel } };
+  return { ...actual, api: { get: apiGet, post: apiPost, patch: apiPatch, del: apiDel } };
 });
 
 vi.mock("react-i18next", () => ({
@@ -62,6 +63,7 @@ describe("NodeGroupsPanel", () => {
   beforeEach(() => {
     apiGet.mockReset().mockResolvedValue({ items: GROUPS });
     apiPost.mockReset().mockResolvedValue(undefined);
+    apiPatch.mockReset().mockResolvedValue(undefined);
     apiDel.mockReset().mockResolvedValue(undefined);
   });
 
@@ -137,6 +139,27 @@ describe("NodeGroupsPanel", () => {
         name: "Новая",
         description: "описание",
         sort_order: 40,
+      }),
+    );
+  });
+
+  // Правка ИСПОЛЬЗУЕМОЙ группы — отличие от заголовков §24, где имя такой
+  // записи заблокировано. Поле обязано быть доступным, а PATCH — уходить.
+  it("переименовывает используемую группу", async () => {
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("1С Обмен")).toBeInTheDocument());
+
+    fireEvent.click(within(rowOf("1С Обмен")).getByLabelText("common.edit"));
+    const name = screen.getAllByRole("textbox")[0] as HTMLInputElement;
+    expect(name).not.toBeDisabled();
+    fireEvent.change(name, { target: { value: "1С Обмен (новый)" } });
+    fireEvent.click(screen.getByText("common.save"));
+
+    await waitFor(() =>
+      expect(apiPatch).toHaveBeenCalledWith("/api/node-groups/g1", {
+        name: "1С Обмен (новый)",
+        description: "",
+        sort_order: 10,
       }),
     );
   });
