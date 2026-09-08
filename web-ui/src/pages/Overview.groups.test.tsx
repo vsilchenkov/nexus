@@ -92,6 +92,8 @@ function grp(id: string, name: string, order: number) {
 
 // Справочник приходит отсортированным сервером: g1 (10), затем g2 (20).
 let groups = [grp("g1", "1С Обмен", 10), grp("g2", "Маркетплейсы", 20)];
+// Список узлов «сервера» — тесты подменяют его между прогонами.
+let nodesList = NODES;
 
 type Row = { node_id: string; in: number; out: number; errors: number; last_outcome: string };
 let metrics: Row[] = [];
@@ -121,7 +123,7 @@ function mockServer() {
         ],
       });
     }
-    if (url === "/api/nodes") return Promise.resolve({ items: NODES });
+    if (url === "/api/nodes") return Promise.resolve({ items: nodesList });
     if (url === "/api/node-groups") return Promise.resolve({ items: groups });
     if (url === "/api/metrics/overview") {
       return Promise.resolve({
@@ -196,6 +198,7 @@ describe("Overview: группировка узлов (§99.5)", () => {
     localStorage.clear();
     sessionStorage.clear();
     groups = [grp("g1", "1С Обмен", 10), grp("g2", "Маркетплейсы", 20)];
+    nodesList = NODES;
     metrics = NODES.map((n) => ok(n.id, 10));
     mockServer();
   });
@@ -278,6 +281,57 @@ describe("Overview: группировка узлов (§99.5)", () => {
     await waitForList();
     await waitFor(() => expect(pathOrder()).toHaveLength(6));
     expect(groupHeaders()).toHaveLength(0);
+  });
+
+  // §99.5: справочник глобальный, и группа, которой в этой команде никто не
+  // пользуется, предлагала бы выбор, заведомо дающий пустой список.
+  it("в фильтре только группы, используемые узлами скоупа", async () => {
+    groups = [
+      grp("g1", "1С Обмен", 10),
+      grp("g2", "Маркетплейсы", 20),
+      grp("g-unused", "Чужая команда", 30),
+    ];
+    renderOverview();
+    await waitForList();
+    await waitFor(() =>
+      expect(screen.getByLabelText("overview.filter.group")).toBeInTheDocument(),
+    );
+
+    const options = [...screen.getByLabelText("overview.filter.group").querySelectorAll("option")]
+      .map((o) => o.textContent);
+    expect(options).toEqual([
+      "overview.filter.all_groups",
+      "overview.filter.no_group",
+      "1С Обмен",
+      "Маркетплейсы",
+    ]);
+    expect(options).not.toContain("Чужая команда");
+  });
+
+  // Иначе выбор группы схлопнул бы список опций до неё одной, и перейти к
+  // другой группе стало бы нельзя.
+  it("выбор группы не сокращает набор опций", async () => {
+    renderOverview("/?group=g1");
+    await waitForList();
+    await waitFor(() => expect(pathOrder()).toEqual(["erp-a", "erp-b", "erp-c"]));
+
+    const options = [...screen.getByLabelText("overview.filter.group").querySelectorAll("option")]
+      .map((o) => o.textContent);
+    expect(options).toContain("Маркетплейсы");
+  });
+
+  it("все узлы в группах — пункта «Без группы» нет", async () => {
+    nodesList = NODES.filter((n) => n.group_id);
+    renderOverview();
+    await waitForList();
+    await waitFor(() =>
+      expect(screen.getByLabelText("overview.filter.group")).toBeInTheDocument(),
+    );
+
+    const options = [...screen.getByLabelText("overview.filter.group").querySelectorAll("option")]
+      .map((o) => o.textContent);
+    expect(options).not.toContain("overview.filter.no_group");
+    expect(options).toContain("1С Обмен");
   });
 
   // Ревизия §99: без опции-заглушки браузер показал бы в селекте первую опцию

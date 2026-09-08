@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { groupNodes, hasGroupedSections, loadCollapsed, saveCollapsed } from "./nodeGroups";
+import {
+  groupNodes,
+  hasGroupedSections,
+  hasUngroupedNodes,
+  loadCollapsed,
+  saveCollapsed,
+  usedGroups,
+} from "./nodeGroups";
 import { type Node, type NodeGroup } from "../api/client";
 
 function node(id: string, groupID?: string): Node {
@@ -76,6 +83,32 @@ describe("groupNodes", () => {
   it("секция без группы отсутствует, если все узлы сгруппированы", () => {
     const sections = groupNodes([node("a", "g1")], GROUPS);
     expect(sections.every((s) => s.group !== null)).toBe(true);
+  });
+});
+
+describe("usedGroups", () => {
+  it("оставляет только группы, встречающиеся у узлов, в порядке справочника", () => {
+    // Узлы намеренно идут «третья группа, первая» — порядок берётся из
+    // справочника, а не из порядка появления.
+    const used = usedGroups([node("c", "g3"), node("a", "g1"), node("x")], GROUPS);
+    expect(used.map((g) => g.id)).toEqual(["g1", "g3"]);
+  });
+
+  it("узлов нет — ни одной группы (селект фильтра прячется целиком)", () => {
+    expect(usedGroups([], GROUPS)).toEqual([]);
+    expect(usedGroups([node("a"), node("b")], GROUPS)).toEqual([]);
+  });
+
+  it("ссылка на группу вне справочника не добавляет пункт", () => {
+    expect(usedGroups([node("a", "gone")], GROUPS)).toEqual([]);
+  });
+});
+
+describe("hasUngroupedNodes", () => {
+  it("true, только когда есть узел без группы", () => {
+    expect(hasUngroupedNodes([node("a", "g1"), node("b")])).toBe(true);
+    expect(hasUngroupedNodes([node("a", "g1")])).toBe(false);
+    expect(hasUngroupedNodes([])).toBe(false);
   });
 });
 

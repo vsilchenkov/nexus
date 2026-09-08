@@ -51,8 +51,10 @@ import {
 import {
   groupNodes,
   hasGroupedSections,
+  hasUngroupedNodes,
   loadCollapsed,
   saveCollapsed,
+  usedGroups,
   type NodeSection,
 } from "../lib/nodeGroups";
 import { cn } from "../lib/cn";
@@ -628,6 +630,30 @@ export default function Overview() {
     groupFilter !== GROUP_NONE &&
     !groups.some((g) => g.id === groupFilter);
 
+  // §99.5: в фильтре — только группы, реально используемые узлами ТЕКУЩЕГО
+  // скоупа (в сквозном режиме §86 — узлами всех команд, потому что там в
+  // nodesQ приезжают именно они). Справочник глобальный, и неиспользуемые
+  // группы предлагали бы выбор, заведомо дающий пустой список.
+  //
+  // Считаем по nodesQ.data (до клиентских фильтров метод/статус/группа), а не
+  // по `nodes`: иначе выбор группы оставил бы в селекте её одну и вернуться к
+  // другой группе было бы нельзя.
+  const scopeNodes = useMemo(() => nodesQ.data?.items ?? [], [nodesQ.data]);
+  const filterGroups = useMemo(() => {
+    const used = usedGroups(scopeNodes, groups);
+    // Выбранная группа остаётся в списке, даже если её узлов сейчас не видно
+    // (например, сузил поиск): без неё селект показал бы чужой пункт, а фильтр
+    // продолжал бы действовать.
+    if (groupFilter && groupFilter !== GROUP_NONE && !used.some((g) => g.id === groupFilter)) {
+      const selected = groups.find((g) => g.id === groupFilter);
+      if (selected) return [...used, selected];
+    }
+    return used;
+  }, [scopeNodes, groups, groupFilter]);
+  // «Без группы» — тоже только когда такие узлы есть; выбранное значение
+  // сохраняем по той же причине, что и выбранную группу.
+  const showNoGroupOption = hasUngroupedNodes(scopeNodes) || groupFilter === GROUP_NONE;
+
   // statusFilterPending — фильтр по статусу выбран, но метрики, из которых
   // статус выводится, ещё не пришли. В сквозном режиме это окно длится до
   // прихода среза (§86.10), а без него — пока догружаются пачки preload; в
@@ -760,7 +786,7 @@ export default function Overview() {
         {/* §99.5: фильтр по группе. Показывается, только когда группы вообще
             заведены: пустой селект с единственным «Все группы» занимал бы место
             в шапке, ничего не давая. */}
-        {groups.length > 0 && (
+        {filterGroups.length > 0 && (
           <Select
             className="w-44"
             value={groupFilter}
@@ -768,8 +794,10 @@ export default function Overview() {
             aria-label={t("overview.filter.group")}
           >
             <option value="">{t("overview.filter.all_groups")}</option>
-            <option value={GROUP_NONE}>{t("overview.filter.no_group")}</option>
-            {groups.map((g) => (
+            {showNoGroupOption && (
+              <option value={GROUP_NONE}>{t("overview.filter.no_group")}</option>
+            )}
+            {filterGroups.map((g) => (
               <option key={g.id} value={g.id}>
                 {g.name}
               </option>
