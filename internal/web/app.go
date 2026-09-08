@@ -486,6 +486,13 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	headerCatalogHandler := httpadapter.NewHeaderCatalogHandler(headerCatalogUC, a.logger)
 
+	// Справочник групп узлов (§99). usage_count считается on-read из
+	// nodes.group_id; связь — nullable FK, отдельной таблицы привязки нет.
+	nodeGroupUC := usecase.NewNodeGroupUsecase(
+		pgrepo.NewNodeGroupRepoPg(a.pg, a.logger), auditUC, a.logger,
+	)
+	nodeGroupHandler := httpadapter.NewNodeGroupHandler(nodeGroupUC, a.logger)
+
 	// Справочник полей запроса (§41). usage_count считается on-read из
 	// nodes.auth_dynamic_field / incoming_auth_dynamic_field.
 	requestFieldUC := usecase.NewRequestFieldCatalogUsecase(
@@ -794,6 +801,7 @@ func (a *App) Start(ctx context.Context) error {
 		AckPreview:    ackPreviewHandler,
 		HostAllowlist: hostAllowlistHandler,
 		HeaderCatalog: headerCatalogHandler,
+		NodeGroup:     nodeGroupHandler,
 		RequestField:  requestFieldHandler,
 		LogMask:       logMaskHandler,
 		RMQTest:       rmqTestHandler,

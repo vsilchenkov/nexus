@@ -92,6 +92,11 @@ type Node struct {
 	Status NodeStatus
 	TeamID string
 
+	// §99: группа узла — UI-метаданные для группировки списка узлов на
+	// экране «Узлы». Пусто = «без группы» (в БД NULL). В маршрутизации не
+	// участвует: ни Receiver, ни Sender это поле не читают.
+	GroupID string
+
 	LogRequestBody  bool
 	LogResponseBody bool
 	LogHeaders      bool
@@ -351,6 +356,11 @@ func (n *Node) Validate() error {
 	}
 	if n.ClickHouseTemplateID != "" && !uuidPattern.MatchString(n.ClickHouseTemplateID) {
 		return ErrNodeInvalidTemplateID
+	}
+	// §99: группа необязательна, но если задана — обязана быть UUID: строка
+	// «мусор» дошла бы до INSERT и вернулась ошибкой типа PostgreSQL.
+	if n.GroupID != "" && !uuidPattern.MatchString(n.GroupID) {
+		return ErrNodeInvalidGroupID
 	}
 	// §64: шаблон = «таблицей управляет Nexus», external_table = «таблицу не
 	// трогаем». Вместе бессмысленны: провижининг по шаблону всё равно не

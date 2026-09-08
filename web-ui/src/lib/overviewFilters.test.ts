@@ -36,8 +36,21 @@ describe("parseFilters", () => {
       search: "",
       method: "",
       status: "all",
+      group: "",
       period: defaultPeriod,
     });
+  });
+
+  // §99.5: "" — все группы, "none" — узлы без группы, иначе id. Мусорный id не
+  // отбраковывается: справочник приезжает асинхронно, и «неизвестный» здесь
+  // неотличим от «ещё не загрузился».
+  it.each([
+    ["group=", ""],
+    ["group=none", "none"],
+    ["group=8f2c1a94-7d31-4b0e-9a11-2c3d4e5f6071", "8f2c1a94-7d31-4b0e-9a11-2c3d4e5f6071"],
+    ["group=что-угодно", "что-угодно"],
+  ])("parses the group filter (%s)", (query, want) => {
+    expect(parse(query).group).toBe(want);
   });
 
   it("takes the per-team default period (§71) as the period default", () => {
@@ -45,10 +58,11 @@ describe("parseFilters", () => {
   });
 
   it("parses a full query", () => {
-    expect(parse("q=foo&method=request&status=err&range=7d")).toEqual({
+    expect(parse("q=foo&method=request&status=err&group=g1&range=7d")).toEqual({
       search: "foo",
       method: "request",
       status: "err",
+      group: "g1",
       period: sevenDays,
     });
   });
@@ -70,7 +84,7 @@ describe("parseFilters", () => {
 
   it("keeps valid fields when a neighbour is junk", () => {
     const f = parse("status=banana&q=foo&range=99h");
-    expect(f).toEqual({ search: "foo", method: "", status: "all", period: defaultPeriod });
+    expect(f).toEqual({ search: "foo", method: "", status: "all", group: "", period: defaultPeriod });
   });
 
   it("parses a custom period", () => {
@@ -168,6 +182,7 @@ describe("round-trip", () => {
         search: "da",
         method: "RabbitMQAsync" as const,
         status: "err" as const,
+        group: "g1",
         period: { kind: "preset", range: "1h" } as Period,
       },
     ],
@@ -240,13 +255,16 @@ describe("saveFilters / loadFilters", () => {
       search: "da",
       method: "request",
       status: "err",
+      group: "g1",
       period: { kind: "preset", range: "1h" },
     };
     saveFilters(f, defaultPeriod);
     // Период — состояние текущего экрана (§71): в зеркало не пишется, при
     // восстановлении берётся дефолт команды.
     expect(loadFilters(defaultPeriod)).toEqual({ ...f, period: defaultPeriod });
-    expect(sessionStorage.getItem("nexus.overview.filters")).toBe("q=da&method=request&status=err");
+    expect(sessionStorage.getItem("nexus.overview.filters")).toBe(
+      "q=da&method=request&status=err&group=g1",
+    );
   });
 
   it("does not mirror the period even when it is the only non-default filter", () => {

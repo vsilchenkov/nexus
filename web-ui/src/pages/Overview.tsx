@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Search, Plus, Play, Pause, RefreshCw } from "lucide-react";
+import { Search, Plus, Play, Pause, RefreshCw, ChevronDown, ChevronRight } from "lucide-react";
 
 import {
   api,
   type Node,
+  type NodeGroup,
   type NodeRank,
   type OverviewKPI,
   type NodesThroughputResp,
@@ -14,7 +15,7 @@ import {
 } from "../api/client";
 import { useStableData } from "../lib/useStableData";
 import {
-  Button,
+  buttonClasses,
   Card,
   Chip,
   Kpi,
@@ -38,7 +39,10 @@ import {
 } from "../components/ui";
 import {
   applyFilters,
+  GROUP_NONE,
   hasFilterParams,
+  METHOD_FILTERS,
+  STATUS_FILTERS,
   loadFilters,
   parseFilters,
   saveFilters,
@@ -46,7 +50,17 @@ import {
   type OverviewFilters,
   type StatusFilter,
 } from "../lib/overviewFilters";
+import {
+  groupNodes,
+  hasGroupedSections,
+  hasUngroupedNodes,
+  loadCollapsed,
+  saveCollapsed,
+  usedGroups,
+  type NodeSection,
+} from "../lib/nodeGroups";
 import { cn } from "../lib/cn";
+import { ABOVE_STRETCH, STRETCH_HOST, STRETCHED_LINK } from "../lib/stretchedLink";
 import {
   PREF_KEY_OVERVIEW_PERIOD,
   useMigrateLegacyPeriodPref,
@@ -156,7 +170,7 @@ export default function Overview() {
   // sessionStorage добавляет кейс, где query теряется (кнопка «Узлы» = to="/").
   const [params, setParams] = useSearchParams();
   const filters = useMemo(() => parseFilters(params, teamDefault), [params, teamDefault]);
-  const { search, method, status: statusFilter, period } = filters;
+  const { search, method, status: statusFilter, group: groupFilter, period } = filters;
 
   // updateFilters — единая точка записи. saveFilters строго ДО setParams (§54.4):
   // иначе при ручной очистке фильтров restore-эффект ниже увидит «URL пуст,
@@ -524,6 +538,12 @@ export default function Overview() {
   const nodes = useMemo(() => {
     let items = nodesQ.data?.items ?? [];
     if (method) items = items.filter((n) => n.root_method === method);
+    // §99.5: фильтр по группе. GROUP_NONE — узлы без группы; узел со ссылкой на
+    // исчезнувшую группу считается здесь сгруппированным (его id не пуст), но в
+    // секции попадёт к «без группы» — расхождение осознанное: фильтр отвечает на
+    // «что записано у узла», а раскладка — на «что показать».
+    if (groupFilter === GROUP_NONE) items = items.filter((n) => !n.group_id);
+    else if (groupFilter) items = items.filter((n) => n.group_id === groupFilter);
     if (statusFilter !== "all") {
       items = items.filter(
         (n) => nodeVariant(n, throughput.get(n.id), metricsReady) === statusFilter,
@@ -565,6 +585,7 @@ export default function Overview() {
     nodesQ.data,
     method,
     statusFilter,
+    groupFilter,
     throughput,
     sortRank,
     metricsReady,
@@ -572,6 +593,99 @@ export default function Overview() {
     teamNames,
     rankOrder,
   ]);
+
+  // §99: справочник групп. Ключ ["node-groups",""] общий с комбобоксом формы
+  // узла и вкладкой «Конфиг» — один запрос на приложение, а не по одному на
+  // экран. Справочник глобальный, скоуп команды в ключ не входит (§99.9).
+  const groupsQ = useQuery({
+    queryKey: ["node-groups", ""],
+    queryFn: () => api.get<{ items: NodeGroup[] }>("/api/node-groups", { q: "", limit: 200 }),
+    staleTime: 60_000,
+  });
+  const groups = useMemo(() => groupsQ.data?.items ?? [], [groupsQ.data]);
+
+  // Свёрнутые группы переживают перезапуск браузера (localStorage, §99.5):
+  // это настройка рабочего места, а не состояние сиюминутной задачи.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed());
+  const toggleGroup = useCallback((id: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      saveCollapsed(next);
+      return next;
+    });
+  }, []);
+
+  // Секции: группировка НЕ сортирует, а стабильно разбивает уже отсортированный
+  // список (§99.9) — поэтому «проблемные первыми» действует внутри группы, а
+  // заморозка порядка §86.10 продолжает работать без изменений.
+  const sections = useMemo(() => groupNodes(nodes, groups), [nodes, groups]);
+  // Групп нет вовсе (или ни один видимый узел не сгруппирован) → плоский список,
+  // как до §99: одинокая безымянная секция добавила бы разметку ни о чём.
+  const grouped = hasGroupedSections(sections);
+  // Фильтр ссылается на группу, которой в справочнике уже нет. Справочник
+  // должен быть ЗАГРУЖЕН — пока он едет, любой id «неизвестен», и подставлять
+  // пункт «группа удалена» было бы враньём в другую сторону.
+  const unknownGroupFilter =
+    groupsQ.isSuccess &&
+    groupFilter !== "" &&
+    groupFilter !== GROUP_NONE &&
+    !groups.some((g) => g.id === groupFilter);
+
+  // §99.5: в фильтре — только группы, реально используемые узлами ТЕКУЩЕГО
+  // скоупа (в сквозном режиме §86 — узлами всех команд, потому что там в
+  // nodesQ приезжают именно они). Справочник глобальный, и неиспользуемые
+  // группы предлагали бы выбор, заведомо дающий пустой список.
+  //
+  // Считаем по nodesQ.data (до клиентских фильтров метод/статус/группа), а не
+  // по `nodes`: иначе выбор группы оставил бы в селекте её одну и вернуться к
+  // другой группе было бы нельзя.
+  const scopeNodes = useMemo(() => nodesQ.data?.items ?? [], [nodesQ.data]);
+  const filterGroups = useMemo(() => {
+    const used = usedGroups(scopeNodes, groups);
+    // Выбранная группа остаётся в списке, даже если её узлов сейчас не видно
+    // (например, сузил поиск): без неё селект показал бы чужой пункт, а фильтр
+    // продолжал бы действовать.
+    if (groupFilter && groupFilter !== GROUP_NONE && !used.some((g) => g.id === groupFilter)) {
+      const selected = groups.find((g) => g.id === groupFilter);
+      if (selected) return [...used, selected];
+    }
+    return used;
+  }, [scopeNodes, groups, groupFilter]);
+  // «Без группы» — тоже только когда такие узлы есть; выбранное значение
+  // сохраняем по той же причине, что и выбранную группу.
+  const showNoGroupOption = hasUngroupedNodes(scopeNodes) || groupFilter === GROUP_NONE;
+
+  // Метод узла хранится в самом узле, поэтому набор известен сразу и целиком
+  // для всего скоупа — фильтруем всегда. Выбранное значение остаётся в списке
+  // по той же причине, что и у групп.
+  const filterMethods = useMemo(() => {
+    const used = new Set(scopeNodes.map((n) => n.root_method));
+    return METHOD_FILTERS.filter((m) => used.has(m) || m === method);
+  }, [scopeNodes, method]);
+
+  // Статус, в отличие от метода и группы, ВЫЧИСЛЯЕТСЯ из метрик. Пока они не
+  // пришли, все узлы «unknown», и отбор по факту оставил бы в списке только
+  // «Пауза»/«Отключён» — то есть пункт «Down» пропадал бы ровно в тот момент,
+  // когда оператор его ищет. Поэтому до готовности метрик показываем полный
+  // набор, а сужаем только когда статусы действительно известны.
+  //
+  // Мало и того, что метрики «в принципе пришли»: в сквозном режиме они
+  // догружаются порциями по мере прокрутки (§86.4), и у части узлов их ещё нет.
+  // Сужать по такому набору значило бы прятать «Down» до того, как оператор
+  // долистает до упавшего узла. Поэтому сужаем, только когда статус известен
+  // для КАЖДОГО узла скоупа: у paused/disabled он виден из самого узла, у
+  // остальных нужны метрики.
+  const filterStatuses = useMemo(() => {
+    const all = STATUS_FILTERS.filter((s) => s !== "all");
+    const known =
+      metricsReady &&
+      scopeNodes.every((n) => n.status !== "enabled" || throughput.has(n.id));
+    if (!known) return all;
+    const used = new Set(scopeNodes.map((n) => nodeVariant(n, throughput.get(n.id), true)));
+    return all.filter((s) => used.has(s) || s === statusFilter);
+  }, [scopeNodes, throughput, metricsReady, statusFilter]);
 
   // statusFilterPending — фильтр по статусу выбран, но метрики, из которых
   // статус выводится, ещё не пришли. В сквозном режиме это окно длится до
@@ -685,9 +799,11 @@ export default function Overview() {
           onChange={(e) => updateFilters({ method: e.target.value as MethodFilter })}
         >
           <option value="">{t("overview.filter.all_methods")}</option>
-          <option value="request">request</option>
-          <option value="requestAsync">requestAsync</option>
-          <option value="RabbitMQAsync">RabbitMQAsync</option>
+          {filterMethods.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
         </Select>
         <Select
           className="w-40"
@@ -695,13 +811,41 @@ export default function Overview() {
           onChange={(e) => updateFilters({ status: e.target.value as StatusFilter })}
         >
           <option value="all">{t("overview.filter.all_statuses")}</option>
-          <option value="ok">{t("overview.status.ok")}</option>
-          <option value="warn">{t("overview.status.queue")}</option>
-          <option value="degraded">{t("overview.status.degraded")}</option>
-          <option value="err">{t("overview.status.down")}</option>
-          <option value="paused">{t("node.status.paused")}</option>
-          <option value="disabled">{t("node.status.disabled")}</option>
+          {filterStatuses.map((s) => (
+            <option key={s} value={s}>
+              {t(STATUS_FILTER_LABEL[s])}
+            </option>
+          ))}
         </Select>
+        {/* §99.5: фильтр по группе. Показывается, только когда группы вообще
+            заведены: пустой селект с единственным «Все группы» занимал бы место
+            в шапке, ничего не давая. */}
+        {filterGroups.length > 0 && (
+          <Select
+            className="w-44"
+            value={groupFilter}
+            onChange={(e) => updateFilters({ group: e.target.value })}
+            aria-label={t("overview.filter.group")}
+          >
+            <option value="">{t("overview.filter.all_groups")}</option>
+            {showNoGroupOption && (
+              <option value={GROUP_NONE}>{t("overview.filter.no_group")}</option>
+            )}
+            {filterGroups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+            {/* Фильтр указывает на группу, которой в справочнике нет (пришли по
+                ссылке, группу удалили в соседней вкладке). Без этой опции
+                браузер показал бы первую — «Все группы», — тогда как фильтр
+                продолжает действовать и список пуст: экран читался бы как
+                сломанный. Пункт называет причину честно. */}
+            {unknownGroupFilter && (
+              <option value={groupFilter}>{t("overview.filter.group_gone")}</option>
+            )}
+          </Select>
+        )}
         <Seg
           value={view}
           onChange={setView}
@@ -710,11 +854,11 @@ export default function Overview() {
             { value: "cards", label: t("overview.view.cards") },
           ]}
         />
+        {/* Ссылка со стилями кнопки, а не <Button> внутри <Link>: вложенная
+            кнопка — невалидный HTML и перехватывает клик у ссылки. */}
         {canEdit && (
-          <Link to="/nodes/new">
-            <Button variant="primary">
-              <Plus className="h-4 w-4" /> {t("overview.new_node")}
-            </Button>
+          <Link to="/nodes/new" className={buttonClasses({ variant: "primary" })}>
+            <Plus className="h-4 w-4" /> {t("overview.new_node")}
           </Link>
         )}
       </div>
@@ -804,7 +948,9 @@ export default function Overview() {
       {nodes.length > 0 &&
         (view === "table" ? (
           <NodeTable
-            nodes={nodes}
+            sections={sections}
+            collapsed={collapsed}
+            onToggleGroup={toggleGroup}
             throughput={throughput}
             period={period}
             ready={metricsReady}
@@ -813,7 +959,10 @@ export default function Overview() {
           />
         ) : (
           <NodeCards
-            nodes={nodes}
+            sections={sections}
+            grouped={grouped}
+            collapsed={collapsed}
+            onToggleGroup={toggleGroup}
             throughput={throughput}
             period={period}
             ready={metricsReady}
@@ -824,6 +973,18 @@ export default function Overview() {
     </div>
   );
 }
+
+// STATUS_FILTER_LABEL — i18n-ключ подписи для каждого значения фильтра статуса.
+// Отдельной картой, потому что подписи разнородны: часть живёт в overview.status
+// (вычисляемые из метрик), часть — в node.status (состояние самого узла).
+const STATUS_FILTER_LABEL: Record<Exclude<StatusFilter, "all">, string> = {
+  ok: "overview.status.ok",
+  warn: "overview.status.queue",
+  degraded: "overview.status.degraded",
+  err: "overview.status.down",
+  paused: "node.status.paused",
+  disabled: "node.status.disabled",
+};
 
 type Variant = "ok" | "warn" | "degraded" | "err" | "paused" | "disabled" | "unknown";
 type StatusInfo = { tone: "ok" | "err" | "warn" | "muted"; label: string; variant: Variant };
@@ -889,14 +1050,20 @@ function useStatus() {
 }
 
 function NodeTable({
-  nodes,
+  sections,
+  collapsed,
+  onToggleGroup,
   throughput,
   period,
   ready,
   teamNames,
   observe,
 }: {
-  nodes: Node[];
+  // sections — узлы, разложенные по группам (§99.5). Секция без группы всегда
+  // первая и заголовка не имеет.
+  sections: NodeSection[];
+  collapsed: Set<string>;
+  onToggleGroup: (id: string) => void;
   throughput: Map<string, Throughput>;
   period: Period;
   ready: boolean;
@@ -911,9 +1078,20 @@ function NodeTable({
   const status = useStatus();
   const plabel = periodLabel(period, t);
   const navigate = useNavigate();
+  // colSpan заголовка группы обязан совпадать с числом колонок, иначе строка
+  // схлопнется в первую ячейку. Колонок семь, плюс «Команда» в сквозном режиме.
+  // Флаг «есть ли группы» таблице не нужен: заголовок рисуется у секции с
+  // группой, а без групп секция ровно одна и безымянная — разметка та же.
+  const colSpan = teamNames ? 8 : 7;
   return (
     <Card className="overflow-hidden p-0">
-      <div className="overflow-x-auto">
+      {/* relative здесь — страховка, а не раскладка. Опора растянутой ссылки —
+          сам <tr>; но если браузер вдруг проигнорирует position на строке,
+          псевдоэлемент уедет к ближайшему позиционированному предку. Без этой
+          обёртки им оказался бы корень страницы: оверлеи всех строк накрыли бы
+          экран, и клик в любом месте открывал бы последний узел списка. С ней
+          отказ схлопывается до одной таблицы — сразу заметен. */}
+      <div className={cn("overflow-x-auto", STRETCH_HOST)}>
       <table className="w-full min-w-[640px] text-[12.5px]">
         <thead>
           <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-fg-muted">
@@ -932,15 +1110,49 @@ function NodeTable({
             <th className="w-[140px] px-3 py-2 font-medium">{t("overview.table.traffic")}</th>
           </tr>
         </thead>
-        <tbody>
-          {nodes.map((n) => {
+        {/* Секция группы — отдельный <tbody> в ОДНОЙ таблице, а не своя таблица
+            на группу: у отдельных таблиц ширина колонок считается независимо, и
+            столбцы разъехались бы между секциями (§99.5). */}
+        {sections.map((sec) => {
+          const isCollapsed = sec.group !== null && collapsed.has(sec.group.id);
+          return (
+        <tbody key={sec.group?.id ?? "__ungrouped__"}>
+          {sec.group && (
+            <tr>
+              <td colSpan={colSpan} className="border-y border-line bg-bg-muted px-3 py-1.5">
+                {/* Кнопка, а не ссылка: заголовок ничего не открывает, а
+                    переключает состояние — урок §79.3 здесь работает в обратную
+                    сторону. */}
+                <button
+                  type="button"
+                  onClick={() => onToggleGroup(sec.group!.id)}
+                  aria-expanded={!isCollapsed}
+                  className="flex w-full items-center gap-2 text-left"
+                >
+                  {isCollapsed ? (
+                    <ChevronRight className="h-4 w-4 shrink-0 text-fg-subtle" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 shrink-0 text-fg-subtle" />
+                  )}
+                  <span className="truncate text-[12.5px] font-semibold">{sec.group.name}</span>
+                  {/* Счётчик считает ВИДИМЫЕ узлы, после фильтров: иначе «4 узла»
+                      рядом с одной строкой читалось бы как поломка фильтра. */}
+                  <span className="ml-auto shrink-0 text-[11px] text-fg-subtle">
+                    {t("overview.group.count", { count: sec.nodes.length })}
+                  </span>
+                </button>
+              </td>
+            </tr>
+          )}
+          {!isCollapsed &&
+            sec.nodes.map((n) => {
             const m = throughput.get(n.id);
             const s = status(n, m, ready);
             return (
               <tr
                 key={n.id}
                 ref={observe?.(n.id)}
-                className="border-b border-line last:border-0 hover:bg-bg-muted"
+                className={cn(STRETCH_HOST, "border-b border-line last:border-0 hover:bg-bg-muted")}
               >
                 {teamNames && (
                   <td className="px-3 py-2.5">
@@ -948,8 +1160,18 @@ function NodeTable({
                   </td>
                 )}
                 <td className="px-3 py-2.5 font-mono">
-                  <Link to={`/nodes/${n.id}`} className="hover:text-accent">
-                    {n.path}
+                  {/* §7.3 обещает «клик по строке таблицы открывает узел», но
+                      кликабельной была только надпись — 135 px из 1033 px
+                      строки. Растянутая ссылка (псевдоэлемент по ближайшему
+                      relative-предку, то есть по <tr>) делает живой всю строку,
+                      оставляя её НАСТОЯЩЕЙ ссылкой: Ctrl+клик, средняя кнопка и
+                      «Открыть в новой вкладке» работают в любой её точке, а не
+                      только по надписи (урок §79.3). */}
+                  <Link to={`/nodes/${n.id}`} className={cn("hover:text-accent", STRETCHED_LINK)}>
+                    {/* Текст поднят на слой выше псевдоэлемента: иначе путь
+                        нельзя выделить мышью, а его копируют. Клик по нему
+                        всё равно попадает в саму ссылку. */}
+                    <span className="relative z-[1]">{n.path}</span>
                   </Link>
                 </td>
                 <td className="px-3 py-2.5">
@@ -961,7 +1183,9 @@ function NodeTable({
                 <td className="px-3 py-2.5">
                   <Pill tone={s.tone}>{s.label}</Pill>
                 </td>
-                <td className="w-[140px] px-3 py-2.5">
+                {/* z-10: столбцы спарклайна ведут в журнал за свой интервал, и
+                    накрывшая строку ссылка узла съедала бы эти клики. */}
+                <td className={cn(ABOVE_STRETCH, "w-[140px] px-3 py-2.5")}>
                   <Sparkline
                     data={m?.spark ?? []}
                     errors={m?.sparkErr}
@@ -981,6 +1205,8 @@ function NodeTable({
             );
           })}
         </tbody>
+          );
+        })}
       </table>
       </div>
     </Card>
@@ -995,14 +1221,20 @@ function fmtMs(ms: number): string {
 }
 
 function NodeCards({
-  nodes,
+  sections,
+  grouped,
+  collapsed,
+  onToggleGroup,
   throughput,
   period,
   ready,
   teamNames,
   observe,
 }: {
-  nodes: Node[];
+  sections: NodeSection[];
+  grouped: boolean;
+  collapsed: Set<string>;
+  onToggleGroup: (id: string) => void;
   throughput: Map<string, Throughput>;
   period: Period;
   ready: boolean;
@@ -1013,9 +1245,37 @@ function NodeCards({
   const status = useStatus();
   const plabel = periodLabel(period, t);
   const navigate = useNavigate();
+  // Без групп — прежняя одна сетка на весь список (§99.5): заголовок секции с
+  // пустым именем добавил бы разметку ни о чём.
+  const grid = "grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3";
   return (
-    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-      {nodes.map((n) => {
+    <div className={grouped ? "space-y-3" : undefined}>
+      {sections.map((sec) => {
+        const isCollapsed = sec.group !== null && collapsed.has(sec.group.id);
+        return (
+          <div key={sec.group?.id ?? "__ungrouped__"}>
+            {sec.group && (
+              <button
+                type="button"
+                onClick={() => onToggleGroup(sec.group!.id)}
+                aria-expanded={!isCollapsed}
+                className="mb-2.5 mt-1 flex w-full items-center gap-2 text-left"
+              >
+                {isCollapsed ? (
+                  <ChevronRight className="h-4 w-4 shrink-0 text-fg-subtle" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 shrink-0 text-fg-subtle" />
+                )}
+                <span className="truncate text-[12.5px] font-semibold">{sec.group.name}</span>
+                <span className="shrink-0 text-[11px] text-fg-subtle">
+                  {t("overview.group.count", { count: sec.nodes.length })}
+                </span>
+                <span className="ml-2 h-px flex-1 bg-line" aria-hidden />
+              </button>
+            )}
+            {!isCollapsed && (
+              <div className={grid}>
+                {sec.nodes.map((n) => {
         const m = throughput.get(n.id);
         const s = status(n, m, ready);
         const target =
@@ -1025,6 +1285,8 @@ function NodeCards({
             key={n.id}
             ref={observe?.(n.id)}
             className={cn(
+              // Опора для растянутой ссылки заголовка (§7.3).
+              STRETCH_HOST,
               "flex h-full flex-col gap-3 border-l-[3px]",
               accentByVariant[s.variant],
               n.status === "disabled" && "opacity-70",
@@ -1032,11 +1294,17 @@ function NodeCards({
           >
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
+                {/* Растянутая ссылка: клик открывает узел в любой точке
+                    карточки, а не только по надписи (§7.3). Остаётся настоящей
+                    ссылкой — Ctrl+клик и контекстное меню работают везде. */}
                 <Link
                   to={`/nodes/${n.id}`}
-                  className="block truncate font-mono text-[13px] font-medium hover:text-accent"
+                  className={cn(
+                    "block truncate font-mono text-[13px] font-medium hover:text-accent",
+                    STRETCHED_LINK,
+                  )}
                 >
-                  {n.path}
+                  <span className="relative z-[1]">{n.path}</span>
                 </Link>
                 <div className="mt-1 flex items-center gap-1.5">
                   <Chip>{n.root_method}</Chip>
@@ -1064,26 +1332,37 @@ function NodeCards({
                 tone={m && m.errors > 0 ? "err" : undefined}
               />
             </div>
-            <Sparkline
-              data={m?.spark ?? []}
-              errors={m?.sparkErr}
-              variant={s.variant}
-              period={period}
-              onOpenLogs={
-                n.clickhouse_table
-                  ? (r) =>
-                      navigate(
-                        `/nodes/${n.id}?tab=logs&from=${Math.round(r.from)}&to=${Math.round(r.to)}`,
-                      )
-                  : undefined
-              }
-            />
-            <div className="flex items-center gap-2 text-[11px] text-fg-subtle">
+            {/* Поднято над растянутой ссылкой: клики по столбцам ведут в
+                журнал за интервал и не должны доставаться ссылке узла. */}
+            <div className={ABOVE_STRETCH}>
+              <Sparkline
+                data={m?.spark ?? []}
+                errors={m?.sparkErr}
+                variant={s.variant}
+                period={period}
+                onOpenLogs={
+                  n.clickhouse_table
+                    ? (r) =>
+                        navigate(
+                          `/nodes/${n.id}?tab=logs&from=${Math.round(r.from)}&to=${Math.round(r.to)}`,
+                        )
+                    : undefined
+                }
+              />
+            </div>
+            {/* Тоже над ссылкой: под ней не показалась бы подсказка с полным
+                адресом (title), а другого места посмотреть его нет. */}
+            <div className={cn("flex items-center gap-2 text-[11px] text-fg-subtle", ABOVE_STRETCH)}>
               <span className="truncate font-mono" title={target}>
                 {target}
               </span>
             </div>
           </Card>
+        );
+                })}
+              </div>
+            )}
+          </div>
         );
       })}
     </div>

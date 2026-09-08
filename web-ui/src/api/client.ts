@@ -142,6 +142,8 @@ export type Node = {
   circuit_breaker_cooldown_sec?: number;
   // §29: произвольный комментарий-описание узла.
   comment?: string;
+  // §99: группа узла для группировки списка. Пусто/отсутствие = «без группы».
+  group_id?: string;
   // §83: шаблон ответа приёма. null/отсутствие — шина отвечает как раньше.
   async_ack_spec?: AckSpec | null;
   // §27: RabbitMQAsync (пустые/нулевые для request/requestAsync).
@@ -220,6 +222,23 @@ export type HeaderCatalogEntry = {
   description: string;
   usage_count: number;
   created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+// §99: справочник групп узлов (см. /api/node-groups). Справочник глобальный —
+// не привязан к команде, поэтому его queryKey живёт в TEAM_INDEPENDENT_KEYS.
+export type NodeGroup = {
+  id: string;
+  name: string;
+  description: string;
+  // Порядок вывода на экране «Узлы»: меньше — выше.
+  sort_order: number;
+  // Число узлов ВСЕЙ инсталляции в группе (включая чужие команды) — не путать
+  // со счётчиком в заголовке секции на «Узлах», который считает видимые (§99.9).
+  usage_count: number;
+  created_by: string;
+  updated_by: string;
   created_at: string;
   updated_at: string;
 };

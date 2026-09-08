@@ -19,6 +19,15 @@ func isForeignKeyViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
+// isFKViolationOn сообщает, что ошибка — нарушение КОНКРЕТНОГО FK-ограничения
+// (SQLSTATE 23503 + имя constraint). Имя обязательно: у одной таблицы внешних
+// ключей несколько (у nodes — root_method, team_id, group_id), и голый код
+// 23503 не говорит, на что именно сослались.
+func isFKViolationOn(err error, constraint string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == constraint
+}
+
 // isInvalidUUID сообщает, что ошибка — невалидный текст для типа uuid
 // (SQLSTATE 22P02, invalid_text_representation): `:id` из пути не является UUID
 // и не прошёл cast `$1::uuid`. Репозитории трактуют это как «не найдено»

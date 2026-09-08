@@ -225,7 +225,12 @@ describe("Overview: срез и порядок в сквозном режиме 
     await qc.refetchQueries({ queryKey: ["metrics-totals"] });
 
     // Бейдж обязан обновиться...
-    await waitFor(() => expect(screen.getByText("overview.status.down")).toBeInTheDocument());
+    //
+    // Проверяем через statusPills (он отсеивает <option>), а не getByText:
+    // подпись пункта фильтра — тот же ключ, и наивный поиск находил ИМЕННО
+    // опцию, зеленея ещё до появления бейджа. Ровно та ловушка, о которой
+    // предупреждает комментарий к statusPills выше.
+    await waitFor(() => expect(statusPills()).toContain("overview.status.down"));
     // ...а порядок — остаться прежним.
     expect(pathOrder()).toEqual(["n2", "n3", "n1"]);
   });

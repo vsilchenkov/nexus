@@ -53,13 +53,11 @@ import { CapacityCard } from "./CapacityCard";
 export function MetricsTab({
   node,
   onOpenLogs,
-  onOpenQueue,
 }: {
   node: Node;
   onOpenLogs?: (range: LogsRange) => void;
   // §84.8: переход на вкладку «Очередь» — ёмкость отвечает «помещается ли
   // узел», а «сколько ждёт прямо сейчас» живёт там.
-  onOpenQueue?: () => void;
 }) {
   const { t } = useTranslation();
 
@@ -311,7 +309,6 @@ export function MetricsTab({
         total={kpi?.total ?? 0}
         p95Ms={kpi?.p95_ms ?? 0}
         rangeMs={m.data?.range_ms ?? 0}
-        onOpenQueue={onOpenQueue}
       />
 
       {m.data?.latency_available && (

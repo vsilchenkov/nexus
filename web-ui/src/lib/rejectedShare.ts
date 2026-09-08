@@ -18,6 +18,24 @@ export const REJECTED_PARAM = "rejected";
 const rejectedPath = "/logs/rejected";
 
 /**
+ * withRejected — адрес журнала отказов с открытой (или закрытой) карточкой.
+ *
+ * Второй потребитель того же формата после rejectedPageUrl: им пользуются и
+ * ссылка строки, и запись параметра при переключении карточек. Собирать этот
+ * адрес в компоненте отдельно значило бы завести третий способ — а файл ровно
+ * про то, что способ обязан быть один (§89.3).
+ *
+ * Чужие ключи адреса сохраняются: период, фильтры и слог команды §76 живут в
+ * той же строке и переживать открытие карточки обязаны (правило §54).
+ */
+export function withRejected(prev: URLSearchParams, id: string | null): URLSearchParams {
+  const next = new URLSearchParams(prev);
+  if (id) next.set(REJECTED_PARAM, id);
+  else next.delete(REJECTED_PARAM);
+  return next;
+}
+
+/**
  * rejectedPageUrl — абсолютная ссылка на карточку отказа для кнопки
  * «Поделиться».
  *

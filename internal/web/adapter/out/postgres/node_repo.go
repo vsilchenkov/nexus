@@ -58,7 +58,11 @@ const nodeColumns = `
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
 	created_by, updated_by, external_table,
 	circuit_breaker_threshold, circuit_breaker_cooldown_sec,
-	async_ack_spec`
+	async_ack_spec, group_id`
+
+// nodeGroupFKConstraint — имя FK nodes.group_id → node_groups.id (§99). Задано
+// явно в миграции 0042.
+const nodeGroupFKConstraint = "nodes_group_id_fkey"
 
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
@@ -316,7 +320,7 @@ INSERT INTO nodes (
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
 	created_by, updated_by, external_table,
 	circuit_breaker_threshold, circuit_breaker_cooldown_sec,
-	async_ack_spec
+	async_ack_spec, group_id
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -336,7 +340,7 @@ INSERT INTO nodes (
 	$47, $48,
 	$49, $50, $51,
 	$52, $53,
-	$54::jsonb
+	$54::jsonb, $55
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -362,12 +366,20 @@ INSERT INTO nodes (
 		nullInt32(n.CircuitBreakerThreshold), nullInt32(n.CircuitBreakerCooldownSec),
 		// §83: nil → NULL, «отвечать как раньше».
 		ack,
+		// §99: пусто → NULL, «узел без группы».
+		nullUUID(n.GroupID),
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return domain.ErrNodeAlreadyExists
+		}
+		// §99: группу удалили между открытием формы и сохранением. Это ошибка
+		// ЗНАЧЕНИЯ ПОЛЯ (чинится выбором другой группы), а не сбой сервера, —
+		// иначе оператор получил бы «внутреннюю ошибку» без единой подсказки.
+		if isFKViolationOn(err, nodeGroupFKConstraint) {
+			return domain.ErrNodeGroupNotFound
 		}
 		return fmt.Errorf("create node: %w", err)
 	}
@@ -414,7 +426,7 @@ UPDATE nodes SET
 	incoming_auth_dynamic_source = $48, incoming_auth_dynamic_field = $49,
 	updated_by = $50, external_table = $51,
 	circuit_breaker_threshold = $52, circuit_breaker_cooldown_sec = $53,
-	async_ack_spec = $54::jsonb,
+	async_ack_spec = $54::jsonb, group_id = $55,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -443,6 +455,8 @@ RETURNING updated_at`
 		nullInt32(n.CircuitBreakerThreshold), nullInt32(n.CircuitBreakerCooldownSec),
 		// §83: nil → NULL, «отвечать как раньше».
 		ack,
+		// §99: пусто → NULL, «узел без группы».
+		nullUUID(n.GroupID),
 	).Scan(&n.UpdatedAt)
 
 	if err != nil {
@@ -452,6 +466,9 @@ RETURNING updated_at`
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return domain.ErrNodeAlreadyExists
+		}
+		if isFKViolationOn(err, nodeGroupFKConstraint) {
+			return domain.ErrNodeGroupNotFound
 		}
 		return fmt.Errorf("update node: %w", err)
 	}
@@ -551,6 +568,8 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	var encAuth, encInc string
 	var created, updated time.Time
 	var templateID *string
+	// §99: NULL = «узел без группы».
+	var groupID *string
 	var rmqHost, rmqVHost, rmqUser, encRMQ, rmqQueue *string
 	var rmqPort, pullInterval, pullBatch, pullPrefetch *int32
 	// §81.3: NULL = «политика из конфигурации».
@@ -577,7 +596,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&incAuthDynSrc, &n.IncomingAuthDynamicField,
 		&n.CreatedBy, &n.UpdatedBy, &n.ExternalTable,
 		&cbThreshold, &cbCooldown,
-		&ackRaw,
+		&ackRaw, &groupID,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {
@@ -614,6 +633,9 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 	n.UpdatedAt = updated
 	if templateID != nil {
 		n.ClickHouseTemplateID = *templateID
+	}
+	if groupID != nil {
+		n.GroupID = *groupID
 	}
 
 	n.AuthCredentials, err = r.cipher.Decrypt(encAuth)

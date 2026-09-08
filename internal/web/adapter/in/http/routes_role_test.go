@@ -52,6 +52,7 @@ func roleEngine(role domain.UserRole) *gin.Engine {
 		Breaker:       &BreakerHandler{},
 		HostAllowlist: &HostAllowlistHandler{},
 		HeaderCatalog: &HeaderCatalogHandler{},
+		NodeGroup:     &NodeGroupHandler{},
 		RequestField:  &RequestFieldCatalogHandler{},
 		CHSchema:      &CHSchemaHandler{},
 		Kafka:         &KafkaHandler{},
@@ -98,6 +99,10 @@ var operatorForbidden = []struct{ method, path string }{
 	{http.MethodPost, "/api/allowed-hosts"},
 	{http.MethodPost, "/api/nodes/n1/allowed-hosts"},
 	{http.MethodPost, "/api/headers"},
+	{http.MethodPost, "/api/node-groups"},
+	{http.MethodPatch, "/api/node-groups/g1"},
+	{http.MethodDelete, "/api/node-groups/g1"},
+	{http.MethodPost, "/api/node-groups/g1/move"},
 	{http.MethodPost, "/api/request-fields"},
 	{http.MethodPost, "/api/nodes/n1/move"},
 	{http.MethodPost, "/api/users"},
@@ -154,5 +159,23 @@ func TestOperatorRoutes_ManagerAndAdminInherit(t *testing.T) {
 					"%s обязан проходить операторский гейт на %s", role, rt.path)
 			})
 		}
+	}
+}
+
+// TestNodeGroupRoutes_ListOpenToEveryRole: чтение справочника групп (§99.4)
+// доступно ЛЮБОЙ сессии, включая наблюдателя, — экран «Узлы» группирует список
+// для всех ролей, и закрытый GET оставил бы viewer'а без группировки вовсе.
+// Мутации при этом закрыты (см. operatorForbidden выше).
+func TestNodeGroupRoutes_ListOpenToEveryRole(t *testing.T) {
+	t.Parallel()
+	for _, role := range []domain.UserRole{
+		domain.UserRoleViewer, domain.UserRoleOperator,
+		domain.UserRoleManager, domain.UserRoleAdmin,
+	} {
+		r := roleEngine(role)
+		t.Run(string(role), func(t *testing.T) {
+			assert.NotEqual(t, http.StatusForbidden, roleStatus(r, http.MethodGet, "/api/node-groups"),
+				"%s обязан читать справочник групп", role)
+		})
 	}
 }

@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { Link } from "react-router-dom";
 
 import { api, type Node } from "../../api/client";
 import { Card, DefaultPeriodButton, Kpi, KpiRow, LabelHint, Pill, PeriodPicker, TrafficChart, type LogsRange, type Period } from "../ui";
 import { nodeLookbackMs } from "../../lib/nodeLookback";
+import { useNodeTabTo } from "../../lib/nodeTabLink";
 import { fmtLogTs, fmtNum } from "../../lib/format";
 import { isLogOK } from "../../lib/logsQuery";
 import { useNodeTeamName } from "../../lib/nodeTeamName";
@@ -18,13 +20,13 @@ import { type LogsResp } from "./types";
 // onOpenLogs (§33.4) — клик по столбцу графика открывает логи за момент.
 export function OverviewTab({
   node,
-  onAllLogs,
   onOpenLogs,
 }: {
   node: Node;
-  onAllLogs: () => void;
   onOpenLogs?: (range: LogsRange) => void;
 }) {
+  // Адрес перехода строит сам компонент — ссылке он нужен на рендере.
+  const to = useNodeTabTo();
   const { t } = useTranslation();
   // §92: стартовый период — дефолт команды (преф команды → глобальный → 24ч),
   // а не системные 24ч. Выбор пользователя живёт поверх префа отдельным
@@ -125,13 +127,12 @@ export function OverviewTab({
       <Card className="p-0">
         <div className="flex items-center justify-between px-4 py-3">
           <span className="text-sm font-semibold">{t("metrics.recent")}</span>
-          <button
-            type="button"
-            onClick={onAllLogs}
-            className="text-xs text-fg-muted hover:text-accent"
-          >
+          {/* §7.4 называет это переходом, и адрес у него есть (?tab=logs).
+              Значит ссылка, а не кнопка: иначе Ctrl+клик и «Открыть в новой
+              вкладке» не работают (урок §79.3). */}
+          <Link to={to.tab("logs")} className="text-xs text-fg-muted hover:text-accent">
             {t("metrics.all_logs")}
-          </button>
+          </Link>
         </div>
         {/* table-fixed + colgroup обязательны: при авто-раскладке браузер
             ИГНОРИРУЕТ max-width у ячейки и растягивает колонку под содержимое —

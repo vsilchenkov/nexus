@@ -336,3 +336,23 @@ func TestNodeUC_Move_SharedTable_ProvisionFails(t *testing.T) {
 	assert.Equal(t, "team2", repo.items[n.ID].TeamID)
 	assert.Empty(t, prov.renameFrom, "общая таблица не тронута даже при сбое создания новой")
 }
+
+// TestNodeUC_Move_KeepsGroup (§99.1): справочник групп глобальный, поэтому
+// перенос узла в другую команду группу НЕ сбрасывает — в целевой команде та же
+// группа существует и осмысленна. Сброс осиротил бы узел в списке без всякого
+// повода со стороны оператора.
+func TestNodeUC_Move_KeepsGroup(t *testing.T) {
+	t.Parallel()
+	repo := newMemNodeRepo()
+	n := movableNode()
+	n.GroupID = "8f2c1a94-7d31-4b0e-9a11-2c3d4e5f6071"
+	repo.items[n.ID] = n
+	uc := newMoveUC(repo, &movePlan{}, nil)
+
+	require.NoError(t, uc.Move(context.Background(), SystemActor(), n.ID, "team1", "target"))
+
+	moved := repo.items[n.ID]
+	assert.Equal(t, "team2", moved.TeamID, "предусловие: узел действительно переехал")
+	assert.Equal(t, "8f2c1a94-7d31-4b0e-9a11-2c3d4e5f6071", moved.GroupID,
+		"группа глобальная — перенос её не трогает")
+}

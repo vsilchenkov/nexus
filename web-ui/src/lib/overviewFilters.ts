@@ -21,10 +21,20 @@ export const STATUS_FILTERS = [
 ] as const;
 export type StatusFilter = (typeof STATUS_FILTERS)[number];
 
+// GROUP_NONE — значение фильтра «узлы без группы» (§99.5). Отдельная константа,
+// а не пустая строка: пустая уже означает «все группы», и различать «без
+// группы» и «любая группа» иначе нечем.
+export const GROUP_NONE = "none";
+
+// GroupFilter: "" — все группы, "none" — только узлы без группы, иначе id группы.
+export type GroupFilter = string;
+
 export type OverviewFilters = {
   search: string;
   method: MethodFilter;
   status: StatusFilter;
+  // §99: фильтр по группе узла. Значения — см. GroupFilter.
+  group: GroupFilter;
   // period — «живой» выбор периода, не пользовательский дефолт-звёздочка (§44.B).
   period: Period;
 };
@@ -36,7 +46,7 @@ const PERIOD_PARAM_KEYS = ["range", "from", "to"] as const;
 // FILTER_PARAM_KEYS — query-параметры, которыми владеет Overview. Чужие ключи
 // (напр. utm-метки) при обновлении фильтров не трогаются. Собирается из
 // PERIOD_PARAM_KEYS, чтобы списки не разъехались при добавлении параметра.
-export const FILTER_PARAM_KEYS = ["q", "method", "status", ...PERIOD_PARAM_KEYS] as const;
+export const FILTER_PARAM_KEYS = ["q", "method", "status", "group", ...PERIOD_PARAM_KEYS] as const;
 
 // FILTERS_STORAGE — тип хранилища зеркала (§54.3). sessionStorage, а не
 // localStorage: иначе сохранённый живой период всегда перекрывал бы дефолт
@@ -61,7 +71,7 @@ function storage(): Storage {
 // обязательный намеренно: опциональный со значением 24ч тихо сохранил бы старое
 // поведение в забытом call-site, а так его отсутствие ловит tsc.
 export function defaultFilters(defaultPeriod: Period): OverviewFilters {
-  return { search: "", method: "", status: "all", period: defaultPeriod };
+  return { search: "", method: "", status: "all", group: "", period: defaultPeriod };
 }
 
 // parseFilters — фильтры из query-параметров. Толерантно к мусору: невалидное
@@ -77,6 +87,11 @@ export function parseFilters(params: URLSearchParams, defaultPeriod: Period): Ov
 
   const status = params.get("status") ?? "";
   if ((STATUS_FILTERS as readonly string[]).includes(status)) f.status = status as StatusFilter;
+
+  // Значение группы не валидируется против справочника: он приезжает асинхронно,
+  // и «неизвестный id» здесь неотличим от «ещё не загрузился». Мусорный id даст
+  // пустой список — честный ответ на «покажи узлы этой группы».
+  f.group = params.get("group") ?? "";
 
   const range = params.get("range");
   const from = params.get("from");
@@ -108,6 +123,7 @@ export function serializeFilters(
   if (f.search) p.set("q", f.search);
   if (f.method) p.set("method", f.method);
   if (f.status !== "all") p.set("status", f.status);
+  if (f.group) p.set("group", f.group);
   if (defaultPeriod === null || periodKey(f.period) !== periodKey(defaultPeriod)) {
     if (f.period.kind === "preset") {
       p.set("range", f.period.range);
