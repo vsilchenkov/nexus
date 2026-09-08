@@ -1265,6 +1265,30 @@
       },
       "preview": { "allow": "Will allow", "block": "Will block", "invalid": "Invalid pattern — fix it to see the preview" }
     },
+    "groups": {
+      "title": "Groups",
+      "subtitle": "Shared catalog of node groups. Groups are not tied to teams; \"Order\" defines how groups are laid out on the Nodes screen.",
+      "add": "Add group",
+      "search": "Search by name",
+      "empty": "No groups yet",
+      "used": "{{count}} node(s)",
+      "not_used": "not used",
+      "in_use_tip": "the group is used by nodes — remove the nodes from it first",
+      "name_length": "Name must be 1 to 100 characters",
+      "order_hint": "lower goes higher in the list",
+      "order_range": "Order must be an integer between 0 and 100000",
+      "move_up": "Move up",
+      "move_down": "Move down",
+      "confirm_delete": "Delete group {{name}}?",
+      "col": { "order": "Order", "name": "Name", "description": "Description", "usage": "Nodes" },
+      "field": { "name": "Name", "description": "Description", "order": "Order" },
+      "dialog": {
+        "new": "New group",
+        "edit": "Edit group",
+        "subtitle": "Name, description and display order on the Nodes screen",
+        "create": "Create"
+      }
+    },
     "headers": {
       "title": "Headers",
       "subtitle": "Catalog of forwarded HTTP headers. Nodes pick names from this list; a header in use cannot be renamed or deleted.",
