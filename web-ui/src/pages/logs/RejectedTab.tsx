@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { CheckCheck, Download } from "lucide-react";
@@ -19,7 +19,8 @@ import {
   type RejectedSummary,
 } from "../../lib/rejected";
 import { RejectedDrawer } from "../../components/logs/RejectedDrawer";
-import { REJECTED_PARAM } from "../../lib/rejectedShare";
+import { REJECTED_PARAM, withRejected } from "../../lib/rejectedShare";
+import { STRETCH_HOST, STRETCHED_LINK } from "../../lib/stretchedLink";
 import {
   Button,
   Card,
@@ -73,12 +74,7 @@ export default function RejectedTab() {
   const setOpenID = useCallback(
     (id: string | null) => {
       setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (id) next.set(REJECTED_PARAM, id);
-          else next.delete(REJECTED_PARAM);
-          return next;
-        },
+        (prev) => withRejected(prev, id),
         // replace: переключение между карточками — это просмотр, а не переходы:
         // иначе «Назад» пришлось бы жать столько раз, сколько строк открыли.
         { replace: true },
@@ -176,9 +172,12 @@ export default function RejectedTab() {
       {!collecting && (
         <Card className="border-warn/40 bg-warn/5 p-3 text-[13px]">
           {t("rejected.disabled_hint")}{" "}
-          <a className="text-accent hover:underline" href="/settings/general">
+          {/* Link, а не нативная <a>: маршрут внутренний, и «настоящая» ссылка
+              перезагружала бы всё приложение — с потерей кеша react-query и
+              миганием сайдбара — там, где достаточно перехода внутри SPA. */}
+          <Link className="text-accent hover:underline" to="/settings/general">
             {t("rejected.disabled_link")}
-          </a>
+          </Link>
         </Card>
       )}
 
@@ -280,7 +279,6 @@ export default function RejectedTab() {
                   group={g}
                   showTeam={isAdmin}
                   active={g.id === openID}
-                  onOpen={() => setOpenID(g.id)}
                 />
               ))}
             </tbody>
@@ -325,21 +323,20 @@ function RejectedRow({
   group,
   showTeam,
   active,
-  onOpen,
 }: {
   group: RejectedGroup;
   showTeam: boolean;
   // active — карточка этой группы открыта в панели справа. Панель не модальная,
   // и без подсветки было бы не видно, к какой строке она относится.
   active: boolean;
-  onOpen: () => void;
 }) {
   const { t } = useTranslation();
+  const [searchParams] = useSearchParams();
   const label = reasonLabelKey(group.reason);
   return (
     <tr
-      onClick={onOpen}
       className={cn(
+        STRETCH_HOST,
         "cursor-pointer border-b border-line/60 last:border-0 hover:bg-bg-muted",
         // Просмотренная гаснет, но остаётся на месте до обновления списка.
         group.resolved_at && "opacity-60",
@@ -352,7 +349,19 @@ function RejectedRow({
       </td>
       <td className="px-3 py-2">
         <span className="font-mono text-[11.5px] text-fg-muted">{group.http_method}</span>{" "}
-        <span className="break-all">{group.node_path}</span>
+        {/* Ссылка, а не обработчик на строке: у карточки отказа есть адрес
+            (§98.3), а открыть его в новой вкладке было нечем — тот же дефект,
+            что §79.3 ловил у вкладок узла. Растянута по строке: до этого
+            подсветка обещала клик по всей ширине.
+            replace — переключение между карточками это просмотр, а не переходы
+            (иначе «Назад» пришлось бы жать столько раз, сколько строк открыли). */}
+        <Link
+          replace
+          to={{ search: `?${withRejected(searchParams, group.id)}` }}
+          className={cn("break-all hover:text-accent", STRETCHED_LINK)}
+        >
+          <span className="relative z-[1]">{group.node_path}</span>
+        </Link>
       </td>
       {showTeam && (
         <td className="px-3 py-2 whitespace-nowrap">

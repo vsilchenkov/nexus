@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import RejectedTab from "./RejectedTab";
 import { type RejectedGroup } from "../../lib/rejected";
+import { expectStretchedTo } from "../../test/stretched";
 
 // §98.3: карточка отказа обязана иметь адрес — иначе ею нельзя поделиться, и
 // разбор приходится пересказывать словами («открой третью строку сверху»).
@@ -117,6 +118,23 @@ describe("RejectedTab — ссылка на конкретный отказ (§9
     renderTab(`/logs/rejected?rejected=${GROUP.id}`);
 
     await waitFor(() => expect(screen.getByText(GROUP.node_path)).toBeInTheDocument());
+  });
+
+  // §79.3: у карточки отказа есть адрес (§98.3), значит открывающий её элемент
+  // обязан быть ссылкой — иначе Ctrl+клик и «Открыть в новой вкладке» не
+  // работают, и адресом нельзя воспользоваться тем способом, ради которого он и
+  // заведён. Обработчик клика прошёл бы тест ниже и оставил бы дыру.
+  it("строка — настоящая ссылка на карточку, растянутая по всей строке", async () => {
+    mockServer([GROUP]);
+    renderTab();
+
+    const link = await waitFor(() => {
+      const el = screen.getByText(GROUP.node_path).closest("a");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(link.getAttribute("href") ?? "").toContain(`rejected=${GROUP.id}`);
+    expectStretchedTo(link, link.closest("tr") as HTMLElement);
   });
 
   it("клик по строке пишет id в адрес", async () => {
