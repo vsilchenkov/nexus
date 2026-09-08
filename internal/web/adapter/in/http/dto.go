@@ -67,10 +67,12 @@ type CreateNodeRequest struct {
 	CircuitBreakerThreshold   int32  `json:"circuit_breaker_threshold" binding:"omitempty,min=0,max=100"`
 	CircuitBreakerCooldownSec int32  `json:"circuit_breaker_cooldown_sec" binding:"omitempty,min=0,max=3600"`
 	Comment                   string `json:"comment" binding:"omitempty,max=2000"`
-	Status                    string `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
-	LogRequestBody            bool   `json:"log_request_body"`
-	LogResponseBody           bool   `json:"log_response_body"`
-	LogHeaders                bool   `json:"log_headers"`
+	// §99: группа узла; пусто = «без группы». Ссылка по id на node_groups.
+	GroupID         string `json:"group_id" binding:"omitempty,uuid"`
+	Status          string `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
+	LogRequestBody  bool   `json:"log_request_body"`
+	LogResponseBody bool   `json:"log_response_body"`
+	LogHeaders      bool   `json:"log_headers"`
 	// LoggingEnabled — указатель, чтобы отличить «не прислано» (дефолт true,
 	// сохраняет текущее поведение) от явного false (§22).
 	LoggingEnabled     *bool `json:"logging_enabled"`
@@ -148,6 +150,7 @@ type NodeResponse struct {
 	CircuitBreakerThreshold   int32    `json:"circuit_breaker_threshold"`
 	CircuitBreakerCooldownSec int32    `json:"circuit_breaker_cooldown_sec"`
 	Comment                   string   `json:"comment"`
+	GroupID                   string   `json:"group_id"`
 	Status                    string   `json:"status"`
 	TeamID                    string   `json:"team_id"`
 	LogRequestBody            bool     `json:"log_request_body"`
@@ -264,6 +267,7 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		CircuitBreakerThreshold:   r.CircuitBreakerThreshold,
 		CircuitBreakerCooldownSec: r.CircuitBreakerCooldownSec,
 		Comment:                   r.Comment,
+		GroupID:                   r.GroupID,
 		Status:                    domain.NodeStatus(r.Status),
 		LogRequestBody:            r.LogRequestBody,
 		LogResponseBody:           r.LogResponseBody,
@@ -323,6 +327,7 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		CircuitBreakerThreshold:   n.CircuitBreakerThreshold,
 		CircuitBreakerCooldownSec: n.CircuitBreakerCooldownSec,
 		Comment:                   n.Comment,
+		GroupID:                   n.GroupID,
 		Status:                    string(n.Status),
 		TeamID:                    n.TeamID,
 		LogRequestBody:            n.LogRequestBody,

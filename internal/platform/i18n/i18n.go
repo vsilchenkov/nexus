@@ -160,6 +160,14 @@ var translations = map[Lang]map[string]string{
 		"header.name_length":        "header name length must be between 1 and 100 characters",
 		"header.name_format":        "header name must be a valid RFC 7230 token (no spaces)",
 		"header.description_length": "description must be at most 500 characters",
+		// node groups (§99)
+		"node_group.not_found":          "node group not found",
+		"node_group.already_exists":     "a group with this name already exists",
+		"node_group.in_use":             "the group is used by nodes and cannot be deleted",
+		"node_group.name_length":        "group name length must be between 1 and 100 characters",
+		"node_group.description_length": "description must be at most 500 characters",
+		"node_group.sort_order_range":   "sort order must be between 0 and 100000",
+		"node_group.invalid_direction":  "move direction must be up or down",
 		// log mask patterns (§95)
 		"log_mask.not_found":           "log mask pattern not found",
 		"log_mask.pattern_length":      "pattern length must be between 1 and 500 characters",
@@ -306,6 +314,14 @@ var translations = map[Lang]map[string]string{
 		"header.name_length":        "длина имени заголовка должна быть от 1 до 100 символов",
 		"header.name_format":        "имя заголовка должно быть валидным RFC 7230 token (без пробелов)",
 		"header.description_length": "описание должно быть не длиннее 500 символов",
+		// node groups (§99)
+		"node_group.not_found":          "группа не найдена",
+		"node_group.already_exists":     "группа с таким именем уже существует",
+		"node_group.in_use":             "группа используется узлами — сначала уберите узлы из группы",
+		"node_group.name_length":        "длина имени группы должна быть от 1 до 100 символов",
+		"node_group.description_length": "описание должно быть не длиннее 500 символов",
+		"node_group.sort_order_range":   "порядок должен быть от 0 до 100000",
+		"node_group.invalid_direction":  "направление сдвига должно быть up или down",
 		// log mask patterns (§95)
 		"log_mask.not_found":           "шаблон маскирования не найден",
 		"log_mask.pattern_length":      "длина шаблона должна быть от 1 до 500 символов",
