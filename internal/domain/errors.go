@@ -199,6 +199,7 @@ var (
 	ErrNodeGroupDescriptionLength = errors.New("domain: node group description length must be <= 500")
 	ErrNodeGroupSortOrderRange    = errors.New("domain: node group sort_order must be 0..100000")
 	ErrNodeGroupInUse             = errors.New("domain: node group is used by nodes and cannot be deleted")
+	ErrNodeGroupInvalidDirection  = errors.New("domain: node group move direction must be up or down")
 
 	// §95: справочник маскирования логов узлов (log_mask_patterns).
 	ErrLogMaskNotFound          = errors.New("domain: log mask pattern not found")
