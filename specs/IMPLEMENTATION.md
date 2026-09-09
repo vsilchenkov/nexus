@@ -3206,6 +3206,15 @@ make images-rollback V=1.21.1                  # вернуть :latest без �
 python scripts/release/rollback_info.py v1.20.2 v1.21.0   # §74.6: строка «Откат» для CHANGELOG
 cp scripts/release/release_notes_template.md desc_1.0.0.md # §9.5-E: заготовка описания GitLab-релиза
 python scripts/release/create_release.py v1.0.0 v1.0.0 desc_1.0.0.md
+
+# Зеркало на GitHub (github.com/vsilchenkov/nexus, публичное) — с 09.09.2026
+#   push идёт ТОЛЬКО из PowerShell: ключ отдаёт SSH-агент Bitwarden, который виден
+#   Windows-OpenSSH, но не Git Bash (там SSH_AUTH_SOCK пуст → Permission denied)
+git push github master
+git push github --tags
+python scripts/release/create_github_release.py --check          # доступ и владелец репозитория
+# --rewrite-relative: относительные ссылки → raw/blob, в описании релиза GitHub их не резолвит
+GITHUB_TOKEN=… python scripts/release/create_github_release.py v1.35.1 "…" ANNIVERSARY.md --rewrite-relative master
 # Bootstrap admin (после первой миграции password_hash NULL):
 make set-admin-password PASSWORD=mySecret
 
