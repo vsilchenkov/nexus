@@ -5,6 +5,7 @@
 [![PostgreSQL](https://img.shields.io/badge/postgres-16-4169E1?logo=postgresql&logoColor=white)](migrations/)
 [![ClickHouse](https://img.shields.io/badge/clickhouse-24-FFCC01?logo=clickhouse&logoColor=black)](specs/sections/05-storage.md)
 [![Kafka](https://img.shields.io/badge/kafka-3.9%20KRaft-231F20?logo=apachekafka)](specs/sections/05-storage.md)
+[![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
 **Nexus принимает входящие HTTP-запросы, по настроенному маршруту («узлу») отправляет их во внешнюю
 систему — синхронно или через очередь — и сохраняет журнал каждого вызова.** Маршруты настраиваются
@@ -29,6 +30,9 @@
 Полное ТЗ — [specs/nexus_spec.md](./specs/nexus_spec.md), по разделам —
 [specs/sections/](./specs/sections/). Карта реализации (что готово, где лежит код, какие грабли) —
 [specs/IMPLEMENTATION.md](./specs/IMPLEMENTATION.md).
+
+Сто разделов ТЗ, чем они обошлись и на чём проект спотыкался — в юбилейном обзоре
+[ANNIVERSARY.md](./ANNIVERSARY.md).
 
 ---
 
@@ -444,4 +448,12 @@ runner с тегом `srv-d-android-l-docker` (docker-executor). Stages:
 
 ## Лицензия
 
-ООО "АПЕКС ТЕХНОЛОДЖИС"
+Copyright © 2026 ООО «АПЕКС ТЕХНОЛОДЖИС»
+
+Nexus — свободное программное обеспечение: вы можете распространять и изменять его на условиях
+GNU General Public License версии 3, опубликованной Free Software Foundation. Полный текст —
+в файле [LICENSE](./LICENSE).
+
+Программа распространяется в надежде, что она будет полезной, но **БЕЗ КАКИХ-ЛИБО ГАРАНТИЙ**,
+включая подразумеваемые гарантии товарного состояния и пригодности для определённой цели.
+Подробности — в тексте лицензии.

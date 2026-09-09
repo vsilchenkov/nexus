@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="424" viewBox="0 0 960 424" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Распределение 100 разделов ТЗ по темам">
+  <rect width="960" height="424" fill="#fcfcfb"/>
+  <text x="24" y="30" font-size="17" font-weight="600" fill="#0b0b0b">Что вошло в 100 разделов</text>
+  <text x="936" y="30" font-size="13" fill="#898781" text-anchor="end">каждый раздел учтён ровно один раз</text>
+  <text x="24" y="73.5" font-size="13" fill="#52514e">Веб-интерфейс, UX, персонализация</text>
+  <rect x="340" y="60" width="480.0" height="18" rx="3" fill="#2a78d6"/>
+  <text x="830.0" y="73.5" font-size="13" font-weight="600" fill="#0b0b0b">17</text>
+  <text x="24" y="103.5" font-size="13" fill="#52514e">Маршрутизация: приём, адресация, контракты</text>
+  <rect x="340" y="90" width="310.6" height="18" rx="3" fill="#2a78d6"/>
+  <text x="660.6" y="103.5" font-size="13" font-weight="600" fill="#0b0b0b">11</text>
+  <text x="24" y="133.5" font-size="13" fill="#52514e">Наблюдаемость: метрики, графики, алерты</text>
+  <rect x="340" y="120" width="310.6" height="18" rx="3" fill="#2a78d6"/>
+  <text x="660.6" y="133.5" font-size="13" font-weight="600" fill="#0b0b0b">11</text>
+  <text x="24" y="163.5" font-size="13" fill="#52514e">Устойчивость, лимиты, эксплуатация, HA</text>
+  <rect x="340" y="150" width="310.6" height="18" rx="3" fill="#2a78d6"/>
+  <text x="660.6" y="163.5" font-size="13" font-weight="600" fill="#0b0b0b">11</text>
+  <text x="24" y="193.5" font-size="13" fill="#52514e">Асинхронный конвейер: Kafka, RabbitMQ, DLQ</text>
+  <rect x="340" y="180" width="282.4" height="18" rx="3" fill="#2a78d6"/>
+  <text x="632.4" y="193.5" font-size="13" font-weight="600" fill="#0b0b0b">10</text>
+  <text x="24" y="223.5" font-size="13" fill="#52514e">Хранилища и схема журналов</text>
+  <rect x="340" y="210" width="282.4" height="18" rx="3" fill="#2a78d6"/>
+  <text x="632.4" y="223.5" font-size="13" font-weight="600" fill="#0b0b0b">10</text>
+  <text x="24" y="253.5" font-size="13" fill="#52514e">Команды, шаринг, аудит</text>
+  <rect x="340" y="240" width="282.4" height="18" rx="3" fill="#2a78d6"/>
+  <text x="632.4" y="253.5" font-size="13" font-weight="600" fill="#0b0b0b">10</text>
+  <text x="24" y="283.5" font-size="13" fill="#52514e">Безопасность, доступ, секреты</text>
+  <rect x="340" y="270" width="197.6" height="18" rx="3" fill="#2a78d6"/>
+  <text x="547.6" y="283.5" font-size="13" font-weight="600" fill="#0b0b0b">7</text>
+  <text x="24" y="313.5" font-size="13" fill="#52514e">Журнал запросов: поиск, фильтры, масштаб</text>
+  <rect x="340" y="300" width="141.2" height="18" rx="3" fill="#2a78d6"/>
+  <text x="491.2" y="313.5" font-size="13" font-weight="600" fill="#0b0b0b">5</text>
+  <text x="24" y="343.5" font-size="13" fill="#52514e">Основы и архитектура</text>
+  <rect x="340" y="330" width="112.9" height="18" rx="3" fill="#2a78d6"/>
+  <text x="462.9" y="343.5" font-size="13" font-weight="600" fill="#0b0b0b">4</text>
+  <text x="24" y="373.5" font-size="13" fill="#52514e">Качество: тесты, приёмка, документация</text>
+  <rect x="340" y="360" width="112.9" height="18" rx="3" fill="#2a78d6"/>
+  <text x="462.9" y="373.5" font-size="13" font-weight="600" fill="#0b0b0b">4</text>
+  <text x="24" y="412" font-size="12" fill="#898781">Больше всего сил ушло на интерфейс — 17 разделов; на устойчивость и эксплуатацию вместе с наблюдаемостью — 22.</text>
+</svg>

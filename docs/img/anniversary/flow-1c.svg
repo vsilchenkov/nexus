@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="506" viewBox="0 0 960 506" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Путь пакета 1С через шину и четыре места, где он ломался на бою">
+  <rect width="960" height="506" fill="#fcfcfb"/>
+  <text x="24" y="30" font-size="17" font-weight="600" fill="#0b0b0b">Nexus и 1С: путь пакета и четыре места, где он ломался</text>
+  <text x="24" y="52" font-size="13" fill="#52514e">Своего протокола 1С здесь нет — она ходит обычным HTTP. Но её профиль трафика переписал шине половину правил.</text>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#898781"/></marker></defs>
+  <rect x="24" y="90" width="150" height="64" rx="6" fill="#f2f1ed" stroke="#c3c2b7"/>
+  <text x="99" y="117" font-size="14" font-weight="600" fill="#52514e" text-anchor="middle">1С-отправитель</text>
+  <text x="99" y="136" font-size="11" fill="#898781" text-anchor="middle">HTTP-сервис /hs/…</text>
+  <line x1="180" y1="122" x2="208" y2="122" stroke="#898781" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="214" y="90" width="150" height="64" rx="6" fill="#ffffff" stroke="#2a78d6"/>
+  <text x="289" y="117" font-size="14" font-weight="600" fill="#0b0b0b" text-anchor="middle">Receiver</text>
+  <text x="289" y="136" font-size="11" fill="#898781" text-anchor="middle">авторизация, маршрут, маскирование</text>
+  <line x1="370" y1="122" x2="398" y2="122" stroke="#898781" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="404" y="90" width="150" height="64" rx="6" fill="#ffffff" stroke="#2a78d6"/>
+  <text x="479" y="117" font-size="14" font-weight="600" fill="#0b0b0b" text-anchor="middle">Kafka</text>
+  <text x="479" y="136" font-size="11" fill="#898781" text-anchor="middle">топик nexus.async</text>
+  <line x1="560" y1="122" x2="588" y2="122" stroke="#898781" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="594" y="90" width="150" height="64" rx="6" fill="#ffffff" stroke="#2a78d6"/>
+  <text x="669" y="117" font-size="14" font-weight="600" fill="#0b0b0b" text-anchor="middle">Sender</text>
+  <text x="669" y="136" font-size="11" fill="#898781" text-anchor="middle">доставка, повторы, breaker</text>
+  <line x1="750" y1="122" x2="778" y2="122" stroke="#898781" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="784" y="90" width="150" height="64" rx="6" fill="#f2f1ed" stroke="#c3c2b7"/>
+  <text x="859" y="117" font-size="14" font-weight="600" fill="#52514e" text-anchor="middle">1С-приёмник</text>
+  <text x="859" y="136" font-size="11" fill="#898781" text-anchor="middle">отвечает кодом 2000</text>
+  <text x="194" y="82" font-size="11" fill="#898781" text-anchor="middle">POST</text>
+  <text x="764" y="82" font-size="11" fill="#898781" text-anchor="middle">HTTP</text>
+  <line x1="669" y1="154" x2="669" y2="184" stroke="#898781" stroke-width="1.5" marker-end="url(#a)"/>
+  <rect x="594" y="186" width="150" height="40" rx="6" fill="#ffffff" stroke="#c3c2b7"/>
+  <text x="669" y="204" font-size="12.5" font-weight="600" fill="#0b0b0b" text-anchor="middle">ClickHouse</text>
+  <text x="669" y="219" font-size="11" fill="#898781" text-anchor="middle">журнал вызовов</text>
+  <text x="24" y="264" font-size="13" font-weight="600" fill="#0b0b0b">Где это ломалось на бою</text>
+  <rect x="24" y="280" width="440" height="88" rx="6" fill="#ffffff" stroke="#e1e0d9"/>
+  <rect x="24" y="280" width="3" height="88" rx="1.5" fill="#d03b3b"/>
+  <text x="38" y="302" font-size="13" font-weight="600" fill="#0b0b0b">413 на входе</text>
+  <text x="38" y="324" font-size="11" fill="#52514e">Обмен встал: 1С копила непереданное в ОДИН растущий пакет — 46 → 62 МБ</text>
+  <text x="38" y="339" font-size="11" fill="#52514e">за смену. Лимит тела поднимали трижды: 10 → 32 → 124 → 300 МиБ, и в §97</text>
+  <text x="38" y="354" font-size="11" fill="#52514e">конфиг стал потолком, а рабочее значение — в настройках, без рестарта.</text>
+  <rect x="480" y="280" width="440" height="88" rx="6" fill="#ffffff" stroke="#e1e0d9"/>
+  <rect x="480" y="280" width="3" height="88" rx="1.5" fill="#d03b3b"/>
+  <text x="494" y="302" font-size="13" font-weight="600" fill="#0b0b0b">Тихая потеря в очереди</text>
+  <text x="494" y="324" font-size="11" fill="#52514e">Брокерский message.max.bytes перебивал настройку топика: всё, что больше</text>
+  <text x="494" y="339" font-size="11" fill="#52514e">1 МиБ, отвергалось молча. Тело проходит пять независимых потолков, и</text>
+  <text x="494" y="354" font-size="11" fill="#52514e">каждый режет в своём месте со своей диагностикой.</text>
+  <rect x="24" y="382" width="440" height="88" rx="6" fill="#ffffff" stroke="#e1e0d9"/>
+  <rect x="24" y="382" width="3" height="88" rx="1.5" fill="#eb6834"/>
+  <text x="38" y="404" font-size="13" font-weight="600" fill="#0b0b0b">Курсор не двигался</text>
+  <text x="38" y="426" font-size="11" fill="#52514e">Клиент-1С ждал эхо приёмника (code: 2000), а шина отвечала своим ok —</text>
+  <text x="38" y="441" font-size="11" fill="#52514e">курсор стоял больше суток: ~1,5 млн повторных записей. Отсюда §82 (гейт</text>
+  <text x="38" y="456" font-size="11" fill="#52514e">async-входа) и §83 — настраиваемый шаблон ответа приёма.</text>
+  <rect x="480" y="382" width="440" height="88" rx="6" fill="#ffffff" stroke="#e1e0d9"/>
+  <rect x="480" y="382" width="3" height="88" rx="1.5" fill="#eb6834"/>
+  <text x="494" y="404" font-size="13" font-weight="600" fill="#0b0b0b">Дубли при повторе</text>
+  <text x="494" y="426" font-size="11" fill="#52514e">Строка ClickHouse ≠ запись: успешный повтор дописывает строку, а старая</text>
+  <text x="494" y="441" font-size="11" fill="#52514e">«не доставлено» остаётся навсегда — «Повторить все» отправило 15 дублей</text>
+  <text x="494" y="456" font-size="11" fill="#52514e">в 1С. Починено в §79; §96 научил повтор брать полное тело из очереди.</text>
+  <text x="24" y="494" font-size="11.5" fill="#898781">Разборы §79 · §82 · §83 · §96 · §97 — все четыре истории пришли с боя, ни одну не нашли тесты.</text>
+</svg>

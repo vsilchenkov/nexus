@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="520" viewBox="0 0 960 520" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Помесячная динамика: разделы ТЗ, коммиты и релизы с мая по сентябрь 2026">
+  <rect width="960" height="520" fill="#fcfcfb"/>
+  <text x="24" y="30" font-size="17" font-weight="600" fill="#0b0b0b">Как шла работа</text>
+  <text x="936" y="30" font-size="13" fill="#898781" text-anchor="end">три метрики, общая ось месяцев</text>
+
+  <!-- панель 1: разделы ТЗ -->
+  <text x="24" y="86" font-size="13" font-weight="600" fill="#0b0b0b">Разделы ТЗ</text>
+  <text x="24" y="104" font-size="12" fill="#898781">всего 100</text>
+  <line x1="150" y1="170.5" x2="936" y2="170.5" stroke="#c3c2b7"/>
+  <g fill="#2a78d6">
+    <rect x="180.6" y="89" width="96" height="81" rx="3"/>
+    <rect x="337.8" y="113" width="96" height="57" rx="3"/>
+    <rect x="495" y="80" width="96" height="90" rx="3"/>
+    <rect x="652.2" y="110" width="96" height="60" rx="3"/>
+    <rect x="809.4" y="158" width="96" height="12" rx="3"/>
+  </g>
+  <g font-size="13" font-weight="600" fill="#0b0b0b" text-anchor="middle">
+    <text x="228.6" y="83">27</text>
+    <text x="385.8" y="107">19</text>
+    <text x="543" y="74">30</text>
+    <text x="700.2" y="104">20</text>
+    <text x="857.4" y="152">4</text>
+  </g>
+
+  <!-- панель 2: коммиты -->
+  <text x="24" y="226" font-size="13" font-weight="600" fill="#0b0b0b">Коммиты</text>
+  <text x="24" y="244" font-size="12" fill="#898781">1315 в ветке dev</text>
+  <line x1="150" y1="310.5" x2="936" y2="310.5" stroke="#c3c2b7"/>
+  <g fill="#eb6834">
+    <rect x="180.6" y="260" width="96" height="50" rx="3"/>
+    <rect x="337.8" y="236" width="96" height="74" rx="3"/>
+    <rect x="495" y="225" width="96" height="85" rx="3"/>
+    <rect x="652.2" y="234" width="96" height="76" rx="3"/>
+    <rect x="809.4" y="300" width="96" height="10" rx="3"/>
+  </g>
+  <g font-size="13" font-weight="600" fill="#0b0b0b" text-anchor="middle">
+    <text x="228.6" y="254">223</text>
+    <text x="385.8" y="230">330</text>
+    <text x="543" y="219">378</text>
+    <text x="700.2" y="228">338</text>
+    <text x="857.4" y="294">46</text>
+  </g>
+
+  <!-- панель 3: релизы -->
+  <text x="24" y="366" font-size="13" font-weight="600" fill="#0b0b0b">Релизы</text>
+  <text x="24" y="384" font-size="12" fill="#898781">72 тега</text>
+  <line x1="150" y1="450.5" x2="936" y2="450.5" stroke="#c3c2b7"/>
+  <g fill="#1baf7a">
+    <rect x="337.8" y="398" width="96" height="52" rx="3"/>
+    <rect x="495" y="392" width="96" height="58" rx="3"/>
+    <rect x="652.2" y="360" width="96" height="90" rx="3"/>
+    <rect x="809.4" y="441" width="96" height="9" rx="3"/>
+  </g>
+  <g font-size="13" font-weight="600" fill="#0b0b0b" text-anchor="middle">
+    <text x="228.6" y="444" fill="#898781">0</text>
+    <text x="385.8" y="392">18</text>
+    <text x="543" y="386">20</text>
+    <text x="700.2" y="354">31</text>
+    <text x="857.4" y="435">3</text>
+  </g>
+
+  <!-- ось месяцев -->
+  <g font-size="13" fill="#52514e" text-anchor="middle">
+    <text x="228.6" y="474">май</text>
+    <text x="385.8" y="474">июнь</text>
+    <text x="543" y="474">июль</text>
+    <text x="700.2" y="474">август</text>
+    <text x="857.4" y="474">сентябрь*</text>
+  </g>
+  <text x="150" y="500" font-size="12" fill="#898781">* сентябрь неполный — по 8-е число; в мае релизов ещё не было, первый тег вышел 9 июня</text>
+</svg>

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="330" viewBox="0 0 960 330" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Оценка трудозатрат: экспертная 3,7–4,6 года против фактических 107 дней">
+  <rect width="960" height="330" fill="#fcfcfb"/>
+  <text x="24" y="30" font-size="17" font-weight="600" fill="#0b0b0b">Во что обошёлся бы проект одному программисту</text>
+  <text x="24" y="52" font-size="13" fill="#52514e">Шкала — годы работы одного человека: оценка по объёму сделанного против того, как вышло на самом деле.</text>
+
+  <g stroke="#e1e0d9">
+    <line x1="408" y1="70" x2="408" y2="220"/>
+    <line x1="536" y1="70" x2="536" y2="220"/>
+    <line x1="664" y1="70" x2="664" y2="220"/>
+    <line x1="792" y1="70" x2="792" y2="220"/>
+    <line x1="920" y1="70" x2="920" y2="220"/>
+  </g>
+
+  <text x="24" y="103" font-size="14" font-weight="600" fill="#0b0b0b">Оценка по разделам ТЗ</text>
+  <text x="24" y="121" font-size="11.5" fill="#898781">один senior fullstack, 100 разделов</text>
+  <rect x="280" y="88" width="473.6" height="26" rx="3" fill="#eb6834"/>
+  <rect x="755.6" y="88" width="113.2" height="26" rx="3" fill="#eb6834" fill-opacity="0.45"/>
+  <text x="742" y="105" font-size="14" font-weight="600" fill="#ffffff" text-anchor="end">3,7 – 4,6 года</text>
+
+  <text x="24" y="183" font-size="14" font-weight="600" fill="#0b0b0b">Как получилось на самом деле</text>
+  <text x="24" y="201" font-size="11.5" fill="#898781">один человек в паре с ИИ-агентом</text>
+  <rect x="280" y="168" width="37.1" height="26" rx="3" fill="#1baf7a"/>
+  <text x="329" y="185" font-size="14" font-weight="600" fill="#0b0b0b">107 дней</text>
+  <text x="409" y="185" font-size="13" fill="#898781">— это 0,29 года, в 13–16 раз быстрее оценки</text>
+
+  <line x1="280" y1="220.5" x2="920" y2="220.5" stroke="#c3c2b7"/>
+  <g font-size="12" fill="#898781" text-anchor="middle">
+    <text x="280" y="240">0</text>
+    <text x="408" y="240">1</text>
+    <text x="536" y="240">2</text>
+    <text x="664" y="240">3</text>
+    <text x="792" y="240">4</text>
+    <text x="920" y="240">5 лет</text>
+  </g>
+
+  <text x="24" y="278" font-size="12" fill="#52514e">Как считалось: 20 крупных разделов по 4 недели + 45 средних по 1,5 недели + 35 мелких по 2 дня = 161 неделя;</text>
+  <text x="24" y="296" font-size="12" fill="#52514e">плюс инфраструктура и CI (12 недель), документация (10) и разбор боевых инцидентов (10) — итого 193 недели.</text>
+  <text x="24" y="316" font-size="12" fill="#898781">Верхняя граница диапазона — та же работа при реальной занятости 80%: отпуска, переключения, дежурства.</text>
+</svg>
