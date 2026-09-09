@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="304" viewBox="0 0 960 304" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Nexus в цифрах: 100 разделов ТЗ, 1330 коммитов, 72 релиза, 107 дней, 176 500 строк кода, 42 миграции">
+  <rect width="960" height="304" fill="#fcfcfb"/>
+
+  <text x="24" y="34" font-size="17" font-weight="600" fill="#0b0b0b">Nexus в цифрах</text>
+  <text x="936" y="34" font-size="13" fill="#898781" text-anchor="end">24 мая — 8 сентября 2026</text>
+
+  <!-- ряд 1 -->
+  <g>
+    <rect x="24" y="56" width="293" height="104" rx="6" fill="#ffffff" stroke="#e1e0d9"/>
+    <rect x="24" y="56" width="293" height="3" rx="1.5" fill="#2a78d6"/>
+    <text x="44" y="112" font-size="42" font-weight="600" fill="#0b0b0b">100</text>
+    <text x="44" y="134" font-size="14" fill="#52514e">разделов технического задания</text>
+    <text x="44" y="152" font-size="12" fill="#898781">§1 … §100, без пропусков</text>
+  </g>
+  <g>
+    <rect x="333" y="56" width="293" height="104" rx="6" fill="#ffffff" stroke="#e1e0d9"/>
+    <text x="353" y="112" font-size="42" font-weight="600" fill="#0b0b0b">1330</text>
+    <text x="353" y="134" font-size="14" fill="#52514e">коммитов</text>
+    <text x="353" y="152" font-size="12" fill="#898781">+401 198 / −85 089 строк</text>
+  </g>
+  <g>
+    <rect x="642" y="56" width="293" height="104" rx="6" fill="#ffffff" stroke="#e1e0d9"/>
+    <text x="662" y="112" font-size="42" font-weight="600" fill="#0b0b0b">72</text>
+    <text x="662" y="134" font-size="14" fill="#52514e">релиза</text>
+    <text x="662" y="152" font-size="12" fill="#898781">теги v1.0.3 … v1.35.0</text>
+  </g>
+
+  <!-- ряд 2 -->
+  <g>
+    <rect x="24" y="176" width="293" height="104" rx="6" fill="#ffffff" stroke="#e1e0d9"/>
+    <text x="44" y="232" font-size="42" font-weight="600" fill="#0b0b0b">176 500</text>
+    <text x="44" y="254" font-size="14" fill="#52514e">строк кода</text>
+    <text x="44" y="272" font-size="12" fill="#898781">Go 137 643 · TypeScript 38 871</text>
+  </g>
+  <g>
+    <rect x="333" y="176" width="293" height="104" rx="6" fill="#ffffff" stroke="#e1e0d9"/>
+    <text x="353" y="232" font-size="42" font-weight="600" fill="#0b0b0b">427</text>
+    <text x="353" y="254" font-size="14" fill="#52514e">файлов с тестами</text>
+    <text x="353" y="272" font-size="12" fill="#898781">271 unit-Go · 77 integration · 79 фронт</text>
+  </g>
+  <g>
+    <rect x="642" y="176" width="293" height="104" rx="6" fill="#ffffff" stroke="#e1e0d9"/>
+    <text x="662" y="232" font-size="42" font-weight="600" fill="#0b0b0b">107</text>
+    <text x="662" y="254" font-size="14" fill="#52514e">дней от первого коммита</text>
+    <text x="662" y="272" font-size="12" fill="#898781">до сотого раздела ТЗ</text>
+  </g>
+</svg>

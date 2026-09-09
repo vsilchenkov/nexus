@@ -31,6 +31,9 @@
 [specs/sections/](./specs/sections/). Карта реализации (что готово, где лежит код, какие грабли) —
 [specs/IMPLEMENTATION.md](./specs/IMPLEMENTATION.md).
 
+Сто разделов ТЗ, чем они обошлись и на чём проект спотыкался — в юбилейном обзоре
+[ANNIVERSARY.md](./ANNIVERSARY.md).
+
 ---
 
 ## Как это работает
