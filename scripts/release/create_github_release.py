@@ -101,6 +101,8 @@ def main() -> None:
     p.add_argument("--check", action="store_true", help="только проверить доступ к репозиторию")
     p.add_argument("--dry-run", action="store_true", help="показать, что будет отправлено, и выйти")
     p.add_argument("--out", metavar="FILE", help="сохранить готовое тело релиза в файл (для ручной вставки)")
+    p.add_argument("--update", action="store_true",
+                   help="обновить уже опубликованный релиз этого тега вместо создания нового")
     args = p.parse_args()
 
     slug = repo_slug(args.remote)
@@ -135,13 +137,19 @@ def main() -> None:
         print(body[:600])
         return
 
-    rel = api("POST", "/repos/%s/releases" % slug, token, {
+    payload = {
         "tag_name": args.tag,
         "name": args.name,
         "body": body,
         "draft": False,
         "prerelease": False,
-    })
+    }
+    if args.update:
+        existing = api("GET", "/repos/%s/releases/tags/%s" % (slug, args.tag), token)
+        rel = api("PATCH", "/repos/%s/releases/%d" % (slug, existing["id"]), token, payload)
+        print("обновлён релиз", rel["tag_name"], "->", rel["html_url"])
+        return
+    rel = api("POST", "/repos/%s/releases" % slug, token, payload)
     print("создан релиз", rel["tag_name"], "->", rel["html_url"])
 
 
