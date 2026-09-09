@@ -48,14 +48,28 @@ def rewrite_links(md: str, slug: str, ref: str) -> str:
     raw = "https://raw.githubusercontent.com/%s/%s/" % (slug, ref)
     blob = "https://github.com/%s/blob/%s/" % (slug, ref)
 
+    def absolute(target: str, is_image: bool) -> str:
+        base = raw if (is_image or re.search(r"\.(png|jpe?g|gif|svg|webp)$", target, re.I)) else blob
+        return base + target.lstrip("./")
+
     def sub(m):
-        bang, text, target = m.group(1), m.group(2), m.group(3).lstrip("./")
+        bang, text, target = m.group(1), m.group(2), m.group(3)
         if re.match(r"^(https?://|#|mailto:)", target):
             return m.group(0)
-        base = raw if (bang or re.search(r"\.(png|jpe?g|gif|svg|webp)$", target, re.I)) else blob
-        return "%s[%s](%s%s)" % (bang, text, base, target)
+        return "%s[%s](%s)" % (bang, text, absolute(target, bool(bang)))
 
-    return re.sub(r"(!?)\[([^\]]*)\]\(([^)\s]+)\)", sub, md)
+    md = re.sub(r"(!?)\[([^\]]*)\]\(([^)\s]+)\)", sub, md)
+
+    # Второй проход — ссылки, обёрнутые вокруг картинки: `[![alt](img)](target)`.
+    # Текст такой ссылки сам содержит `]`, поэтому первый проход её не видит и
+    # переписывает только вложенную картинку, оставляя внешнюю цель относительной.
+    def tail(m):
+        target = m.group(1)
+        if re.match(r"^(https?://|#|mailto:)", target):
+            return m.group(0)
+        return "](%s)" % absolute(target, False)
+
+    return re.sub(r"\]\(([^)\s]+)\)", tail, md)
 
 
 def api(method: str, path: str, token: str, payload: dict | None = None) -> dict:
@@ -86,6 +100,7 @@ def main() -> None:
                    help="переписать относительные ссылки на абсолютные для этой ветки/тега")
     p.add_argument("--check", action="store_true", help="только проверить доступ к репозиторию")
     p.add_argument("--dry-run", action="store_true", help="показать, что будет отправлено, и выйти")
+    p.add_argument("--out", metavar="FILE", help="сохранить готовое тело релиза в файл (для ручной вставки)")
     args = p.parse_args()
 
     slug = repo_slug(args.remote)
@@ -109,6 +124,10 @@ def main() -> None:
         body = rewrite_links(body, slug, args.rewrite_relative)
     if len(body) > 125000:
         sys.exit("тело релиза %d символов — GitHub принимает не больше 125000" % len(body))
+
+    if args.out:
+        io.open(args.out, "w", encoding="utf-8", newline="\n").write(body)
+        print("тело релиза сохранено:", args.out, "(%d символов)" % len(body))
 
     if args.dry_run:
         print("репозиторий:", slug, "| тег:", args.tag, "| символов:", len(body))
