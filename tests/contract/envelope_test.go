@@ -13,7 +13,12 @@ package contract
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +85,57 @@ func TestRMQMetaCopiesMatch(t *testing.T) {
 	copyOf := jsonFields(t, senderusecase.RMQMeta{})
 
 	assert.Equal(t, canon, copyOf, "копии RMQMeta разошлись")
+}
+
+// TestQueueEnvelopeProjectionSubsetOfCanon — проекция конверта у Web
+// (kafkaadmin, вкладка «Очередь») обязана быть подмножеством канона и нести
+// node_id: по нему «Очередь» отличает сообщения одноимённых узлов разных команд
+// (§101.8). Тип проекции неэкспортируемый, поэтому поля берутся разбором
+// исходника, а не reflect.
+func TestQueueEnvelopeProjectionSubsetOfCanon(t *testing.T) {
+	t.Parallel()
+
+	canon := jsonFields(t, receiverusecase.Envelope{})
+	projection := structJSONNames(t, "../../internal/web/adapter/out/kafkaadmin/async_queue.go", "queueEnvelope")
+	require.NotEmpty(t, projection, "тип queueEnvelope не найден — проекция переехала?")
+
+	for _, name := range projection {
+		_, ok := canon[name]
+		assert.True(t, ok, "поле %q проекции Web отсутствует в каноне конверта", name)
+	}
+	assert.Contains(t, projection, "node_id",
+		"без node_id «Очередь» не отличит сообщения одноимённых узлов разных команд")
+}
+
+// structJSONNames — JSON-имена полей структуры typeName из исходного файла.
+func structJSONNames(t *testing.T, file, typeName string) []string {
+	t.Helper()
+
+	f, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
+	require.NoError(t, err)
+
+	var out []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		ts, ok := n.(*ast.TypeSpec)
+		if !ok || ts.Name.Name != typeName {
+			return true
+		}
+		st, ok := ts.Type.(*ast.StructType)
+		require.True(t, ok, "%s — не структура", typeName)
+		for _, field := range st.Fields.List {
+			if field.Tag == nil {
+				continue
+			}
+			raw, uErr := strconv.Unquote(field.Tag.Value)
+			require.NoError(t, uErr)
+			name, _, _ := strings.Cut(reflect.StructTag(raw).Get("json"), ",")
+			if name != "" && name != "-" {
+				out = append(out, name)
+			}
+		}
+		return false
+	})
+	return out
 }
 
 // TestAsyncEnvelopeRoundTrip — сериализация Receiver'а читается Sender'ом

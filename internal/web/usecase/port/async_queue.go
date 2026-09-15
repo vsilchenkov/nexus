@@ -2,26 +2,62 @@ package port
 
 import (
 	"context"
+	"fmt"
 	"time"
+
+	"nexus/internal/domain"
 )
 
 // AsyncQueuePeeker — read-only peek в топик nexus.async для экрана управления
 // очередью узла (§34.4). Реализуется adapter/out/kafkaadmin транзиентным
 // kafka.Reader без GroupID (от committed-offset группы Sender до high-watermark,
-// фильтр по key=node_path). Опционален: nil при пустом cfg.Kafka.Brokers —
+// отбор сообщений узла по QueueOwner, §101.8). Опционален: nil при пустом cfg.Kafka.Brokers —
 // usecase тогда отдаёт деградацию kafka_available=false.
 //
 // Интерфейс определён на стороне потребителя (usecase) и содержит только то,
 // что usecase реально вызывает (ISP). Все методы ограничены cap'ом сообщений —
 // при переполнении возвращается флаг Capped (число/список — нижняя оценка).
 type AsyncQueuePeeker interface {
-	// PeekList — первые limit метаданных сообщений node_path (без тела).
-	PeekList(ctx context.Context, group, topic, nodePath string, limit, cap int) (PeekListResult, error)
+	// PeekList — первые limit метаданных сообщений owner (без тела).
+	PeekList(ctx context.Context, group, topic string, owner QueueOwner, limit, cap int) (PeekListResult, error)
 	// PeekBody — тело одного сообщения по физической координате (partition, offset).
-	PeekBody(ctx context.Context, topic string, partition int, offset int64) (QueueMessageBody, error)
-	// ScanIDs — ID сообщений node_path с фильтром по периоду ReceivedAt ∈ [from,to]
+	// Координату присылает клиент, поэтому сообщение другого узла отдаётся
+	// ошибкой ErrQueueMessageNotOwned, а не телом (§101.8).
+	PeekBody(ctx context.Context, topic string, partition int, offset int64, owner QueueOwner) (QueueMessageBody, error)
+	// ScanIDs — ID сообщений owner с фильтром по периоду ReceivedAt ∈ [from,to]
 	// (нулевые границы = без фильтра). Для purge (§34.4).
-	ScanIDs(ctx context.Context, group, topic, nodePath string, from, to time.Time, cap int) (ScanIDsResult, error)
+	ScanIDs(ctx context.Context, group, topic string, owner QueueOwner, from, to time.Time, cap int) (ScanIDsResult, error)
+}
+
+// ErrQueueMessageNotOwned — сообщение по запрошенной координате принадлежит
+// другому узлу (§101.8). Оборачивает domain.ErrNotFound: для вызывающего чужое
+// сообщение — то же, что отсутствующее, handler отвечает 404.
+var ErrQueueMessageNotOwned = fmt.Errorf("queue message belongs to another node: %w", domain.ErrNotFound)
+
+// QueueOwner — узел, чьи сообщения отбираются из очереди (§101.8).
+//
+// Ключ сообщения — путь узла, а путь уникален лишь внутри команды: одноимённые
+// узлы разных команд пишут в топик с одним ключом. Различает их node_id
+// конверта (§101.4).
+type QueueOwner struct {
+	Path   string
+	NodeID string
+	// AcceptLegacy — считать своими конверты без node_id, записанные до §101.
+	// Истина только для пути, однозначного во всём инстансе: иначе старое
+	// сообщение одноимённого узла другой команды попадало бы в список и в очистку.
+	AcceptLegacy bool
+}
+
+// Owns сообщает, принадлежит ли узлу сообщение с ключом key и node_id конверта
+// nodeID.
+func (o QueueOwner) Owns(key, nodeID string) bool {
+	if key != o.Path {
+		return false
+	}
+	if nodeID != "" {
+		return nodeID == o.NodeID
+	}
+	return o.AcceptLegacy
 }
 
 // QueueSource — топик очереди и consumer-group, чей committed offset отмечает

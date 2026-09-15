@@ -748,7 +748,7 @@ func (a *App) Start(ctx context.Context) error {
 	// отложенных сообщений paused-узлов. Вкладка «Очередь» показывает оба,
 	// иначе бэклог паузы исчезает из UI, а «Очистить все ожидающие» его не находит.
 	asyncQueueUC := usecase.NewAsyncQueueUsecase(
-		asyncPeeker, queueCancel, failedPurger, nodeRepo, auditUC,
+		asyncPeeker, queueCancel, failedPurger, nodeRepo, nodeRepo, auditUC,
 		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
 		a.cfg.Kafka.PausedGroup(), a.cfg.Kafka.PausedTopic,
 		dlqRetention, 0, a.logger,

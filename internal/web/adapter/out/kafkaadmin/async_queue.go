@@ -12,10 +12,10 @@ import (
 )
 
 // Управление async-очередью (§34.4): peek поверх транзиентного kafka.Reader без
-// GroupID. Читаем от committed-offset группы Sender до high-watermark, фильтруем
-// по key=node_path. Ограничено cap'ом сообщений (защита от огромной очереди) и
-// bounded-ctx (не висим на запросе). Reader не входит в группу Sender, ничего не
-// коммитит и не мешает доставке.
+// GroupID. Читаем от committed-offset группы Sender до high-watermark, отбираем
+// сообщения узла по ключу и node_id конверта (§101.8). Ограничено cap'ом
+// сообщений (защита от огромной очереди) и bounded-ctx (не висим на запросе).
+// Reader не входит в группу Sender, ничего не коммитит и не мешает доставке.
 
 const (
 	peekCapDefault = 5000                   // макс. число прочитанных сообщений за peek
@@ -34,8 +34,11 @@ var _ port.AsyncQueuePeeker = (*Client)(nil)
 // намеренно (как и в sender), чтобы web-адаптер не зависел от receiver/sender.
 // JSON-теги обязаны совпадать с каноном.
 type queueEnvelope struct {
-	ID         string            `json:"id"`
-	NodePath   string            `json:"node_path"`
+	ID       string `json:"id"`
+	NodePath string `json:"node_path"`
+	// NodeID — §101.8: по нему «Очередь» отличает сообщения одноимённых узлов
+	// разных команд. Пусто у конвертов, записанных до §101.
+	NodeID     string            `json:"node_id,omitempty"`
 	Method     string            `json:"method"`
 	TargetURL  string            `json:"target_url"`
 	Headers    map[string]string `json:"headers,omitempty"`
@@ -43,15 +46,19 @@ type queueEnvelope struct {
 	ReceivedAt time.Time         `json:"received_at"`
 }
 
-// decodeQueueMeta декодирует одно сообщение и фильтрует по nodePath (key
-// сообщения = node.Path, ставит продюсер). Возвращает (meta, true), если
-// сообщение принадлежит узлу и распарсилось; иначе (zero, false).
-func decodeQueueMeta(msg kafka.Message, nodePath, topic string) (port.QueueMessageMeta, bool) {
-	if string(msg.Key) != nodePath {
-		return port.QueueMessageMeta{}, false
+// decodeQueueMeta декодирует одно сообщение и отбирает сообщения owner (§101.8):
+// ключ сообщения — путь узла (ставит продюсер), node_id конверта различает
+// одноимённые узлы разных команд. Возвращает (meta, true), если сообщение
+// принадлежит узлу и распарсилось; иначе (zero, false).
+func decodeQueueMeta(msg kafka.Message, owner port.QueueOwner, topic string) (port.QueueMessageMeta, bool) {
+	if string(msg.Key) != owner.Path {
+		return port.QueueMessageMeta{}, false // чужой путь отсеивается до разбора JSON
 	}
 	var env queueEnvelope
 	if json.Unmarshal(msg.Value, &env) != nil {
+		return port.QueueMessageMeta{}, false
+	}
+	if !owner.Owns(string(msg.Key), env.NodeID) {
 		return port.QueueMessageMeta{}, false
 	}
 	return port.QueueMessageMeta{
@@ -78,12 +85,12 @@ func inPeriod(t, from, to time.Time) bool {
 }
 
 // PeekList собирает первые limit метаданных сообщений узла.
-func (c *Client) PeekList(ctx context.Context, group, topic, nodePath string, limit, capN int) (port.PeekListResult, error) {
+func (c *Client) PeekList(ctx context.Context, group, topic string, owner port.QueueOwner, limit, capN int) (port.PeekListResult, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	items := make([]port.QueueMessageMeta, 0, limit)
-	capped, err := c.scanQueue(ctx, group, topic, nodePath, capN, func(m port.QueueMessageMeta) bool {
+	capped, err := c.scanQueue(ctx, group, topic, owner, capN, func(m port.QueueMessageMeta) bool {
 		items = append(items, m)
 		return len(items) < limit // дочитали страницу — прекращаем
 	})
@@ -94,9 +101,9 @@ func (c *Client) PeekList(ctx context.Context, group, topic, nodePath string, li
 }
 
 // ScanIDs собирает ID сообщений узла с фильтром по периоду (для purge).
-func (c *Client) ScanIDs(ctx context.Context, group, topic, nodePath string, from, to time.Time, capN int) (port.ScanIDsResult, error) {
+func (c *Client) ScanIDs(ctx context.Context, group, topic string, owner port.QueueOwner, from, to time.Time, capN int) (port.ScanIDsResult, error) {
 	var ids []string
-	capped, err := c.scanQueue(ctx, group, topic, nodePath, capN, func(m port.QueueMessageMeta) bool {
+	capped, err := c.scanQueue(ctx, group, topic, owner, capN, func(m port.QueueMessageMeta) bool {
 		if inPeriod(m.ReceivedAt, from, to) {
 			ids = append(ids, m.ID)
 		}
@@ -108,25 +115,25 @@ func (c *Client) ScanIDs(ctx context.Context, group, topic, nodePath string, fro
 	return port.ScanIDsResult{IDs: ids, Capped: capped}, nil
 }
 
-// PeekBody читает тело одного сообщения по (partition, offset).
-func (c *Client) PeekBody(ctx context.Context, topic string, partition int, offset int64) (port.QueueMessageBody, error) {
-	bctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-	r := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: c.brokers, Topic: topic, Partition: partition,
-		MinBytes: 1, MaxBytes: peekMaxBytes, MaxWait: peekMaxWait,
-	})
-	defer r.Close()
-	if err := r.SetOffset(offset); err != nil {
-		return port.QueueMessageBody{}, fmt.Errorf("set offset: %w", err)
-	}
-	msg, err := r.ReadMessage(bctx)
+// PeekBody читает тело одного сообщения по (partition, offset), если оно
+// принадлежит owner (§101.8). Координату присылает клиент: без сверки владельца
+// эндпоинт отдавал тело любого сообщения топика.
+func (c *Client) PeekBody(ctx context.Context, topic string, partition int, offset int64, owner port.QueueOwner) (port.QueueMessageBody, error) {
+	msg, err := c.readAt(ctx, topic, partition, offset)
 	if err != nil {
-		return port.QueueMessageBody{}, fmt.Errorf("read message: %w", err)
+		return port.QueueMessageBody{}, err
+	}
+	if string(msg.Key) != owner.Path {
+		c.debugNotOwned(topic, partition, offset, owner, "key")
+		return port.QueueMessageBody{}, port.ErrQueueMessageNotOwned
 	}
 	var env queueEnvelope
 	if err := json.Unmarshal(msg.Value, &env); err != nil {
 		return port.QueueMessageBody{}, fmt.Errorf("unmarshal envelope: %w", err)
+	}
+	if !owner.Owns(string(msg.Key), env.NodeID) {
+		c.debugNotOwned(topic, partition, offset, owner, "node_id")
+		return port.QueueMessageBody{}, port.ErrQueueMessageNotOwned
 	}
 	return port.QueueMessageBody{
 		ID:        env.ID,
@@ -137,11 +144,43 @@ func (c *Client) PeekBody(ctx context.Context, topic string, partition int, offs
 	}, nil
 }
 
-// scanQueue читает сообщения node_path от committed-offset группы до
+// readAt читает одно сообщение по физической координате.
+func (c *Client) readAt(ctx context.Context, topic string, partition int, offset int64) (kafka.Message, error) {
+	bctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	r := kafka.NewReader(kafka.ReaderConfig{
+		Brokers: c.brokers, Topic: topic, Partition: partition,
+		MinBytes: 1, MaxBytes: peekMaxBytes, MaxWait: peekMaxWait,
+	})
+	defer r.Close()
+	if err := r.SetOffset(offset); err != nil {
+		return kafka.Message{}, fmt.Errorf("set offset: %w", err)
+	}
+	msg, err := r.ReadMessage(bctx)
+	if err != nil {
+		return kafka.Message{}, fmt.Errorf("read message: %w", err)
+	}
+	return msg, nil
+}
+
+// debugNotOwned — след отказа в теле чужого сообщения (§51.9): без него жалобу
+// «тело не открывается» не отличить от сбоя Kafka. by — что не совпало: ключ
+// сообщения или node_id конверта.
+func (c *Client) debugNotOwned(topic string, partition int, offset int64, owner port.QueueOwner, by string) {
+	c.logger.Debug("kafka peek body refused: message belongs to another node",
+		c.logger.Str("op", "web.kafkaAdmin.peekBody"),
+		c.logger.Str("topic", topic),
+		c.logger.Int("partition", partition),
+		c.logger.Any("offset", offset),
+		c.logger.Str("node_id", owner.NodeID),
+		c.logger.Str("mismatch", by))
+}
+
+// scanQueue читает сообщения узла от committed-offset группы до
 // high-watermark по всем партициям, вызывая visit для каждого подходящего.
 // visit возвращает false → прекратить скан (страница собрана). Возвращает
 // capped=true при упоре в cap (прочитано cap сообщений, очередь может быть больше).
-func (c *Client) scanQueue(ctx context.Context, group, topic, nodePath string, capN int, visit func(port.QueueMessageMeta) bool) (bool, error) {
+func (c *Client) scanQueue(ctx context.Context, group, topic string, owner port.QueueOwner, capN int, visit func(port.QueueMessageMeta) bool) (bool, error) {
 	if capN <= 0 {
 		capN = peekCapDefault
 	}
@@ -169,7 +208,7 @@ func (c *Client) scanQueue(ctx context.Context, group, topic, nodePath string, c
 		if start >= hi {
 			continue // нет неконсюмированных в партиции
 		}
-		capped, stop := c.scanPartition(scanCtx, topic, pid, start, hi, nodePath, capN, &read, visit)
+		capped, stop := c.scanPartition(scanCtx, topic, pid, start, hi, owner, capN, &read, visit)
 		if capped {
 			return true, nil
 		}
@@ -180,10 +219,10 @@ func (c *Client) scanQueue(ctx context.Context, group, topic, nodePath string, c
 	return false, nil
 }
 
-// scanPartition читает партицию от start до hi-1, фильтруя по nodePath. read —
+// scanPartition читает партицию от start до hi-1, отбирая сообщения owner. read —
 // общий счётчик прочитанных сообщений (для cap). Возвращает capped (упор в cap)
 // и stop (visit попросил прекратить).
-func (c *Client) scanPartition(ctx context.Context, topic string, pid int, start, hi int64, nodePath string, capN int, read *int, visit func(port.QueueMessageMeta) bool) (capped, stop bool) {
+func (c *Client) scanPartition(ctx context.Context, topic string, pid int, start, hi int64, owner port.QueueOwner, capN int, read *int, visit func(port.QueueMessageMeta) bool) (capped, stop bool) {
 	r := kafka.NewReader(kafka.ReaderConfig{
 		Brokers: c.brokers, Topic: topic, Partition: pid,
 		MinBytes: 1, MaxBytes: peekMaxBytes, MaxWait: peekMaxWait,
@@ -204,7 +243,7 @@ func (c *Client) scanPartition(ctx context.Context, topic string, pid int, start
 			return false, false
 		}
 		*read++
-		if meta, ok := decodeQueueMeta(msg, nodePath, topic); ok {
+		if meta, ok := decodeQueueMeta(msg, owner, topic); ok {
 			if !visit(meta) {
 				return false, true
 			}

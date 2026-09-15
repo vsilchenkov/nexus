@@ -5910,7 +5910,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Контракт доставки `node_id`/`team`, Sender ищет узел по id | ✅ Phase 101.3 | [sender.proto](../proto/sender/v1/sender.proto) `team_slug = 33`; конверт `node_id`/`team` — [envelope.go](../internal/receiver/usecase/envelope.go), [async_envelope.go](../internal/sender/usecase/async_envelope.go); заголовки Kafka — [route_async.go](../internal/receiver/usecase/route_async.go), [puller.go](../internal/receiver/usecase/puller.go), `withNodeIdentity`; слог pull-узла — [nodelister.go](../internal/receiver/adapter/out/rabbitmq/nodelister.go); выбор узла — [envelope_node.go](../internal/sender/usecase/envelope_node.go) `resolveEnvelopeNode`/`ErrNodeAmbiguous`, [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `GetByID`/`ListByPath`; тесты [envelope_node_test.go](../internal/sender/usecase/envelope_node_test.go), [route_identity_test.go](../internal/receiver/usecase/route_identity_test.go), [node_identity_test.go](../tests/integration/node_identity_test.go), [tests/contract/envelope_test.go](../tests/contract/envelope_test.go) |
 | Метка `team` во всех per-node метриках | ✅ Phase 101.4 | [node_labels.go](../internal/platform/metrics/node_labels.go) `NodeLabels` и типизированные методы, [metrics.go](../internal/platform/metrics/metrics.go) (14 векторов), [gin.go](../internal/platform/metrics/gin.go) `NodeLabelsFromGin`; запись — [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) (слог из `team_slug`), [envelope_node.go](../internal/sender/usecase/envelope_node.go) `nodeLabels`/`envelopeLabels`, [async.go](../internal/sender/usecase/async.go), [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go), [puller.go](../internal/receiver/usecase/puller.go), [handler.go](../internal/receiver/adapter/in/http/handler.go), [replay.go](../internal/web/usecase/replay.go) `nodeTeamSlug`; guard-тесты [node_labels_test.go](../internal/platform/metrics/node_labels_test.go) |
 | Рантайм-ключи Redis и pull-воркеры по `node_id` | ✅ Phase 101.5 | ключи — [nodestatus/redis.go](../internal/platform/nodestatus/redis.go) `Key`/`StreakKey`/`LegacyKey`, [circuitbreaker/redis.go](../internal/platform/circuitbreaker/redis.go) `NodeKey`; перенос — [nodestatus/migrate.go](../internal/platform/nodestatus/migrate.go) `LegacyMigrator`, [node_status_migration.go](../internal/web/usecase/node_status_migration.go), запуск в [web/app.go](../internal/web/app.go); Sender — [breaker_vote.go](../internal/sender/usecase/breaker_vote.go) `breakerKey`, [send.go](../internal/sender/usecase/send.go), [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go), [async.go](../internal/sender/usecase/async.go), [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go); Receiver — [puller_manager.go](../internal/receiver/usecase/puller_manager.go), [healthsink.go](../internal/receiver/adapter/out/rabbitmq/healthsink.go); Web — [last_outcome.go](../internal/web/usecase/last_outcome.go) `NodeRef`, [node_breaker.go](../internal/web/usecase/node_breaker.go), адаптеры [redis/](../internal/web/adapter/out/redis/); контракт писателей и читателя — [runtime_keys_test.go](../tests/contract/runtime_keys_test.go) |
-| «Очередь»: принадлежность сообщения, чтение тела | ⛔ Phase 101.6 | — |
+| «Очередь»: принадлежность сообщения, чтение тела | ✅ Phase 101.6 | владелец — [port/async_queue.go](../internal/web/usecase/port/async_queue.go) `QueueOwner`/`Owns`/`ErrQueueMessageNotOwned`; отбор и сверка тела — [kafkaadmin/async_queue.go](../internal/web/adapter/out/kafkaadmin/async_queue.go) `decodeQueueMeta`/`PeekBody`; однозначность пути — [async_queue.go](../internal/web/usecase/async_queue.go) `queueOwner`; тесты [port/async_queue_test.go](../internal/web/usecase/port/async_queue_test.go), [async_queue_owner_test.go](../tests/integration/async_queue_owner_test.go), сверка проекции конверта — [envelope_test.go](../tests/contract/envelope_test.go) `TestQueueEnvelopeProjectionSubsetOfCanon` |
 | Web: чтение Prometheus по (team, node) | ⛔ Phase 101.7 | — |
 | UI: команда в топах Kafka, снятие правила §86.8 | ⛔ Phase 101.8 | — |
 | Grafana, алерты, `make check-alerts` | ⛔ Phase 101.9 | — |
@@ -6050,6 +6050,31 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   101.5: откат каждой из 9 правок к поведению до §101 (ключи по пути в Sender, Receiver и Web, ключ
   без `id:`, перенос без отметки) делает тест красным.
 
-- **IDOR во вкладке «Очередь».** `GET …/queue/body` проверял доступ к узлу из адреса, а сообщение
-  читал по `(topic, partition, offset)` из запроса без сверки владельца — тело чужого сообщения
-  отдавалось любому участнику команды с async-узлом.
+- **IDOR во вкладке «Очередь» (закрыт в 101.6).** `GET …/async-queue/messages/body` проверял доступ
+  к узлу из адреса, а сообщение читал по `(topic, partition, offset)` из запроса без сверки
+  владельца — тело чужого сообщения отдавалось любому участнику команды с async-узлом. Теперь
+  `PeekBody` сверяет ключ и `node_id` конверта. Чужое сообщение даёт `port.ErrQueueMessageNotOwned`,
+  а он оборачивает `domain.ErrNotFound` — handler отвечает 404 без новой ветки в `queueError`.
+
+- **Старые конверты «Очереди» — fail-closed (101.6).** Конверт без `node_id` считается своим, только
+  если `IDsByPaths` отдал для пути id этого узла. Ошибка PostgreSQL такие конверты скрывает (warn):
+  показанный чужой конверт попал бы и в «Очистить все ожидающие». Резолвер путей — отдельный
+  параметр `NewAsyncQueueUsecase` (`port.NodePathResolver`), а не метод `NodeRepo`: расширение
+  `NodeRepo` сломало бы все его заглушки. Очистке неудачных (`PurgeFailed`) владелец не нужен, и в
+  integration-тестах §98.4 резолвер — `nil`.
+
+- **Проекция конверта Web сверяется разбором исходника (101.6).** `queueEnvelope` неэкспортируемый,
+  контрактный тест живёт в `tests/contract`, и reflect ему недоступен; экспортировать тип ради теста
+  не стали. `TestQueueEnvelopeProjectionSubsetOfCanon` читает теги через `go/parser` и сверяет их с
+  каноном Receiver'а. Ручная карта канона в `kafkaadmin/async_queue_test.go` остаётся: она держит
+  ещё и типы полей.
+
+- **Удаление одного сообщения по id владельца не проверяет (граница §101.13).** Tombstone пишется в
+  Redis без чтения Kafka; проверка стоила бы скана обоих топиков и ложно отказывала бы сообщениям
+  глубже потолка скана. Поиск оригиналов для повтора (§96, `originals.go`) по-прежнему фильтрует по
+  ключу и набору id из журнала узла: id уникальны, одноимённый узел их не подменит.
+
+- **Red-проверка 101.6.** Откат каждой из 7 правок к поведению до §101 делает тест красным: `Owns`
+  без `node_id`, список без сверки владельца, старые конверты «свои всегда», проекция без `node_id`,
+  чужое сообщение не 404, `Body` без владельца в usecase и `PeekBody` без сверки `node_id` (последнее
+  ловит только integration-тест на живом Kafka).
