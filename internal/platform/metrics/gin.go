@@ -22,11 +22,12 @@ import (
 // не должна разводить один и тот же трафик по разным рядам Prometheus (на
 // method="requestAsync" стоит дашборд Kafka, на "request" — алерт латентности).
 //
-// node = путь резолвнутого узла, и только он (§101.3). Receiver кладёт его в
-// контекст под NodeLabelKey после резолва (без слога команды — совпадает с
-// меткой node у Sender). Запасного значения из адреса нет: у passthrough-узла
-// хвост адреса несёт секреты (токены ботов) и не ограничен, а на выходах до
-// резолва (400/405/413/429/508) путь задаёт клиент. Без метки в контексте — "".
+// node и team = путь и слог команды резолвнутого узла, и только они (§101.3).
+// Receiver кладёт их в контекст под NodeLabelKey и TeamLabelKey после резолва
+// (путь без слога — совпадает с меткой node у Sender). Запасного значения из
+// адреса нет: у passthrough-узла хвост адреса несёт секреты (токены ботов) и не
+// ограничен, а на выходах до резолва (400/405/413/429/508) путь задаёт клиент.
+// Без меток в контексте — "".
 //
 // /metrics и /health не учитываются, чтобы не зашумлять данные.
 func GinMiddleware(m *Metrics) gin.HandlerFunc {
@@ -47,11 +48,11 @@ func GinMiddleware(m *Metrics) gin.HandlerFunc {
 		if method == "" {
 			method = c.Request.Method + " " + path
 		}
-		node := c.GetString(NodeLabelKey)
+		labels := NodeLabelsFromGin(c)
 		status := strconv.Itoa(c.Writer.Status())
 
-		m.RequestsTotal.WithLabelValues(method, node, status).Inc()
-		m.RequestDuration.WithLabelValues(method, node).Observe(time.Since(started).Seconds())
+		m.IncRequest(method, labels, status)
+		m.ObserveRequestDuration(method, labels, time.Since(started).Seconds())
 	}
 }
 
@@ -76,6 +77,12 @@ const NodeLabelKey = "nexus_node"
 // (§101.3). Ставится вместе с NodeLabelKey: путь уникален лишь внутри команды,
 // и узел идентифицирует только пара.
 const TeamLabelKey = "nexus_team"
+
+// NodeLabelsFromGin — метки узла, положенные обработчиком в контекст запроса
+// (§101.3). До резолва и на маршрутах не про узел — пустые.
+func NodeLabelsFromGin(c *gin.Context) NodeLabels {
+	return NodeLabels{Team: c.GetString(TeamLabelKey), Node: c.GetString(NodeLabelKey)}
+}
 
 // NodeUnresolved — метка node для запросов к НЕСУЩЕСТВУЮЩЕМУ узлу (§94.8).
 //

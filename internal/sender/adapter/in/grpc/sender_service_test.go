@@ -88,6 +88,7 @@ func TestServer_Send_NodeOutcome(t *testing.T) {
 			resp, err := srv.Send(context.Background(), &senderv1.SendRequest{
 				Id:        "req-1",
 				NodePath:  "partner/echo",
+				TeamSlug:  "partner",
 				TargetUrl: "https://api.example.com/hook",
 				Method:    "POST",
 				TimeoutMs: 1000,
@@ -95,11 +96,11 @@ func TestServer_Send_NodeOutcome(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.status, resp.GetStatusCode())
 
-			gauge := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("partner/echo"))
+			gauge := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("partner", "partner/echo"))
 			assert.Equal(t, tc.wantGauge, gauge, "gauge §41/§52")
 
 			incomplete := testutil.ToFloat64(
-				m.RequestsIncompleteTotal.WithLabelValues("request", "partner/echo"))
+				m.RequestsIncompleteTotal.WithLabelValues("request", "partner", "partner/echo"))
 			assert.Equal(t, tc.wantIncomplete, incomplete,
 				"incomplete_total — прежняя семантика «любой не-2xx»")
 
@@ -142,6 +143,7 @@ func TestServer_Send_DryRun_NoMetricsNoNodeStatus(t *testing.T) {
 			resp, err := srv.Send(context.Background(), &senderv1.SendRequest{
 				Id:        "dry-1",
 				NodePath:  "partner/echo",
+				TeamSlug:  "partner",
 				TargetUrl: "https://api.example.com/hook",
 				Method:    "POST",
 				TimeoutMs: 1000,
@@ -183,4 +185,29 @@ func TestServer_Send_NormalCall_KeepsMetricsAndStatus(t *testing.T) {
 	require.Len(t, ns.calls, 1, "боевой вызов персистит статус узла")
 	assert.Equal(t, domain.NodeOutcomeDown, ns.calls[0].outcome)
 	assert.NotZero(t, testutil.CollectAndCount(m.RequestsTotal), "боевые метрики пишутся")
+}
+
+// TestServer_Send_TeamSlugSplitsSameNamePaths (§101.3) — sync-вызовы двух узлов
+// telegram разных команд пишут разные ряды. Слог несёт запрос: sync-путь узел из
+// БД не читает. Receiver до §101 слога не пришлёт — ряд с team="", а не потеря.
+func TestServer_Send_TeamSlugSplitsSameNamePaths(t *testing.T) {
+	t.Parallel()
+	httpc := &stubHTTPCaller{resp: &port.HTTPResponse{StatusCode: 502, Body: []byte("x")}}
+	uc := usecase.NewSendUsecase(httpc, stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+	m := metrics.New("sender")
+	srv := NewServer(uc, m, &stubNodeStatus{}, logging.NewNoop())
+
+	for _, team := range []string{"messengers", "messengers", "webhook", ""} {
+		_, err := srv.Send(context.Background(), &senderv1.SendRequest{
+			Id: "req-" + team, NodePath: "telegram", TeamSlug: team,
+			TargetUrl: "https://api.example.com/hook", Method: "POST", TimeoutMs: 1000,
+		})
+		require.NoError(t, err)
+	}
+
+	require.Equal(t, 3, testutil.CollectAndCount(m.RequestsTotal))
+	assert.InDelta(t, 2, testutil.ToFloat64(m.RequestsTotal.WithLabelValues("request", "messengers", "telegram", "502")), 0)
+	assert.InDelta(t, 1, testutil.ToFloat64(m.RequestsTotal.WithLabelValues("request", "webhook", "telegram", "502")), 0)
+	assert.InDelta(t, 1, testutil.ToFloat64(m.RequestsTotal.WithLabelValues("request", "", "telegram", "502")), 0)
+	assert.InDelta(t, 2, testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("webhook", "telegram")), 0)
 }

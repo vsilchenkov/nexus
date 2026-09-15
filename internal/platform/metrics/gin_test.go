@@ -52,7 +52,9 @@ func TestGinMiddleware_NodeLabelNeverFromURL(t *testing.T) {
 
 	body := scrape(t, m)
 	assert.Contains(t, body, `node=""`)
+	assert.Contains(t, body, `team=""`)
 	assert.NotContains(t, body, "bot123456", "хвост адреса не должен попадать в метки")
+	assert.NotContains(t, body, "messengers", "слог из адреса метку team не задаёт")
 	assert.NotContains(t, body, "telegram")
 }
 
@@ -67,6 +69,7 @@ func TestGinMiddleware_NodeLabelFromContext(t *testing.T) {
 	r.Use(GinMiddleware(m))
 	r.POST("/api/v1/request/*path", func(c *gin.Context) {
 		c.Set(NodeLabelKey, "stand/req-noauth-post") // как делает Receiver-handler
+		c.Set(TeamLabelKey, "default")
 		c.Status(http.StatusOK)
 	})
 
@@ -77,6 +80,7 @@ func TestGinMiddleware_NodeLabelFromContext(t *testing.T) {
 	body := scrape(t, m)
 	assert.Contains(t, body, `node="stand/req-noauth-post"`)
 	assert.NotContains(t, body, `node="default/stand/req-noauth-post"`)
+	assert.Contains(t, body, `team="default"`)
 }
 
 func TestGinMiddleware_V1Request(t *testing.T) {
@@ -95,8 +99,8 @@ func TestGinMiddleware_V1Request(t *testing.T) {
 
 	// Обработчик метку узла не положил — node пуст (§101.3: из адреса не выводится).
 	body := scrape(t, m)
-	assert.Contains(t, body, `nexus_requests_total{method="request",node="",service="receiver",status="200"} 1`)
-	assert.Contains(t, body, `nexus_request_duration_seconds_count{method="request",node="",service="receiver"} 1`)
+	assert.Contains(t, body, `nexus_requests_total{method="request",node="",service="receiver",status="200",team=""} 1`)
+	assert.Contains(t, body, `nexus_request_duration_seconds_count{method="request",node="",service="receiver",team=""} 1`)
 }
 
 func TestGinMiddleware_V1RequestAsync(t *testing.T) {

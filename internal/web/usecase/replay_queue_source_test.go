@@ -11,6 +11,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -287,11 +288,13 @@ func TestReplayFailed_LooksUpOriginalsInChunks(t *testing.T) {
 
 // stubReplayMetrics — учёт источников тела (§96.9).
 type stubReplayMetrics struct {
-	got []string
+	got   []string
+	nodes []metrics.NodeLabels
 }
 
-func (s *stubReplayMetrics) IncReplayBodySource(_, source string) {
+func (s *stubReplayMetrics) IncReplayBodySource(n metrics.NodeLabels, source string) {
 	s.got = append(s.got, source)
+	s.nodes = append(s.nodes, n)
 }
 
 // TestReplay_BodySourceReported — источник тела виден и в ответе (для UI), и в
@@ -313,6 +316,7 @@ func TestReplay_BodySourceReported(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, replaySourceQueue, res.BodySource)
 		assert.Equal(t, []string{replaySourceQueue}, m.got)
+		assert.Equal(t, queueReplayNode().Path, m.nodes[0].Node, "§101.3: ряд — путь узла, а не адрес реинъекции")
 	})
 
 	t.Run("отказ считается отдельно", func(t *testing.T) {

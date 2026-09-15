@@ -137,7 +137,7 @@ func TestAck_DegradeFallsBackAndCounts(t *testing.T) {
 	assert.NotEmpty(t, body["id"])
 	assert.Equal(t, 1, queue.published, "запрос принят несмотря на провал шаблона")
 
-	got := testutil.ToFloat64(m.AckRenderFailedTotal.WithLabelValues("acs_sigur", "body_not_json"))
+	got := testutil.ToFloat64(m.AckRenderFailedTotal.WithLabelValues("webhook", "acs_sigur", "body_not_json"))
 	assert.Equal(t, 1.0, got, "деградация обязана быть видна в метрике")
 }
 
@@ -162,10 +162,10 @@ func TestAck_FailureDoesNotDegradeNode(t *testing.T) {
 
 			postAck(t, r, "/api/v1/requestAsync/webhook/acs_sigur", `{"nothing":1}`)
 
-			assert.Zero(t, testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("acs_sigur")),
+			assert.Zero(t, testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("webhook", "acs_sigur")),
 				"ack не участвует в исходе узла (§52) — это ответ шины, а не приёмника")
 			assert.Zero(t, testutil.ToFloat64(
-				m.RequestsIncompleteTotal.WithLabelValues("requestAsync", "acs_sigur")),
+				m.RequestsIncompleteTotal.WithLabelValues("requestAsync", "webhook", "acs_sigur")),
 				"счётчик неуспешных доставок принадлежит Sender'у и расти здесь не должен")
 		})
 	}

@@ -192,7 +192,7 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 				p.logger.Str("node_path", env.NodePath),
 				p.logger.Str("id", env.ID))
 			if p.metrics != nil {
-				p.metrics.RequestsTotal.WithLabelValues("requestAsync", env.NodePath, "cancelled").Inc()
+				p.metrics.IncRequest("requestAsync", nodeLabels(node), "cancelled")
 			}
 			return HandleAck
 		}
@@ -201,11 +201,11 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 	// §83.7: узел больше не async — принятое ранее в очередь не доставляем.
 	// Проверка ДО paused-ветки: решение терминальное, откладывать нечего.
 	if reason, stop := asyncIngressRevoked(node, env); stop {
-		return p.dropNotAsync(ctx, raw, env, reason)
+		return p.dropNotAsync(ctx, raw, env, node, reason)
 	}
 
 	if node.Status == domain.NodeStatusPaused {
-		return p.handlePaused(ctx, raw, env, msgHeaders)
+		return p.handlePaused(ctx, raw, env, node, msgHeaders)
 	}
 
 	// §51.9: старт обработки async-сообщения — привязка id↔узел на debug.
@@ -247,18 +247,17 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		cancel()
 	}
 	if p.metrics != nil {
-		p.metrics.RequestsTotal.
-			WithLabelValues("requestAsync", env.NodePath, strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
-		p.metrics.RequestDuration.
-			WithLabelValues("requestAsync", env.NodePath).Observe(float64(out.DurationMs) / 1000.0)
+		labels := nodeLabels(node)
+		p.metrics.IncRequest("requestAsync", labels, strconv.FormatInt(int64(out.StatusCode), 10))
+		p.metrics.ObserveRequestDuration("requestAsync", labels, float64(out.DurationMs)/1000.0)
 		if isErr {
-			p.metrics.RequestsIncompleteTotal.WithLabelValues("requestAsync", env.NodePath).Inc()
+			p.metrics.IncRequestIncomplete("requestAsync", labels)
 		}
 		// §41/§52: исход последнего вызова узла (in-memory гаудж).
 		// §81.2: обрыв вызывающей стороной (здесь — остановка сервиса) исходом
 		// узла не считается.
 		if !out.ParentGone {
-			p.metrics.SetNodeLastRequestOutcome(env.NodePath, effOutcome)
+			p.metrics.SetNodeLastRequestOutcome(labels, effOutcome)
 		}
 	}
 
@@ -307,7 +306,7 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 // Без pausedTopic — устаревшее поведение: подождать и переобработать на месте.
 // Коммитить сообщение в этом режиме нельзя (иначе оно потеряется), поэтому вся
 // партиция стоит до снятия паузы.
-func (p *AsyncProcessor) handlePaused(ctx context.Context, raw []byte, env Envelope, msgHeaders map[string]string) HandleResult {
+func (p *AsyncProcessor) handlePaused(ctx context.Context, raw []byte, env Envelope, node *domain.Node, msgHeaders map[string]string) HandleResult {
 	if p.pausedTopic == "" {
 		// Ожидание прерываемо ctx: при shutdown воркер не должен висеть до
 		// pausedRetryAfter на каждом сообщении.
@@ -345,7 +344,7 @@ func (p *AsyncProcessor) handlePaused(ctx context.Context, raw []byte, env Envel
 		p.logger.Str("paused_topic", p.pausedTopic),
 		p.logger.Str("paused_since", hdrs["paused_since"]))
 	if p.metrics != nil {
-		p.metrics.RequestsTotal.WithLabelValues("requestAsync", env.NodePath, "paused").Inc()
+		p.metrics.IncRequest("requestAsync", nodeLabels(node), "paused")
 	}
 	return HandleRequeued
 }

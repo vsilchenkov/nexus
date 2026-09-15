@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
@@ -149,8 +151,8 @@ func TestPullerWorker_EnvelopeCarriesNodeIdentity(t *testing.T) {
 	node := testNode()
 	node.ID = "3c2b1a09-8f7e-4d6c-9b5a-1f2e3d4c5b6a"
 	node.TeamSlug = "billing"
-	w := NewPullerWorker(node, nil, prod, "nexus.async", 0,
-		metrics.New("receiver"), nil, logging.NewNoop())
+	m := metrics.New("receiver")
+	w := NewPullerWorker(node, nil, prod, "nexus.async", 0, m, nil, logging.NewNoop())
 	w.consumer = cons
 
 	w.pullOnce(context.Background())
@@ -167,5 +169,9 @@ func TestPullerWorker_EnvelopeCarriesNodeIdentity(t *testing.T) {
 	}
 	if h := prod.headers[0]; h["node_id"] != node.ID || h["team"] != "billing" {
 		t.Fatalf("kafka headers identity = (%q, %q), want (%q, billing)", h["node_id"], h["team"], node.ID)
+	}
+	// §101.3: ряды pull-узла несут слог — одноимённые узлы команд не складываются.
+	if v := testutil.ToFloat64(w.metrics.RMQMessagesPulledTotal.WithLabelValues("billing", node.Path, "ok")); v != 1 {
+		t.Fatalf("rmq pulled{team=billing} = %v, want 1", v)
 	}
 }

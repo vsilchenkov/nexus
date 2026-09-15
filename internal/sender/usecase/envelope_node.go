@@ -10,6 +10,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
 )
 
 // ErrNodeAmbiguous — конверт без node_id, а его путь занят узлами нескольких
@@ -86,6 +87,20 @@ func withNodeIdentity(h map[string]string, env Envelope) map[string]string {
 	return h
 }
 
+// nodeLabels — метки узла в метриках Sender'а (§101.3): слог и путь из БД.
+// Конверт мог быть принят до переноса или переименования узла, но ряд
+// принадлежит узлу, который его исполняет.
+func nodeLabels(n *domain.Node) metrics.NodeLabels {
+	return metrics.NodeLabels{Team: n.TeamSlug, Node: n.Path}
+}
+
+// envelopeLabels — метки, когда исполнять конверт некому (узел удалён или
+// неоднозначен): слог и путь на момент приёма. У конвертов до §101 слога нет —
+// team="".
+func envelopeLabels(env Envelope) metrics.NodeLabels {
+	return metrics.NodeLabels{Team: env.Team, Node: env.NodePath}
+}
+
 // nodeForEnvelope находит узел конверта основного consumer'а. ok=false — узла
 // для доставки нет, и res — решение по сообщению.
 func (p *AsyncProcessor) nodeForEnvelope(ctx context.Context, raw []byte, env Envelope) (*domain.Node, HandleResult, bool) {
@@ -141,7 +156,7 @@ func (p *AsyncProcessor) dlqAmbiguous(ctx context.Context, raw []byte, env Envel
 		return HandleRetry
 	}
 	if p.metrics != nil {
-		p.metrics.RequestsTotal.WithLabelValues("requestAsync", env.NodePath, ReasonNodeAmbiguous).Inc()
+		p.metrics.IncRequest("requestAsync", envelopeLabels(env), ReasonNodeAmbiguous)
 	}
 	return HandleDLQed
 }
@@ -159,7 +174,7 @@ func (r *DLQReprocessor) nodeForEnvelope(ctx context.Context, env Envelope) (*do
 			r.logger.Str("node_path", env.NodePath),
 			r.logger.Str("node_id", env.NodeID),
 			r.logger.Str("id", env.ID))
-		r.record(env.NodePath, reprocessDropped)
+		r.record(envelopeLabels(env), reprocessDropped)
 		return nil, ReprocessCommit, false
 	case errors.Is(err, ErrNodeAmbiguous):
 		r.logger.Warn("dlq drop: envelope is ambiguous, path is shared by several teams",
@@ -167,7 +182,7 @@ func (r *DLQReprocessor) nodeForEnvelope(ctx context.Context, env Envelope) (*do
 			r.logger.Str("node_path", env.NodePath),
 			r.logger.Str("id", env.ID),
 			r.logger.Err(err))
-		r.record(env.NodePath, reprocessDropped)
+		r.record(envelopeLabels(env), reprocessDropped)
 		return nil, ReprocessCommit, false
 	default:
 		// Транзиентная ошибка чтения — не коммитим, попробуем в другой раз.

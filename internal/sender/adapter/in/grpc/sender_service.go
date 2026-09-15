@@ -111,19 +111,20 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 	}
 
 	if s.metrics != nil {
-		s.metrics.RequestsTotal.
-			WithLabelValues("request", req.GetNodePath(), strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
-		s.metrics.RequestDuration.
-			WithLabelValues("request", req.GetNodePath()).Observe(float64(out.DurationMs) / 1000.0)
+		// §101.3: слог команды несёт запрос — sync-путь узел из БД не читает.
+		// Receiver до §101 слога не пришлёт, и ряд получит team="".
+		labels := metrics.NodeLabels{Team: req.GetTeamSlug(), Node: req.GetNodePath()}
+		s.metrics.IncRequest("request", labels, strconv.FormatInt(int64(out.StatusCode), 10))
+		s.metrics.ObserveRequestDuration("request", labels, float64(out.DurationMs)/1000.0)
 		if outcome.IsError() {
-			s.metrics.RequestsIncompleteTotal.WithLabelValues("request", req.GetNodePath()).Inc()
+			s.metrics.IncRequestIncomplete("request", labels)
 		}
 		// §41/§52: исход последнего вызова узла (in-memory гаудж) — по
 		// ЭФФЕКТИВНОМУ значению, см. выше.
 		// §81.2: обрыв вызывающей стороной исходом узла НЕ считается — он о
 		// здоровье приёмника не говорит ничего.
 		if !out.ParentGone {
-			s.metrics.SetNodeLastRequestOutcome(req.GetNodePath(), effOutcome)
+			s.metrics.SetNodeLastRequestOutcome(labels, effOutcome)
 		}
 	}
 

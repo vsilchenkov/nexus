@@ -391,7 +391,7 @@ func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
 	// уже написан в usecase; метрика — единственный внешний признак, по которому
 	// видно, что интеграция получает НЕ тот ответ, которого ждёт.
 	if res.AckDegraded != "" && h.metrics != nil {
-		h.metrics.IncAckRenderFailed(c.GetString(metrics.NodeLabelKey), res.AckDegraded)
+		h.metrics.IncAckRenderFailed(metrics.NodeLabelsFromGin(c), res.AckDegraded)
 	}
 
 	// §83: собственный ответ узла — вместо обеих штатных форм ниже.
@@ -682,7 +682,7 @@ func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string
 		// §82.3: клиент видит только 404 «node not found», поэтому счётчик —
 		// единственный внешний признак рассинхронизации настроек. Warn с
 		// root_method и IP пишет RouteAsync: там известен сам узел.
-		h.metrics.IncAsyncIngressRejected(nodePath)
+		h.metrics.IncAsyncIngressRejected(metrics.NodeLabelsFromGin(c))
 	}
 	c.JSON(status, gin.H{"result": false, "message": msg})
 }

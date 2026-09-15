@@ -214,5 +214,28 @@ func TestReprocess_LegacyAmbiguousEnvelope_Dropped(t *testing.T) {
 	assert.Equal(t, ReprocessCommit, got)
 	assert.Zero(t, httpc.calls)
 	assert.Empty(t, dlq.produced, "в хвост DLQ не возвращаем — крутился бы до TTL")
-	assert.InDelta(t, 1.0, testutil.ToFloat64(m.DLQReprocessTotal.WithLabelValues("telegram", reprocessDropped)), 0)
+	assert.InDelta(t, 1.0, testutil.ToFloat64(m.DLQReprocessTotal.WithLabelValues("", "telegram", reprocessDropped)), 0)
+}
+
+// TestAsync_SameNamePaths_MetricsSplitByTeam (§101.3) — ряды одноимённых узлов
+// разных команд не складываются. Слог берётся из узла, а не из конверта: конверт
+// мог быть принят до переноса узла в другую команду.
+func TestAsync_SameNamePaths_MetricsSplitByTeam(t *testing.T) {
+	t.Parallel()
+	messengers, webhook := sameNameNodes()
+	m := metrics.New("sender")
+	for _, target := range []*domain.Node{messengers, messengers, webhook} {
+		httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200}}}
+		send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+		p := NewAsyncProcessor(&stubAsyncNodeReader{nodes: []*domain.Node{messengers, webhook}},
+			send, &stubDLQProducer{}, nil, nil, "nexus.async.dlq", m, logging.NewNoop())
+
+		raw := marshalEnvelope(t, Envelope{ID: "id", NodeID: target.ID, Team: "stale",
+			NodePath: "telegram", Method: "POST", TargetURL: target.TargetURL})
+		require.Equal(t, HandleAck, p.Handle(context.Background(), raw, nil))
+	}
+
+	require.Equal(t, 2, testutil.CollectAndCount(m.RequestsTotal))
+	assert.InDelta(t, 2, testutil.ToFloat64(m.RequestsTotal.WithLabelValues("requestAsync", "messengers", "telegram", "200")), 0)
+	assert.InDelta(t, 1, testutil.ToFloat64(m.RequestsTotal.WithLabelValues("requestAsync", "webhook", "telegram", "200")), 0)
 }

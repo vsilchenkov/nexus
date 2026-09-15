@@ -311,17 +311,18 @@ func TestShortURL_MetricsLabelsMatchLegacy(t *testing.T) {
 		url        string
 		wantMethod string
 		wantNode   string
+		wantTeam   string
 	}{
-		{"короткий sync", "/api/v1/webhook/sbp-qr", "request", "sbp-qr"},
-		{"legacy sync", "/api/v1/request/webhook/sbp-qr", "request", "sbp-qr"},
-		{"короткий async", "/api/v1/webhook/sbp-qr-async", "requestAsync", "sbp-qr-async"},
-		{"legacy async", "/api/v1/requestAsync/webhook/sbp-qr-async", "requestAsync", "sbp-qr-async"},
-		{"callback", "/api/v1/callback/webhook/sbp-qr-async", metrics.RootMethodCallback, "sbp-qr-async"},
+		{"короткий sync", "/api/v1/webhook/sbp-qr", "request", "sbp-qr", "webhook"},
+		{"legacy sync", "/api/v1/request/webhook/sbp-qr", "request", "sbp-qr", "webhook"},
+		{"короткий async", "/api/v1/webhook/sbp-qr-async", "requestAsync", "sbp-qr-async", "webhook"},
+		{"legacy async", "/api/v1/requestAsync/webhook/sbp-qr-async", "requestAsync", "sbp-qr-async", "webhook"},
+		{"callback", "/api/v1/callback/webhook/sbp-qr-async", metrics.RootMethodCallback, "sbp-qr-async", "webhook"},
 		// Мусорные обращения по короткому адресу не подмешиваются в боевые ряды.
 		// §94.8: путь несуществующего узла в метку больше не попадает — иначе
 		// сканер по случайным адресам плодил бы ряд на каждую попытку, и они
 		// остаются в Prometheus навсегда. Детализацию даёт журнал отказов.
-		{"неизвестный узел", "/api/v1/webhook/nope", metrics.RootMethodShortURL, metrics.NodeUnresolved},
+		{"неизвестный узел", "/api/v1/webhook/nope", metrics.RootMethodShortURL, metrics.NodeUnresolved, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -330,14 +331,15 @@ func TestShortURL_MetricsLabelsMatchLegacy(t *testing.T) {
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, tc.url, strings.NewReader(`{}`)))
 
-			found := metricLabelPairs(t, m, tc.wantMethod, tc.wantNode)
-			assert.True(t, found, "ожидался ряд nexus_requests_total{method=%q,node=%q}", tc.wantMethod, tc.wantNode)
+			found := metricLabelPairs(t, m, tc.wantMethod, tc.wantTeam, tc.wantNode)
+			assert.True(t, found, "ожидался ряд nexus_requests_total{method=%q,team=%q,node=%q}",
+				tc.wantMethod, tc.wantTeam, tc.wantNode)
 		})
 	}
 }
 
-// metricLabelPairs — есть ли в nexus_requests_total ряд с такими method/node.
-func metricLabelPairs(t *testing.T, m *metrics.Metrics, method, node string) bool {
+// metricLabelPairs — есть ли в nexus_requests_total ряд с такими method/team/node.
+func metricLabelPairs(t *testing.T, m *metrics.Metrics, method, team, node string) bool {
 	t.Helper()
 	families, err := m.Registry().Gather()
 	require.NoError(t, err)
@@ -346,16 +348,18 @@ func metricLabelPairs(t *testing.T, m *metrics.Metrics, method, node string) boo
 			continue
 		}
 		for _, metric := range f.GetMetric() {
-			var gotMethod, gotNode string
+			var gotMethod, gotTeam, gotNode string
 			for _, l := range metric.GetLabel() {
 				switch l.GetName() {
 				case "method":
 					gotMethod = l.GetValue()
+				case "team":
+					gotTeam = l.GetValue()
 				case "node":
 					gotNode = l.GetValue()
 				}
 			}
-			if gotMethod == method && gotNode == node {
+			if gotMethod == method && gotTeam == team && gotNode == node {
 				return true
 			}
 		}

@@ -45,7 +45,7 @@ func asyncIngressRevoked(node *domain.Node, env Envelope) (reason string, stop b
 // все» (§36.11), а тот идёт через HTTP на Receiver и упёрся бы в гейт §82.3,
 // пока узел sync, — то есть восстановление было бы недоступно ровно тогда,
 // когда оно нужно.
-func (p *AsyncProcessor) dropNotAsync(ctx context.Context, raw []byte, env Envelope, reason string) HandleResult {
+func (p *AsyncProcessor) dropNotAsync(ctx context.Context, raw []byte, env Envelope, node *domain.Node, reason string) HandleResult {
 	// Warn, а не info: это рассинхронизация настроек и клиента, её надо чинить.
 	p.logger.Warn("async delivery revoked: node is no longer async",
 		p.logger.Str("op", "async.Handle"),
@@ -69,8 +69,7 @@ func (p *AsyncProcessor) dropNotAsync(ctx context.Context, raw []byte, env Envel
 		return HandleRetry
 	}
 	if p.metrics != nil {
-		p.metrics.RequestsTotal.
-			WithLabelValues("requestAsync", env.NodePath, ReasonNodeNotAsync).Inc()
+		p.metrics.IncRequest("requestAsync", nodeLabels(node), ReasonNodeNotAsync)
 	}
 	return HandleDLQed
 }

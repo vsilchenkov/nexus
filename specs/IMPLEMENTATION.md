@@ -5908,7 +5908,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | ТЗ §101, правки контрактов §6/§78/§86.8/§94.8/§98.2 | ✅ Phase 101.1 | [sections/101-team-node-identity.md](sections/101-team-node-identity.md) |
 | Receiver: метки после резолва (утечка токенов) | ✅ Phase 101.2 | [resolver.go](../internal/receiver/usecase/resolver.go) (слог найденного узла), [route.go](../internal/receiver/usecase/route.go) `RouteInput.OnNodeResolved`, [handler.go](../internal/receiver/adapter/in/http/handler.go) `nodeLabelSetter`/`nodeForLog`, [metrics/gin.go](../internal/platform/metrics/gin.go) `TeamLabelKey`, [sentry/middleware.go](../internal/platform/sentry/middleware.go); тест [handler_labels_test.go](../internal/receiver/adapter/in/http/handler_labels_test.go) |
 | Контракт доставки `node_id`/`team`, Sender ищет узел по id | ✅ Phase 101.3 | [sender.proto](../proto/sender/v1/sender.proto) `team_slug = 33`; конверт `node_id`/`team` — [envelope.go](../internal/receiver/usecase/envelope.go), [async_envelope.go](../internal/sender/usecase/async_envelope.go); заголовки Kafka — [route_async.go](../internal/receiver/usecase/route_async.go), [puller.go](../internal/receiver/usecase/puller.go), `withNodeIdentity`; слог pull-узла — [nodelister.go](../internal/receiver/adapter/out/rabbitmq/nodelister.go); выбор узла — [envelope_node.go](../internal/sender/usecase/envelope_node.go) `resolveEnvelopeNode`/`ErrNodeAmbiguous`, [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `GetByID`/`ListByPath`; тесты [envelope_node_test.go](../internal/sender/usecase/envelope_node_test.go), [route_identity_test.go](../internal/receiver/usecase/route_identity_test.go), [node_identity_test.go](../tests/integration/node_identity_test.go), [tests/contract/envelope_test.go](../tests/contract/envelope_test.go) |
-| Метка `team` во всех per-node метриках | ⛔ Phase 101.4 | — |
+| Метка `team` во всех per-node метриках | ✅ Phase 101.4 | [node_labels.go](../internal/platform/metrics/node_labels.go) `NodeLabels` и типизированные методы, [metrics.go](../internal/platform/metrics/metrics.go) (14 векторов), [gin.go](../internal/platform/metrics/gin.go) `NodeLabelsFromGin`; запись — [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) (слог из `team_slug`), [envelope_node.go](../internal/sender/usecase/envelope_node.go) `nodeLabels`/`envelopeLabels`, [async.go](../internal/sender/usecase/async.go), [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go), [puller.go](../internal/receiver/usecase/puller.go), [handler.go](../internal/receiver/adapter/in/http/handler.go), [replay.go](../internal/web/usecase/replay.go) `nodeTeamSlug`; guard-тесты [node_labels_test.go](../internal/platform/metrics/node_labels_test.go) |
 | Рантайм-ключи Redis и pull-воркеры по `node_id` | ⛔ Phase 101.5 | — |
 | «Очередь»: принадлежность сообщения, чтение тела | ⛔ Phase 101.6 | — |
 | Web: чтение Prometheus по (team, node) | ⛔ Phase 101.7 | — |
@@ -5987,6 +5987,33 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   где их использует проверка владельца сообщения. `SendInput.TeamSlug` на стороне gRPC-сервера — в
   101.4: поле нужно только меткам. Заголовки `node_id`/`team` пока никто не читает: consumer
   Sender'а берёт узел из тела конверта, заголовки нужны «Очереди» (101.6) и оператору с `kcat`.
+
+- **Per-node векторы пишутся только типизированными методами, и это держит тест, а не
+  договорённость (101.4).** `TestPerNodeMetrics_WrittenOnlyThroughTypedMethods` ищет в `internal/`
+  (вне пакета `metrics`, без `_test.go`) обращения `.<вектор>.WithLabelValues(`: на коде до 101.4 он
+  находит 16 таких мест. `TestPerNodeMetrics_CarryTeamLabel` рефлексией проверяет, что у каждого
+  вектора с `node` есть `team`, и сверяет список рядов с эталоном — рефлексия, не нашедшая ничего,
+  выглядела бы зелёной. Причина строгости: неверное число значений в позиционном
+  `WithLabelValues` паникует только в рантайме (на бою — первым запросом к узлу), а перепутанный
+  порядок молча пишет путь в метку команды.
+
+- **Слог в метках Sender'а — из узла, а не из конверта.** Узел по id несёт текущие слог и путь из
+  БД (`nodeLabels`); конверт мог быть принят до `NodeUsecase.Move`. Слог конверта (`envelopeLabels`)
+  идёт в метку, только когда исполнять некому: узел удалён или неоднозначен. У старых конвертов это
+  `team=""`.
+
+- **Sync-метки берут слог из `SendRequest.team_slug`; `SendInput.TeamSlug` не понадобился.** Метрики
+  sync пишет gRPC-адаптер прямо из запроса, usecase слог не использует. Receiver до §101 поле не
+  пришлёт — до его обновления ряды получат `team=""` (порядок выката Sender → Receiver, §101.12).
+
+- **Replay резолвит слог до выбора тела.** `nodeTeamSlug` нужен и метке источника тела, и адресу
+  реинъекции; раньше команда читалась только перед отправкой. Отказ резолва, как и прежде, —
+  пустой слог и debug-строка.
+
+- **Чтение метрик Web пока не знает о `team`.** Выражения `sum by (node)` работают и дальше, складывая
+  команды, — прежнее поведение; разнесение по `(team, node)` — 101.7, дашборды и алерты — 101.9.
+  Сопоставления векторов (`on`, `group_left`) в клиенте Prometheus Web нет, лишняя метка его не
+  ломает.
 
 - **IDOR во вкладке «Очередь».** `GET …/queue/body` проверял доступ к узлу из адреса, а сообщение
   читал по `(topic, partition, offset)` из запроса без сверки владельца — тело чужого сообщения
