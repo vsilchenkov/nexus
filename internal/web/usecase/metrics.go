@@ -774,30 +774,52 @@ func (u *MetricsUsecase) diagPrometheus(ctx context.Context, teamID string, sinc
 			u.logger.Str("team_id", teamID))
 		return
 	}
-	if gt, err := u.prom.GlobalTotals(ctx, until.Sub(since), slug); err == nil {
+	gt, totalsErr := u.prom.GlobalTotals(ctx, until.Sub(since), slug)
+	if totalsErr != nil {
+		u.logger.Warn("diagnostics: prometheus global totals failed", u.logger.Err(totalsErr))
+	}
+	var owners map[string]port.NodeKeyRef
+	pt, err := u.prom.NodeThroughput(ctx, since, until)
+	if err == nil {
+		known := make(map[string]struct{}, len(d.Nodes))
+		for _, n := range d.Nodes {
+			known[n.Node] = struct{}{}
+		}
+		inTeam := func(p string) bool {
+			_, ok := known[p]
+			return ok
+		}
+		owners = resolveLegacyOwners(ctx, u.nodeKeys, legacyRowPaths(pt, inTeam), u.logger)
+		mergeDiagNodes(d, slug, pt, owners)
+	} else {
+		u.logger.Warn("diagnostics: prometheus node throughput failed", u.logger.Err(err))
+	}
+	if totalsErr == nil {
+		gt = foldLegacyTotals(gt, slug, pt, owners)
 		d.Prometheus = DiagSource{
 			Incoming: f2u(gt.Incoming), Outgoing: f2u(gt.Outgoing),
 			Errors: f2u(gt.Errors), Available: true,
 		}
 		d.PrometheusAvailable = true
-	} else {
-		u.logger.Warn("diagnostics: prometheus global totals failed", u.logger.Err(err))
 	}
-	pt, err := u.prom.NodeThroughput(ctx, since, until)
-	if err != nil {
-		u.logger.Warn("diagnostics: prometheus node throughput failed", u.logger.Err(err))
-		return
+}
+
+// foldLegacyTotals прибавляет к итогам команды ряды до §101, приписанные её
+// узлам, — те же, что mergeDiagNodes прибавил к строкам узлов (§101.9). Итоги
+// читаются из Prometheus строго по слогу, и без этого в окне выката шапка
+// diagnostics была бы меньше суммы строк её же узлов.
+func foldLegacyTotals(gt port.GlobalTotals, slug string, pt map[port.NodeKey]port.NodeThroughput, owners map[string]port.NodeKeyRef) port.GlobalTotals {
+	for path, o := range owners {
+		if o.Key.Team != slug {
+			continue
+		}
+		if legacy, ok := pt[legacyKey(path)]; ok {
+			gt.Incoming += legacy.In
+			gt.Outgoing += legacy.Out
+			gt.Errors += legacy.Errors
+		}
 	}
-	known := make(map[string]struct{}, len(d.Nodes))
-	for _, n := range d.Nodes {
-		known[n.Node] = struct{}{}
-	}
-	inTeam := func(p string) bool {
-		_, ok := known[p]
-		return ok
-	}
-	owners := resolveLegacyOwners(ctx, u.nodeKeys, legacyRowPaths(pt, inTeam), u.logger)
-	mergeDiagNodes(d, slug, pt, owners)
+	return gt
 }
 
 // mergeDiagNodes дописывает Prometheus-числа узлам команды и добавляет узлы

@@ -114,19 +114,23 @@ func TestReplyDomainError_MarksReject(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
 
-	newCtx := func() (*gin.Context, *httptest.ResponseRecorder) {
+	// newCtx — контекст запроса; resolved — узел найден, и наблюдатель резолва
+	// положил его метки (§101.3: другого источника меток нет).
+	newCtx := func(resolved bool) (*gin.Context, *httptest.ResponseRecorder) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/vika/telephony", nil)
-		c.Set(metrics.NodeLabelKey, "telephony")
-		c.Set(metrics.TeamLabelKey, "vika")
+		if resolved {
+			c.Set(metrics.NodeLabelKey, "telephony")
+			c.Set(metrics.TeamLabelKey, "vika")
+		}
 		return c, w
 	}
 	h := &Handler{metrics: metrics.New("receiver"), logger: logging.NewNoop()}
 
 	t.Run("node not found hides the client-supplied path", func(t *testing.T) {
 		t.Parallel()
-		c, w := newCtx()
+		c, w := newCtx(false)
 		h.replyDomainError(c, domain.ErrNodeNotFound, "telephony", "test")
 		require.Equal(t, http.StatusNotFound, w.Code)
 		assert.Equal(t, string(domain.RejectReasonNodeNotFound), c.GetString(RejectReasonKey))
@@ -135,11 +139,23 @@ func TestReplyDomainError_MarksReject(t *testing.T) {
 		assert.Empty(t, c.GetString(metrics.TeamLabelKey))
 	})
 
+	t.Run("found node answering not found keeps its label", func(t *testing.T) {
+		t.Parallel()
+		// §101.3: узел найден, но наружу «узла нет» (не тот тип за sync-адресом,
+		// pull-узел по короткому адресу) — ряд ограничен числом узлов.
+		c, w := newCtx(true)
+		h.replyDomainError(c, domain.ErrNodeNotFound, "telephony", "test")
+		require.Equal(t, http.StatusNotFound, w.Code)
+		assert.Equal(t, string(domain.RejectReasonNodeNotFound), c.GetString(RejectReasonKey))
+		assert.Equal(t, "telephony", c.GetString(metrics.NodeLabelKey))
+		assert.Equal(t, "vika", c.GetString(metrics.TeamLabelKey))
+	})
+
 	t.Run("existing node keeps its label", func(t *testing.T) {
 		t.Parallel()
 		// §82.3: узел есть, просто дёрнули не тот эндпоинт — путь в метке
 		// настоящий, и ряд ограничен числом узлов.
-		c, w := newCtx()
+		c, w := newCtx(true)
 		h.replyAsyncError(c, domain.ErrNodeNotAsyncIngress, "telephony", "test")
 		require.Equal(t, http.StatusNotFound, w.Code)
 		assert.Equal(t, string(domain.RejectReasonNodeNotFound), c.GetString(RejectReasonKey))
@@ -149,7 +165,7 @@ func TestReplyDomainError_MarksReject(t *testing.T) {
 
 	t.Run("bus failure is not a client reject", func(t *testing.T) {
 		t.Parallel()
-		c, w := newCtx()
+		c, w := newCtx(true)
 		h.replyDomainError(c, assert.AnError, "telephony", "test")
 		require.Equal(t, http.StatusBadGateway, w.Code)
 		assert.Empty(t, c.GetString(RejectReasonKey), "502 в журнал отказов не попадает")

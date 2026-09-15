@@ -72,6 +72,11 @@ func (r *Reader) GetByID(ctx context.Context, id string) (*domain.Node, error) {
 // ListByPath возвращает узлы с путём path во ВСЕХ командах (§101.5): путь
 // уникален лишь внутри команды. Нужен конвертам, записанным до §101, — у них
 // нет node_id. Порядок по слогу команды — чтобы логи были воспроизводимы.
+//
+// Креды расшифровываются, только если узел один: несколько узлов конверт не
+// исполняют, и у них поля кред пусты. Расшифровка всех строк превращала бы
+// испорченные креды узла чужой команды в ошибку чтения, а неоднозначный
+// конверт — в бесконечный повтор вместо DLQ.
 func (r *Reader) ListByPath(ctx context.Context, path string) ([]*domain.Node, error) {
 	rows, err := r.pg.Query(ctx, selectNodes+` WHERE n.path = $1 ORDER BY t.slug`, path)
 	if err != nil {
@@ -80,26 +85,67 @@ func (r *Reader) ListByPath(ctx context.Context, path string) ([]*domain.Node, e
 	defer rows.Close()
 
 	var out []*domain.Node
+	var creds []encryptedCreds
 	for rows.Next() {
-		n, err := r.scanNode(rows)
+		n, enc, err := scanNodeRow(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan node %s: %w", path, err)
 		}
 		out = append(out, n)
+		creds = append(creds, enc)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list nodes by path %s: %w", path, err)
 	}
+	if len(out) == 1 {
+		if err := r.decryptCreds(out[0], creds[0]); err != nil {
+			return nil, fmt.Errorf("list nodes by path %s: %w", path, err)
+		}
+	} else if len(out) > 1 {
+		// §51.9: креды пропущены намеренно — видно при разборе «почему пусто».
+		r.logger.Debug("nodepg: several nodes share the path, credentials not decrypted",
+			r.logger.Str("node_path", path),
+			r.logger.Int("nodes", len(out)))
+	}
 	return out, nil
 }
+
+// encryptedCreds — зашифрованные креды строки узла, ещё не расшифрованные.
+type encryptedCreds struct{ auth, incoming string }
 
 // scanNode читает одну строку selectNodes и расшифровывает креды. Ошибку Scan
 // (включая pgx.ErrNoRows) возвращает как есть — контекст добавляет вызывающий.
 func (r *Reader) scanNode(row pgx.Row) (*domain.Node, error) {
+	n, enc, err := scanNodeRow(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.decryptCreds(n, enc); err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
+// decryptCreds расшифровывает креды узла в domain.Node (там всегда plaintext).
+func (r *Reader) decryptCreds(n *domain.Node, enc encryptedCreds) error {
+	var err error
+	n.AuthCredentials, err = r.cipher.Decrypt(enc.auth)
+	if err != nil {
+		return fmt.Errorf("decrypt auth: %w", err)
+	}
+	n.IncomingAuthCredentials, err = r.cipher.Decrypt(enc.incoming)
+	if err != nil {
+		return fmt.Errorf("decrypt incoming: %w", err)
+	}
+	return nil
+}
+
+// scanNodeRow читает одну строку selectNodes без расшифровки кред.
+func scanNodeRow(row pgx.Row) (*domain.Node, encryptedCreds, error) {
 	var n domain.Node
 	var rootMethod, urlMode, authType, authDynSrc, incomingAuth, status string
 	var incomingMethod, outgoingMethod string
-	var encAuth, encInc string
+	var enc encryptedCreds
 	var created, updated time.Time
 	// §81.3: NULL = «политика из конфигурации», поэтому указатели, а не int32.
 	var cbThreshold, cbCooldown *int32
@@ -107,9 +153,9 @@ func (r *Reader) scanNode(row pgx.Row) (*domain.Node, error) {
 	err := row.Scan(
 		&n.ID, &n.Path, &rootMethod,
 		&urlMode, &n.TargetURL, &n.URLParamName, &n.URLAllowedHosts,
-		&authType, &encAuth,
+		&authType, &enc.auth,
 		&authDynSrc, &n.AuthDynamicField, &n.AuthDynamicStripPrefix,
-		&incomingAuth, &encInc,
+		&incomingAuth, &enc.incoming,
 		&n.WebhookSignatureHeader, &n.WebhookSignaturePrefix,
 		&n.ForwardHeaders, &n.TimeoutMs, &n.RetryCount, &n.RetryBackoffMs,
 		&n.ClickHouseTable, &status, &n.TeamID, &n.TeamSlug,
@@ -121,7 +167,7 @@ func (r *Reader) scanNode(row pgx.Row) (*domain.Node, error) {
 		&cbThreshold, &cbCooldown,
 	)
 	if err != nil {
-		return nil, err
+		return nil, encryptedCreds{}, err
 	}
 
 	// §81.3: NULL в БД → 0 в домене → «использовать глобальную политику».
@@ -143,22 +189,13 @@ func (r *Reader) scanNode(row pgx.Row) (*domain.Node, error) {
 	n.CreatedAt = created
 	n.UpdatedAt = updated
 
-	n.AuthCredentials, err = r.cipher.Decrypt(encAuth)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt auth: %w", err)
-	}
-	n.IncomingAuthCredentials, err = r.cipher.Decrypt(encInc)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt incoming: %w", err)
-	}
-
 	if n.URLAllowedHosts == nil {
 		n.URLAllowedHosts = []string{}
 	}
 	if n.ForwardHeaders == nil {
 		n.ForwardHeaders = []string{}
 	}
-	return &n, nil
+	return &n, enc, nil
 }
 
 // ListClickHouseTables (§37) — уникальные имена CH-таблиц логов всех узлов с

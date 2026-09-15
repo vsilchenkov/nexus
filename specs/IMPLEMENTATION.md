@@ -5902,8 +5902,8 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 ### 4.86 §101 — команда в идентичности узла: почему `node_id`, а не «слог + путь»
 
 Раздел [101-team-node-identity.md](sections/101-team-node-identity.md). Ветка
-`feature/team-node-identity`. Статус ✅ — блоки 101.1–101.10 реализованы; слияние в `dev` — после
-сдачи.
+`feature/team-node-identity`. Статус ✅ — блоки 101.1–101.10 реализованы, ревизия перед сдачей —
+101.11; слияние в `dev` — после сдачи.
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -5917,6 +5917,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | UI: команда в топах Kafka, снятие правила §86.8 | ✅ Phase 101.8 | [TopNodes.tsx](../web-ui/src/components/kafka/TopNodes.tsx) `NodeCell`/`TeamChip`/`unlinkedReason`/`rowKey`, [client.ts](../web-ui/src/api/client.ts) `KafkaByNode.team`, [Overview.tsx](../web-ui/src/pages/Overview.tsx) (снят `ambiguousPaths`), локали `kafka.node_legacy`/`node_placeholder`/`no_team`; тесты [TopNodes.test.tsx](../web-ui/src/components/kafka/TopNodes.test.tsx), [Overview.rank.test.tsx](../web-ui/src/pages/Overview.rank.test.tsx) |
 | Grafana, алерты, `make check-alerts` | ✅ Phase 101.9 | дашборды [nexus-nodes.json](../deploy/grafana/nexus-nodes.json), [nexus-kafka.json](../deploy/grafana/nexus-kafka.json) (переменная `team`, `by (team, node)`, Merge), [README](../deploy/grafana/README.md); правила [prometheus.alerts.yml](../deploy/prometheus.alerts.yml), тесты [prometheus.alerts.test.yml](../deploy/prometheus.alerts.test.yml); [Makefile](../Makefile) `check-alerts`, [.gitlab-ci.yml](../.gitlab-ci.yml) job `alerts-check` |
 | DEPLOYMENT, CHANGELOG | ✅ Phase 101.10 | [DEPLOYMENT.md](../DEPLOYMENT.md) §9.1.4 (порядок выката, матрица версий, Prometheus, дашборды, ряды с токенами, `exported_team`) и чек-лист раскатки; [CHANGELOG.md](../CHANGELOG.md) `[Unreleased]`; [nexus-prod SKILL](../.claude/skills/nexus-prod/SKILL.md) — diagnostics по команде |
+| Ревизия перед сдачей | ✅ Phase 101.11 | метка найденного узла при 404 — [handler.go](../internal/receiver/adapter/in/http/handler.go) `markRejected`, путь в error-строке — `nodeForErrorLog`; гаудж без слога — [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go); креды одного узла — [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `ListByPath`; отменённый неоднозначный конверт — [envelope_node.go](../internal/sender/usecase/envelope_node.go) `cancelledAmbiguous`; итоги diagnostics — [metrics.go](../internal/web/usecase/metrics.go) `foldLegacyTotals`; тег Sentry `team` — [sentry/middleware.go](../internal/platform/sentry/middleware.go) `teamFromGin`; тесты [handler_labels_test.go](../internal/receiver/adapter/in/http/handler_labels_test.go), [sender_service_test.go](../internal/sender/adapter/in/grpc/sender_service_test.go), [envelope_node_test.go](../internal/sender/usecase/envelope_node_test.go), [metrics_test.go](../internal/web/usecase/metrics_test.go), [node_identity_test.go](../tests/integration/node_identity_test.go) |
 
 - **Повод выглядел как косметика, а оказался дефектом доставки.** Жалоба «в топе Kafka нет ссылки
   на `telegram`» объяснялась одноимёнными узлами двух команд. Но тот же приём «узел = путь» стоит в
@@ -6199,3 +6200,36 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   получает значение цели. Дашборды и алерты §101.11 тогда группируют по метке цели, а не по команде
   узла, и одноимённые узлы снова слипаются. Решение на стороне внешнего Prometheus — переименовать
   метку цели.
+
+- **Ревизия перед сдачей (101.11).** Все находки лежат на ветках, которых нет в обычном трафике
+  стенда и в юнит-тестах меток:
+  - `markRejected` подменял метку на `<unresolved>` по любому `ErrNodeNotFound`, не глядя, был ли
+    резолв. Тем же `ErrNodeNotFound` отвечают узел не того типа (`/request` к async-узлу) и pull-узел
+    по короткому адресу — ряд найденного узла уходил в заглушку вопреки §101.3. Подмена теперь только
+    без меток наблюдателя. Старый юнит-тест клал метки в контекст до вызова (так Receiver делал до
+    §101) и закреплял именно дефект — переписан на два случая.
+  - Error-строка при сбое резолва (502) несла путь из адреса целиком, с хвостом passthrough, а error
+    уходит в Sentry. Метки и теги §101.3 это закрыли, строку лога — нет. Теперь в ней первый сегмент
+    пути узла и `/…`.
+  - Sender писал гаудж исхода с `team=""` для sync-запросов старого Receiver'а. После обновления
+    Receiver'а ряд не обновлялся бы до рестарта Sender'а, и DOWN держал бы `NexusNodeDown` на
+    здоровом узле. Без слога гаудж не пишется, счётчики пишутся.
+  - `ListByPath` расшифровывал креды всех одноимённых узлов: испорченные креды узла другой команды
+    давали ошибку чтения, и неоднозначный конверт вместо DLQ уходил в бесконечный повтор, вставала
+    партиция. Креды расшифровываются, только если узел один.
+  - Неоднозначный конверт шёл в DLQ до проверки отмены (§34.4). Очередь paused-узла, очищенная до
+    обновления (отмена тогда шла по пути), дошла бы до сброса и подняла `NexusDLQMessagesLost`.
+    Отменённое подтверждается; сбой Redis — fail-open в DLQ, как в `Handle`. Репроцессор не менялся:
+    отменённое в DLQ он и раньше учитывал как `dropped`.
+  - Шапка diagnostics читала итоги Prometheus строго по слогу, а строки узлов складывали ряды до
+    §101: в окне выката шапка была меньше суммы строк. `foldLegacyTotals` прибавляет те же ряды.
+  - Тег Sentry `team` рядом с `node`: без него события одноимённых узлов неразличимы — та же
+    склейка, что была в метриках.
+
+  Red-проверка: новые тесты прогнаны в отдельном worktree на коммите до ревизии — красные все шесть
+  (C7 — integration на живом PostgreSQL); тест тега Sentry на старом коде не компилируется.
+
+- **Поля `<path>` в `rmq:health` остаются мусором (101.11, не исправлялось).** Срок хранения у хеша
+  общий и продлевается каждой записью, поэтому поля по пути, записанные до §101, живут, пока пишет
+  хоть один pull-узел. Web читает поля по `node_id` и их не видит; число полей ограничено числом
+  прежних pull-узлов. Поля удалённых узлов так же оставались и до §101.

@@ -123,8 +123,15 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		// ЭФФЕКТИВНОМУ значению, см. выше.
 		// §81.2: обрыв вызывающей стороной исходом узла НЕ считается — он о
 		// здоровье приёмника не говорит ничего.
-		if !out.ParentGone {
+		// §101.9: без слога гаудж не пишется. Запрос без слога шлёт Receiver до
+		// §101; после его обновления ряд team="" больше не обновился бы и держал
+		// последний исход — DOWN и алерт NexusNodeDown — до рестарта Sender'а.
+		if !out.ParentGone && labels.Team != "" {
 			s.metrics.SetNodeLastRequestOutcome(labels, effOutcome)
+		} else if !out.ParentGone {
+			s.logger.Debug("send: request without team slug, node outcome gauge skipped",
+				s.logger.Str("id", req.GetId()),
+				s.logger.Str("node", req.GetNodePath()))
 		}
 	}
 

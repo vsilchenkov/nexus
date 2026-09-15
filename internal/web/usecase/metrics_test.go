@@ -586,7 +586,8 @@ func TestMetricsUsecase_Diagnostics_OnlyCurrentTeam(t *testing.T) {
 		{ID: "n-solo", Path: "solo", TeamID: "t-msg", ClickHouseTable: "db.a"},
 	}}
 	logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 10, Delivered: 9, Errors: 1}}
-	prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+	// Итоги строго по слогу: 1747 + 4 — без рядов до §101.
+	prom := &fakeProm{totals: port.GlobalTotals{Incoming: 1751}, throughput: map[port.NodeKey]port.NodeThroughput{
 		{Team: "messengers", Path: "telegram"}:       {In: 1747},
 		{Team: "webhook", Path: "telegram"}:          {In: 8},
 		{Team: "webhook", Path: "hook/private"}:      {In: 50}, // путь чужой команды
@@ -619,6 +620,8 @@ func TestMetricsUsecase_Diagnostics_OnlyCurrentTeam(t *testing.T) {
 	require.EqualValues(t, 2, by["solo"].PromIn, "ряд до §101 однозначного пути приписан узлу")
 	require.EqualValues(t, 4, by["renamed/old"].PromIn)
 	require.EqualValues(t, 10, by["telegram"].CHIn)
+	require.EqualValues(t, 1753, d.Prometheus.Incoming,
+		"шапка складывает приписанный ряд до §101 так же, как строка узла solo")
 
 	t.Run("слог команды неизвестен — Prometheus-сторона не заполняется", func(t *testing.T) {
 		t.Parallel()

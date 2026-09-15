@@ -575,11 +575,12 @@ func classifyDomainError(err error) (status int, message string, reason domain.R
 // replyDomainError — sync-ответ об ошибке: {"error": <msg>}.
 func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op string) {
 	status, msg, reason, internal := classifyDomainError(err)
+	errNode := nodeForErrorLog(c, nodePath)
 	nodePath = nodeForLog(c, nodePath)
 	h.markRejected(c, err, reason, internal)
 	if internal {
 		h.logger.ErrorWithOp("receiver routing failed", err, op,
-			h.logger.Str("node", nodePath))
+			h.logger.Str("node", errNode))
 	} else {
 		// §51.9: 4xx раньше уходили молча — «почему клиенту 404/401?» было
 		// невосстановимо. Debug, чтобы не шуметь на проде на каждый скан.
@@ -614,10 +615,33 @@ func nodeLabelSetter(c *gin.Context) func(teamSlug, nodePath string) {
 // хвост passthrough-адреса несёт секреты; путь из адреса остаётся только у
 // отказов до резолва — там он и нужен («почему 404»).
 func nodeForLog(c *gin.Context, fromURL string) string {
-	if v := c.GetString(metrics.NodeLabelKey); v != "" && v != metrics.NodeUnresolved {
+	if v := resolvedNodeLabel(c); v != "" {
 		return v
 	}
 	return fromURL
+}
+
+// nodeForErrorLog — путь узла для error-строки лога (§101.13). Она уходит и в
+// Sentry, а до резолва путь задал клиент: у passthrough-адреса за путём узла
+// идут секреты (токены ботов). Поэтому без резолва в строке остаётся только
+// первый сегмент адреса — по нему видно, куда стучались, но не хвост.
+func nodeForErrorLog(c *gin.Context, fromURL string) string {
+	if v := resolvedNodeLabel(c); v != "" {
+		return v
+	}
+	if first, _, more := strings.Cut(fromURL, "/"); more {
+		return first + "/…"
+	}
+	return fromURL
+}
+
+// resolvedNodeLabel — путь найденного узла из метки; пусто, пока резолв не
+// состоялся.
+func resolvedNodeLabel(c *gin.Context) string {
+	if v := c.GetString(metrics.NodeLabelKey); v != metrics.NodeUnresolved {
+		return v
+	}
+	return ""
 }
 
 // markRejected размечает отказ для наблюдаемости (§94): кладёт код причины в
@@ -627,16 +651,18 @@ func nodeForLog(c *gin.Context, fromURL string) string {
 // internal-ошибки (502) не размечаются: это сбой шины, а не отказ клиенту, и в
 // журнале отказов ему делать нечего.
 //
-// Подмена метки касается ТОЛЬКО ErrNodeNotFound: путь в этом случае задал
-// клиент, и метка node у nexus_requests_total росла бы новым рядом на каждый
-// мусорный путь (§94.8). У §82.3 (ErrNodeNotAsyncIngress) узел существует, и
-// его путь в метке остаётся — там ряд ограничен числом узлов.
+// Подмена метки касается ТОЛЬКО ErrNodeNotFound без резолва: путь в этом
+// случае задал клиент, и метка node у nexus_requests_total росла бы новым
+// рядом на каждый мусорный путь (§94.8). Узел, который найден, но отвечает
+// «узла нет» (не тот тип за sync-адресом, pull-узел по короткому адресу), метку
+// своего узла сохраняет (§101.3) — как и §82.3 (ErrNodeNotAsyncIngress): ряд
+// ограничен числом узлов, а оператор видит, в какой узел стучатся не так.
 func (h *Handler) markRejected(c *gin.Context, err error, reason domain.RejectReason, internal bool) {
 	if internal {
 		return
 	}
 	SetRejectReason(c, reason)
-	if errors.Is(err, domain.ErrNodeNotFound) {
+	if errors.Is(err, domain.ErrNodeNotFound) && c.GetString(metrics.NodeLabelKey) == "" {
 		c.Set(metrics.NodeLabelKey, metrics.NodeUnresolved)
 		c.Set(metrics.TeamLabelKey, "")
 	}
@@ -660,11 +686,12 @@ func (h *Handler) onLoopDetected(c *gin.Context, mode, nodePath string) {
 // единообразно читал result/message и в успехе, и в ошибке.
 func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string) {
 	status, msg, reason, internal := classifyDomainError(err)
+	errNode := nodeForErrorLog(c, nodePath)
 	nodePath = nodeForLog(c, nodePath)
 	h.markRejected(c, err, reason, internal)
 	if internal {
 		h.logger.ErrorWithOp("receiver async routing failed", err, op,
-			h.logger.Str("node", nodePath))
+			h.logger.Str("node", errNode))
 	} else {
 		// §51.9: см. replyDomainError — отказы клиенту видны на debug.
 		h.logger.Debug("receiver async request rejected",

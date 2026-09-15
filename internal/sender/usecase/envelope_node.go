@@ -115,12 +115,43 @@ func (p *AsyncProcessor) nodeForEnvelope(ctx context.Context, raw []byte, env En
 			p.logger.Str("id", env.ID))
 		return nil, HandleAck, false
 	case errors.Is(err, ErrNodeAmbiguous):
+		if p.cancelledAmbiguous(ctx, env) {
+			return nil, HandleAck, false
+		}
 		return nil, p.dlqAmbiguous(ctx, raw, env, err), false
 	default:
 		p.logger.ErrorWithOp("node read failed", err, "async.Handle",
 			p.logger.Str("node_path", env.NodePath))
 		return nil, HandleRetry, false
 	}
+}
+
+// cancelledAmbiguous — неоднозначный конверт уже отменён оператором (§34.4).
+// Так бывает, когда очередь paused-узла очистили до обновления: отмена тогда
+// шла по пути и захватывала сообщения всех одноимённых узлов. Отменённое
+// подтверждается, как в Handle, — в DLQ оно дошло бы до сброса и подняло алерт
+// потерь по сообщениям, от которых отказались намеренно. Ошибка Redis —
+// fail-open, как в Handle: конверт идёт в DLQ.
+func (p *AsyncProcessor) cancelledAmbiguous(ctx context.Context, env Envelope) bool {
+	if p.cancel == nil {
+		return false
+	}
+	cancelled, err := p.cancel.IsCancelled(ctx, env.ID)
+	if err != nil {
+		p.logger.Warn("cancel-set check failed; ambiguous message goes to dlq",
+			p.logger.Str("id", env.ID), p.logger.Err(err))
+		return false
+	}
+	if !cancelled {
+		return false
+	}
+	p.logger.Info("async drop: cancelled by operator",
+		p.logger.Str("node_path", env.NodePath),
+		p.logger.Str("id", env.ID))
+	if p.metrics != nil {
+		p.metrics.IncRequest("requestAsync", envelopeLabels(env), "cancelled")
+	}
+	return true
 }
 
 // dlqAmbiguous отправляет неоднозначный старый конверт в DLQ вместо доставки

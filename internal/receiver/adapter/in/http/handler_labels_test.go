@@ -1,7 +1,10 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,8 +28,7 @@ const secretTail = "bot123456:AAAA"
 type ingressLabels struct{ node, team string }
 
 // captureLabels — middleware группы /api/v1: после обработчика запоминает метки
-// узла из контекста. Вектора метрик получат метку team только в §101.4, поэтому
-// её проверяем в контексте — там, откуда её возьмёт metrics.GinMiddleware.
+// узла из контекста — те, что возьмёт metrics.GinMiddleware.
 func captureLabels(got *ingressLabels) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Next()
@@ -87,12 +89,13 @@ func TestIngress_NodeLabelsFromResolvedNode(t *testing.T) {
 	paused := shortURLNode("p", domain.RootMethodRequest)
 	paused.Status = domain.NodeStatusPaused
 	nodes := map[string]*domain.Node{
-		"webhook|tg":  tg,
-		"webhook|q":   shortURLNode("q", domain.RootMethodRequestAsync),
-		"webhook|off": off,
-		"webhook|p":   paused,
-		"|a/b":        shortURLNode("a/b", domain.RootMethodRequest),
-		"|solo":       shortURLNode("solo", domain.RootMethodRequest),
+		"webhook|tg":   tg,
+		"webhook|q":    shortURLNode("q", domain.RootMethodRequestAsync),
+		"webhook|off":  off,
+		"webhook|p":    paused,
+		"webhook|pull": shortURLNode("pull", domain.RootMethodRabbitMQAsync),
+		"|a/b":         shortURLNode("a/b", domain.RootMethodRequest),
+		"|solo":        shortURLNode("solo", domain.RootMethodRequest),
 	}
 	cases := []struct {
 		name       string
@@ -115,6 +118,10 @@ func TestIngress_NodeLabelsFromResolvedNode(t *testing.T) {
 			"/api/v1/request/webhook/p", http.StatusAccepted, ingressLabels{"p", "webhook"}},
 		{"выключенный узел: наружу 404, но узел найден", http.MethodPost,
 			"/api/v1/webhook/off", http.StatusNotFound, ingressLabels{"off", "webhook"}},
+		{"sync-адрес async-узла: наружу 404, но узел найден", http.MethodPost,
+			"/api/v1/request/webhook/q", http.StatusNotFound, ingressLabels{"q", "webhook"}},
+		{"pull-узел по короткому адресу: наружу 404, но узел найден", http.MethodPost,
+			"/api/v1/webhook/pull", http.StatusNotFound, ingressLabels{"pull", "webhook"}},
 		{"несуществующий узел", http.MethodPost,
 			"/api/v1/request/webhook/nope/" + secretTail, http.StatusNotFound, ingressLabels{metrics.NodeUnresolved, ""}},
 		{"callback не-POST: 405 до резолва", http.MethodGet,
@@ -174,4 +181,40 @@ func TestIngress_NodeLabelsEmptyBeforeResolve(t *testing.T) {
 		assert.Equal(t, []string{""}, requestNodeLabels(t, m))
 		assertNoLabelContains(t, m, secretTail)
 	})
+}
+
+// failingReader — NodeReader при лежащем хранилище конфигурации узлов.
+type failingReader struct{}
+
+func (failingReader) Get(context.Context, string, string) (*domain.Node, error) {
+	return nil, errors.New("redis: connection refused")
+}
+
+// TestIngress_InternalErrorLogWithoutURLTail (§101.13) — сбой резолва (502)
+// пишется error-строкой, а она уходит и в Sentry. Узел не найден, путь задал
+// клиент, и хвост passthrough-адреса с токеном бота в строку не попадает.
+func TestIngress_InternalErrorLogWithoutURLTail(t *testing.T) {
+	for _, url := range []string{
+		"/api/v1/request/webhook/tg/" + secretTail + "/sendMessage",
+		"/api/v1/requestAsync/webhook/tg/" + secretTail + "/sendMessage",
+		"/api/v1/webhook/tg/" + secretTail + "/getUpdates",
+	} {
+		t.Run(url, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := logging.NewLogger(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})))
+			route := usecase.NewRouteUsecase(failingReader{}, syncStubSender{}, 5, logger)
+			routeAsync := usecase.NewRouteAsyncUsecase(failingReader{}, &asyncStubQueue{}, "nexus.async", 5, logger)
+			h := New(route, routeAsync, usecase.NewBodyLimitsProvider(0, 0, logger), nil, logger)
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			h.Register(r)
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, url, strings.NewReader(`{}`)))
+			require.Equal(t, http.StatusBadGateway, w.Code, w.Body.String())
+
+			require.Contains(t, buf.String(), `"node":"tg/…"`, "первый сегмент пути остаётся в строке")
+			assert.NotContains(t, buf.String(), secretTail)
+		})
+	}
 }

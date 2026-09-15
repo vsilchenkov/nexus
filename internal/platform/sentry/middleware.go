@@ -73,6 +73,9 @@ func GinMiddleware(service string) gin.HandlerFunc {
 		if v1 := nodePathFromGin(c); v1 != "" {
 			span.SetTag("node", v1)
 		}
+		if team := teamFromGin(c); team != "" {
+			span.SetTag("team", team)
+		}
 		if root := rootMethod(c); root != "" {
 			span.SetTag("root_method", root)
 		}
@@ -107,6 +110,13 @@ func routeName(c *gin.Context) string {
 // маскирования тела; до резолва путь задаёт клиент. Без метки тег не ставится.
 func nodePathFromGin(c *gin.Context) string {
 	return c.GetString(metrics.NodeLabelKey)
+}
+
+// teamFromGin — слог команды резолвнутого узла для тега `team` (§101.3). Путь
+// уникален лишь внутри команды: без слога события одноимённых узлов разных
+// команд в Sentry неразличимы. Источник тот же, что у метки team в Prometheus.
+func teamFromGin(c *gin.Context) string {
+	return c.GetString(metrics.TeamLabelKey)
 }
 
 // rootMethod — корневой метод узла для тега `root_method`. Источник тот же, что

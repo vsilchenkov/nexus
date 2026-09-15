@@ -2324,7 +2324,7 @@ Compose пересоздаёт контейнеры с новыми образа
 
 | Сочетание | Поведение |
 |---|---|
-| новый Sender, старый Receiver | sync приходит без слога команды: ряды `team=""`; breaker ведётся по `node_id` (его Receiver передаёт с §37). Async-конверты без `node_id` Sender ищет по пути: однозначный путь доставляется, **путь нескольких команд уходит в DLQ и сбрасывается** |
+| новый Sender, старый Receiver | sync приходит без слога команды: счётчики с `team=""`, гаудж исхода не пишется (застывший ряд держал бы `NexusNodeDown`); breaker ведётся по `node_id` (его Receiver передаёт с §37). Async-конверты без `node_id` Sender ищет по пути: однозначный путь доставляется, **путь нескольких команд уходит в DLQ и сбрасывается** |
 | новый Receiver, старый Sender | новые поля старый Sender игнорирует и ищет узел async-конверта по пути — прежний дефект межкомандной доставки |
 | старый Web, новые Receiver и Sender | Web читает старые ключи Redis — бейджи узлов замирают на значениях до обновления — и группирует метрики без `team`; обновляйте его сразу следом |
 
@@ -2359,13 +2359,17 @@ docker compose restart prometheus
 
 HA-стек (§5.5): `./scripts/deploy/rolling.sh` — порядок `sender receiver web` у него по умолчанию;
 Prometheus скрипт не трогает, поэтому затем тот же `docker compose restart prometheus` (файлы стека
-берутся из `COMPOSE_FILE` в `.env`, §5.5 шаг 8).
+берутся из `COMPOSE_FILE` в `.env`, §5.5 шаг 8). Окно потерь здесь шире: пока скрипт катит реплики
+Sender'а, старая реплика ещё доставляет неоднозначные сообщения по пути, в том числе взятые из DLQ.
 
 **Проверка:**
 
 ```bash
 # Метрики Sender несут команду, в метке node — путь узла без хвостов адреса
+# (строки появляются после первых запросов)
 curl -s http://localhost:9093/metrics | grep '^nexus_requests_total' | head -3
+# HA: порты реплик не публикуются — изнутри контейнера
+docker compose exec sender-1 wget -qO- http://localhost:9091/metrics | grep '^nexus_requests_total' | head -3
 # Prometheus перечитал правила
 curl -s http://localhost:9091/api/v1/rules | grep -c 'by (team, node)'     # не 0
 ```
@@ -2396,6 +2400,9 @@ legacy outcome keys migrated to node id keys` с числами `legacy_paths`, 
   `reason=node_ambiguous` и сбрасывается репроцессором: срабатывает `NexusDLQMessagesLost`
   (`result="dropped"`), в логе Sender — `dlq drop: envelope is ambiguous`. Чьё это сообщение, в нём
   не записано, доставить его некому.
+- **Одноимённые узлы не переименовывайте и не удаляйте**, пока в периодах графиков и в очередях
+  есть данные до обновления: однозначность пути для них оценивается по текущей конфигурации, и
+  данные ушедшей команды достанутся оставшемуся узлу (§101.13).
 - **`/api/metrics/diagnostics`** показывает только ряды текущей команды сессии; у токена без текущей
   команды Prometheus-блок пуст (`prometheus_available=false`).
 
@@ -2407,14 +2414,17 @@ passthrough-узлов — с токеном бота. После обновле
 включается только на время операции:
 
 ```bash
-MATCH='match[]={node=~".*/bot[0-9]+:.*"}'
+# Префикс пути необязателен: адрес default-команды без слога давал метку, начинающуюся
+# прямо с bot<id>: (первый сегмент адреса принимался за слог).
+MATCH='match[]={node=~"(.*/)?bot[0-9]+:.*"}'
 
 # 1. Что будет удалено (только чтение):
 curl -sG http://localhost:9091/api/v1/series --data-urlencode "$MATCH"
 
 # 2. Временно включить admin API. command в override ЗАМЕНЯЕТ список целиком:
 #    перенесите его из `docker compose config prometheus` (там уже итог всех
-#    override, у профиля малой памяти retention 15d) и допишите флаг.
+#    override) и допишите флаг. Ниже — корневой compose без override (90d);
+#    у профиля малой памяти там 15d.
 cat > /tmp/prom-admin.yml <<'EOF'
 services:
   prometheus:
@@ -2426,8 +2436,9 @@ services:
 EOF
 # -f — все файлы из колонки CONFIG FILES у `docker compose ls`, в том же порядке,
 # и последним временный: явные -f отключают COMPOSE_FILE из .env и автоподхват
-# docker-compose.override.yml. Пример для варианта C с профилем малой памяти:
-docker compose -f docker-compose.yml -f docker-compose.override.yml -f /tmp/prom-admin.yml up -d prometheus
+# docker-compose.override.yml. Пример — вариант C без override; с профилем малой
+# памяти: -f docker-compose.yml -f docker-compose.override.yml -f /tmp/prom-admin.yml
+docker compose -f docker-compose.yml -f /tmp/prom-admin.yml up -d prometheus
 
 # 3. Удалить и вычистить с диска:
 curl -s -X POST http://localhost:9091/api/v1/admin/tsdb/delete_series --data-urlencode "$MATCH"
@@ -2451,6 +2462,8 @@ rm /tmp/prom-admin.yml
 **Откат.** Схему откатывать не нужно (§10.2). Прежний код снова ищет узел по пути и читает старые
 ключи Redis: бейджи до первого вызова показывают значения на момент обновления. Дашборды и правила
 §101 на метриках прежнего кода работают (метка `team` пуста), откатывать их не обязательно.
+Повторное обновление в пределах 30 суток после отката бейджи заново не переносит (отметка
+переноса жива): простаивающие узлы до первого вызова показывают исход, записанный до отката.
 
 ### 9.2. Готовые образы из registry — больше не используется
 

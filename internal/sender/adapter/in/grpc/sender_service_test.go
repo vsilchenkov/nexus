@@ -112,6 +112,35 @@ func TestServer_Send_NodeOutcome(t *testing.T) {
 	}
 }
 
+// TestServer_Send_NoTeamSlug_NoOutcomeGauge (§101.9) — запрос без слога команды
+// шлёт Receiver до §101. Счётчики пишутся с team="", а гаудж исхода — нет: после
+// обновления Receiver'а ряд team="" больше не обновился бы и держал последний
+// исход (DOWN и алерт NexusNodeDown) до рестарта Sender'а.
+func TestServer_Send_NoTeamSlug_NoOutcomeGauge(t *testing.T) {
+	t.Parallel()
+
+	httpc := &stubHTTPCaller{resp: &port.HTTPResponse{StatusCode: 500, Body: []byte("x")}}
+	uc := usecase.NewSendUsecase(httpc, stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+	m := metrics.New("sender")
+	ns := &stubNodeStatus{}
+	srv := NewServer(uc, m, ns, logging.NewNoop())
+
+	_, err := srv.Send(context.Background(), &senderv1.SendRequest{
+		Id:        "req-1",
+		NodeId:    "f6693f87-0000-4000-8000-000000000001",
+		NodePath:  "partner/echo",
+		TargetUrl: "https://api.example.com/hook",
+		Method:    "POST",
+		TimeoutMs: 1000,
+	})
+	require.NoError(t, err)
+
+	assert.Zero(t, testutil.CollectAndCount(m.NodeLastRequestError), "гаудж без слога не пишется")
+	assert.InDelta(t, 1, testutil.ToFloat64(
+		m.RequestsTotal.WithLabelValues("request", "", "partner/echo", "500")), 0, "счётчик пишется с team=\"\"")
+	require.Len(t, ns.calls, 1, "исход в Redis пишется по id узла, слог ему не нужен")
+}
+
 // §55: dry-run (тест конфига из UI) не оставляет следов на узле — ни в
 // метриках, ни в гаудже исхода (§41/§52), ни в персистентном статусе (§46).
 // Иначе неудачный тест покрасил бы живой узел в Down на дашборде и накрутил

@@ -102,6 +102,29 @@ func TestSender_NodeReaderSameNamePaths(t *testing.T) {
 	assert.Equal(t, "messengers", list[0].TeamSlug)
 	assert.Equal(t, webhook.ID, list[1].ID)
 
+	// Испорченные креды узла третьей команды не мешают увидеть неоднозначность:
+	// несколько узлов конверт не исполняют, и их креды не расшифровываются. Иначе
+	// чужая порча давала бы ошибку чтения — и вечный повтор вместо DLQ.
+	const brokenCreds = `UPDATE nodes SET auth_credentials = 'v1:not:base64:!' WHERE id = $1`
+	brokenTeam := fx.mkTeam("broken")
+	broken := mk(brokenTeam, "https://broken.example.test/x", "telegram_broken")
+	_, err = fx.pool.Exec(ctx, brokenCreds, broken.ID)
+	require.NoError(t, err)
+	list, err = reader.ListByPath(ctx, "telegram")
+	require.NoError(t, err, "креды нескольких узлов не расшифровываются")
+	assert.Len(t, list, 3)
+	_, err = reader.GetByID(ctx, broken.ID)
+	require.Error(t, err, "узел по id по-прежнему расшифровывается")
+
+	solo := fx.mkNode(&domain.Node{
+		Path: "solo-broken", RootMethod: domain.RootMethodRequestAsync, URLMode: domain.URLModeStatic,
+		TargetURL: "https://solo.example.test/x", TeamID: brokenTeam.ID, ClickHouseTable: "solo_broken",
+	})
+	_, err = fx.pool.Exec(ctx, brokenCreds, solo.ID)
+	require.NoError(t, err)
+	_, err = reader.ListByPath(ctx, "solo-broken")
+	require.Error(t, err, "единственный узел пути расшифровывается — ему конверт и доставляется")
+
 	none, err := reader.ListByPath(ctx, "never-existed")
 	require.NoError(t, err)
 	assert.Empty(t, none)

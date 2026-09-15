@@ -23,7 +23,8 @@ type NodeReader interface {
 	// GetByID — узел по id; нет узла — domain.ErrNodeNotFound.
 	GetByID(ctx context.Context, id string) (*domain.Node, error)
 	// ListByPath — все узлы с этим путём во всех командах; нет ни одного —
-	// пустой список без ошибки.
+	// пустой список без ошибки. Креды гарантированы только у единственного
+	// узла: несколько узлов конверт не исполняют.
 	ListByPath(ctx context.Context, path string) ([]*domain.Node, error)
 }
 

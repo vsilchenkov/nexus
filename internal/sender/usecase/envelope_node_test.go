@@ -162,6 +162,46 @@ func TestAsync_LegacyAmbiguousEnvelope_GoesToDLQ(t *testing.T) {
 	assert.Equal(t, raw, msg.value, "конверт в DLQ — байт в байт")
 }
 
+// TestAsync_LegacyAmbiguousEnvelope_Cancelled (§101.5, §34.4) — отменённый
+// оператором неоднозначный конверт подтверждается, как любой отменённый. Очередь
+// paused-узла могли очистить до обновления, когда отмена шла по пути: в DLQ
+// такое сообщение дошло бы до сброса и подняло алерт потерь. Сбой проверки
+// отмены — fail-open, конверт идёт в DLQ.
+func TestAsync_LegacyAmbiguousEnvelope_Cancelled(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		cancel     *stubCancelSet
+		want       HandleResult
+		wantDLQ    int
+		wantMetric string
+	}{
+		{"отменён — ack без DLQ", &stubCancelSet{cancelled: map[string]bool{"id-legacy": true}}, HandleAck, 0, "cancelled"},
+		{"не отменён — DLQ", &stubCancelSet{}, HandleDLQed, 1, ReasonNodeAmbiguous},
+		{"сбой проверки отмены — DLQ", &stubCancelSet{err: assert.AnError}, HandleDLQed, 1, ReasonNodeAmbiguous},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			messengers, webhook := sameNameNodes()
+			dlq := &stubDLQProducer{}
+			m := metrics.New("sender")
+			httpc := &stubHTTPCaller{}
+			send := NewSendUsecase(httpc, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+			p := NewAsyncProcessor(&stubAsyncNodeReader{nodes: []*domain.Node{messengers, webhook}},
+				send, dlq, tc.cancel, nil, "nexus.async.dlq", m, logging.NewNoop())
+
+			raw := marshalEnvelope(t, Envelope{ID: "id-legacy", NodePath: "telegram", Method: "POST"})
+			assert.Equal(t, tc.want, p.Handle(context.Background(), raw, nil))
+
+			assert.Zero(t, httpc.calls)
+			assert.Len(t, dlq.produced, tc.wantDLQ)
+			assert.InDelta(t, 1, testutil.ToFloat64(
+				m.RequestsTotal.WithLabelValues("requestAsync", "", "telegram", tc.wantMetric)), 0)
+		})
+	}
+}
+
 // TestAsync_NonCanonicalNodeID_Dropped — битый node_id: сообщение отпускается
 // как для удалённого узла, без доставки и без DLQ.
 func TestAsync_NonCanonicalNodeID_Dropped(t *testing.T) {
