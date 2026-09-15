@@ -101,7 +101,7 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 	effOutcome := outcome
 	if s.nodeStatus != nil && !out.ParentGone {
 		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
-		effOutcome = s.nodeStatus.SetLastOutcome(statusCtx, req.GetNodePath(), outcome)
+		effOutcome = s.nodeStatus.SetLastOutcome(statusCtx, req.GetNodeId(), outcome)
 		cancel()
 	} else if out.ParentGone {
 		// §51.9: тихий пропуск — иначе «почему узел не покраснел» не разобрать.

@@ -36,18 +36,18 @@ func (stubLogWriter) Flush(context.Context) error                      { return 
 // stubNodeStatus фиксирует вызовы NodeStatusWriter. Send синхронен — мьютекс не нужен.
 type stubNodeStatus struct {
 	calls []struct {
-		path    string
+		nodeID  string
 		outcome domain.NodeOutcome
 	}
 }
 
 // SetLastOutcome возвращает исход как есть: порог подряд идущих отказов (§52-доп)
 // живёт в Redis-реализации, и подменять его здесь значило бы тестировать заглушку.
-func (s *stubNodeStatus) SetLastOutcome(_ context.Context, path string, outcome domain.NodeOutcome) domain.NodeOutcome {
+func (s *stubNodeStatus) SetLastOutcome(_ context.Context, nodeID string, outcome domain.NodeOutcome) domain.NodeOutcome {
 	s.calls = append(s.calls, struct {
-		path    string
+		nodeID  string
 		outcome domain.NodeOutcome
-	}{path, outcome})
+	}{nodeID, outcome})
 	return outcome
 }
 
@@ -87,6 +87,7 @@ func TestServer_Send_NodeOutcome(t *testing.T) {
 
 			resp, err := srv.Send(context.Background(), &senderv1.SendRequest{
 				Id:        "req-1",
+				NodeId:    "f6693f87-0000-4000-8000-000000000001",
 				NodePath:  "partner/echo",
 				TeamSlug:  "partner",
 				TargetUrl: "https://api.example.com/hook",
@@ -105,7 +106,7 @@ func TestServer_Send_NodeOutcome(t *testing.T) {
 				"incomplete_total — прежняя семантика «любой не-2xx»")
 
 			require.Len(t, ns.calls, 1, "§46: SetLastOutcome ровно раз на вызов")
-			assert.Equal(t, "partner/echo", ns.calls[0].path)
+			assert.Equal(t, "f6693f87-0000-4000-8000-000000000001", ns.calls[0].nodeID, "§101.6: исход пишется по id узла из запроса")
 			assert.Equal(t, tc.wantOutcome, ns.calls[0].outcome)
 		})
 	}

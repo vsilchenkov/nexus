@@ -84,6 +84,7 @@ func TestNodeStatus_DegradedLifecycle_Redis(t *testing.T) {
 
 	const nodePath = "site/push"
 	node := &domain.Node{
+		ID:              "5c6d7e8f-0000-4000-8000-000000000052",
 		Path:            nodePath,
 		Status:          domain.NodeStatusEnabled,
 		TimeoutMs:       1000,
@@ -111,9 +112,9 @@ func TestNodeStatus_DegradedLifecycle_Redis(t *testing.T) {
 
 	outcome := func() domain.NodeOutcome {
 		t.Helper()
-		got, err := reader.GetLastOutcomes(ctx, []string{nodePath})
+		got, err := reader.GetLastOutcomes(ctx, []string{node.ID})
 		require.NoError(t, err)
-		v, ok := got[nodePath]
+		v, ok := got[node.ID]
 		require.True(t, ok, "после доставки исход должен быть в Redis")
 		return v
 	}

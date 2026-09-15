@@ -377,13 +377,19 @@ func (u *MetricsUsecase) applyLastOutcomes(ctx context.Context, at time.Time, re
 	if len(res.Items) == 0 {
 		return
 	}
-	paths := make([]string, len(res.Items))
+	refs := make([]NodeRef, len(res.Items))
 	for i := range res.Items {
-		paths[i] = res.Items[i].Node
+		refs[i] = NodeRef{ID: res.Items[i].NodeID, Path: res.Items[i].Node}
 	}
-	got := NewLastOutcomeResolver(u.nodeStatus, u.prom, u.logger).Resolve(ctx, at, paths)
+	got := NewLastOutcomeResolver(u.nodeStatus, u.prom, u.logger).Resolve(ctx, at, refs)
 	for i := range res.Items {
-		res.Items[i].LastOutcome = got[res.Items[i].Node].Outcome
+		// По id (§101.6): в режиме «Все команды» строки одноимённых узлов разных
+		// команд стоят рядом, и по пути их исходы склеивались.
+		o, ok := got[res.Items[i].NodeID]
+		if !ok {
+			o.Outcome = domain.NodeOutcomeOK // строка без id: тон по умолчанию, см. выше
+		}
+		res.Items[i].LastOutcome = o.Outcome
 	}
 }
 

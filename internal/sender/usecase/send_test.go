@@ -96,19 +96,24 @@ type stubBreaker struct {
 	// §81.3: политика, с которой пришёл учёт отказа — проверяем, что доехала
 	// именно настройка узла, а не глобальная.
 	failurePolicies []domain.BreakerPolicy
+	// §101.6: ключи всех обращений по порядку.
+	keys []string
 }
 
-func (b *stubBreaker) Allow(_ context.Context, _ string) (bool, error) {
+func (b *stubBreaker) Allow(_ context.Context, key string) (bool, error) {
 	b.allowCount++
+	b.keys = append(b.keys, key)
 	return b.allow, b.allowErr
 }
-func (b *stubBreaker) RecordSuccess(ctx context.Context, _ string) error {
+func (b *stubBreaker) RecordSuccess(ctx context.Context, key string) error {
 	b.successCount++
+	b.keys = append(b.keys, key)
 	b.successCtxErrs = append(b.successCtxErrs, ctx.Err())
 	return nil
 }
-func (b *stubBreaker) RecordFailure(ctx context.Context, _ string, p domain.BreakerPolicy) error {
+func (b *stubBreaker) RecordFailure(ctx context.Context, key string, p domain.BreakerPolicy) error {
 	b.failureCount++
+	b.keys = append(b.keys, key)
 	b.failureCtxErrs = append(b.failureCtxErrs, ctx.Err())
 	b.failurePolicies = append(b.failurePolicies, p)
 	return nil
@@ -233,6 +238,38 @@ func TestSend_Success_RecordsLogAndUpdatesBreaker(t *testing.T) {
 	// Breaker: успешный вызов → RecordSuccess, не RecordFailure.
 	assert.Equal(t, 1, cb.successCount)
 	assert.Equal(t, 0, cb.failureCount)
+}
+
+// TestSend_BreakerKeyedByNodeID (§101.6) — breaker узла ищется по id: путь
+// telegram занят узлами двух команд, и по пути отказы одного закрывали бы
+// доставку другому. Без id (Receiver не прислал node_id) — прежний ключ по
+// пути, защита не выключается.
+func TestSend_BreakerKeyedByNodeID(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		nodeID string
+		want   string
+	}{
+		{"есть id узла", "f6693f87-0000-4000-8000-000000000001", "id:f6693f87-0000-4000-8000-000000000001"},
+		{"без id — ключ по пути", "", "partner/echo"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 502}}}
+			cb := &stubBreaker{allow: true}
+			uc := NewSendUsecase(httpc, &stubLogWriter{}, cb, logging.NewNoop(), 64<<20)
+			in := baseInput()
+			in.NodeID = tc.nodeID
+			in.RetryCount = 0
+
+			uc.Send(context.Background(), in)
+
+			require.Equal(t, 1, cb.failureCount, "502 засчитан отказом")
+			assert.Equal(t, []string{tc.want, tc.want}, cb.keys, "Allow и RecordFailure — один ключ")
+		})
+	}
 }
 
 // stubHostResolver — фейковый HostResolver (§67): отдаёт фиксированное имя,

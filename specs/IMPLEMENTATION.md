@@ -5909,7 +5909,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Receiver: метки после резолва (утечка токенов) | ✅ Phase 101.2 | [resolver.go](../internal/receiver/usecase/resolver.go) (слог найденного узла), [route.go](../internal/receiver/usecase/route.go) `RouteInput.OnNodeResolved`, [handler.go](../internal/receiver/adapter/in/http/handler.go) `nodeLabelSetter`/`nodeForLog`, [metrics/gin.go](../internal/platform/metrics/gin.go) `TeamLabelKey`, [sentry/middleware.go](../internal/platform/sentry/middleware.go); тест [handler_labels_test.go](../internal/receiver/adapter/in/http/handler_labels_test.go) |
 | Контракт доставки `node_id`/`team`, Sender ищет узел по id | ✅ Phase 101.3 | [sender.proto](../proto/sender/v1/sender.proto) `team_slug = 33`; конверт `node_id`/`team` — [envelope.go](../internal/receiver/usecase/envelope.go), [async_envelope.go](../internal/sender/usecase/async_envelope.go); заголовки Kafka — [route_async.go](../internal/receiver/usecase/route_async.go), [puller.go](../internal/receiver/usecase/puller.go), `withNodeIdentity`; слог pull-узла — [nodelister.go](../internal/receiver/adapter/out/rabbitmq/nodelister.go); выбор узла — [envelope_node.go](../internal/sender/usecase/envelope_node.go) `resolveEnvelopeNode`/`ErrNodeAmbiguous`, [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `GetByID`/`ListByPath`; тесты [envelope_node_test.go](../internal/sender/usecase/envelope_node_test.go), [route_identity_test.go](../internal/receiver/usecase/route_identity_test.go), [node_identity_test.go](../tests/integration/node_identity_test.go), [tests/contract/envelope_test.go](../tests/contract/envelope_test.go) |
 | Метка `team` во всех per-node метриках | ✅ Phase 101.4 | [node_labels.go](../internal/platform/metrics/node_labels.go) `NodeLabels` и типизированные методы, [metrics.go](../internal/platform/metrics/metrics.go) (14 векторов), [gin.go](../internal/platform/metrics/gin.go) `NodeLabelsFromGin`; запись — [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) (слог из `team_slug`), [envelope_node.go](../internal/sender/usecase/envelope_node.go) `nodeLabels`/`envelopeLabels`, [async.go](../internal/sender/usecase/async.go), [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go), [puller.go](../internal/receiver/usecase/puller.go), [handler.go](../internal/receiver/adapter/in/http/handler.go), [replay.go](../internal/web/usecase/replay.go) `nodeTeamSlug`; guard-тесты [node_labels_test.go](../internal/platform/metrics/node_labels_test.go) |
-| Рантайм-ключи Redis и pull-воркеры по `node_id` | ⛔ Phase 101.5 | — |
+| Рантайм-ключи Redis и pull-воркеры по `node_id` | ✅ Phase 101.5 | ключи — [nodestatus/redis.go](../internal/platform/nodestatus/redis.go) `Key`/`StreakKey`/`LegacyKey`, [circuitbreaker/redis.go](../internal/platform/circuitbreaker/redis.go) `NodeKey`; перенос — [nodestatus/migrate.go](../internal/platform/nodestatus/migrate.go) `LegacyMigrator`, [node_status_migration.go](../internal/web/usecase/node_status_migration.go), запуск в [web/app.go](../internal/web/app.go); Sender — [breaker_vote.go](../internal/sender/usecase/breaker_vote.go) `breakerKey`, [send.go](../internal/sender/usecase/send.go), [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go), [async.go](../internal/sender/usecase/async.go), [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go); Receiver — [puller_manager.go](../internal/receiver/usecase/puller_manager.go), [healthsink.go](../internal/receiver/adapter/out/rabbitmq/healthsink.go); Web — [last_outcome.go](../internal/web/usecase/last_outcome.go) `NodeRef`, [node_breaker.go](../internal/web/usecase/node_breaker.go), адаптеры [redis/](../internal/web/adapter/out/redis/); контракт писателей и читателя — [runtime_keys_test.go](../tests/contract/runtime_keys_test.go) |
 | «Очередь»: принадлежность сообщения, чтение тела | ⛔ Phase 101.6 | — |
 | Web: чтение Prometheus по (team, node) | ⛔ Phase 101.7 | — |
 | UI: команда в топах Kafka, снятие правила §86.8 | ⛔ Phase 101.8 | — |
@@ -6014,6 +6014,41 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   команды, — прежнее поведение; разнесение по `(team, node)` — 101.7, дашборды и алерты — 101.9.
   Сопоставления векторов (`on`, `group_left`) в клиенте Prometheus Web нет, лишняя метка его не
   ломает.
+
+- **Перенос `last_error` отмечается ключом, а старые ключи не удаляются (101.5).** Если повторять
+  перенос на каждом рестарте Web, он воскрешал бы исход, снятый ручным сбросом защиты (§81.4.2:
+  `ClearLastOutcome` удаляет ключ по id), и отдавал бы исход удалённого узла новому узлу с тем же
+  путём. Удалять старые ключи после переноса тоже нельзя: после отката их читает прежний Web
+  (§101.12). Поэтому отметка `nexus:node:status_migration:101` живёт 30 суток — столько же, сколько
+  сами старые ключи. Проверка «ключ по id уже есть» и запись идут одним Lua-скриптом: между ними
+  Sender пишет свежий исход, а вторая реплика Web выполняет тот же перенос. В конвейере скрипт
+  отправляется через `EVAL`, а не `EVALSHA`: на пустом кеше скриптов `NOSCRIPT` вернулся бы уже из
+  `Exec`, где повторить некому.
+
+- **Порт `UniqueByPaths` из плана не понадобился (101.5).** Переносу нужна карта «однозначный путь →
+  id», и её уже отдаёт `IDsByPaths` (§98.2, `HAVING count(*) = 1`). Слог команды переносу не нужен;
+  JOIN teams понадобится экрану Kafka — это 101.7. Перенос проверен на настоящем Redis
+  (`TestNodeStatus_LegacyMigration_Redis`): сроки ключей miniredis воспроизводит не во всём.
+
+- **Пустой `node_id` в 101.5.** Breaker работает по ключу пути (`breakerKey`), исход не пишется
+  (`RedisWriter` оставляет debug). Sync-запрос несёт `node_id` от Receiver'а давно (§37), async и DLQ
+  берут id узла из БД — ветка страхует выкат и в рабочем режиме не срабатывает.
+
+- **Бейдж рабочего стола сшивается по `NodeThroughputRow.NodeID` (101.5).** `LastOutcomeResolver`
+  принимает `NodeRef{ID, Path}`: Redis спрашивается по id, а Prometheus-гаудж пока по пути, потому
+  что метку `team` Web начнёт читать в 101.7. До тех пор одноимённые узлы без записи в Redis получают
+  общий fallback. Строка без id, как и раньше при «неизвестно», получает ok.
+
+- **Карта pull-воркеров — по id (101.5).** `desired[n.Path]` оставлял один из одноимённых узлов без
+  воркера — его очередь не читал никто, хотя lease уже был по id. Переименование узла по-прежнему
+  перезапускает воркер: у узла меняется `updated_at`. Снимок здоровья без id `HealthSink` не пишет —
+  воркер получает ошибку и пишет warn.
+
+- **Совпадение формата ключей у двух процессов проверяет отдельный тест.**
+  [runtime_keys_test.go](../tests/contract/runtime_keys_test.go) на одном miniredis сводит писателей
+  (Sender, Receiver) и читателя (Web); тест каждого сервиса видит только свою половину. Red-проверка
+  101.5: откат каждой из 9 правок к поведению до §101 (ключи по пути в Sender, Receiver и Web, ключ
+  без `id:`, перенос без отметки) делает тест красным.
 
 - **IDOR во вкладке «Очередь».** `GET …/queue/body` проверял доступ к узлу из адреса, а сообщение
   читал по `(topic, partition, offset)` из запроса без сверки владельца — тело чужого сообщения

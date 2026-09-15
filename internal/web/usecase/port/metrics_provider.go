@@ -233,8 +233,22 @@ type PromMetrics interface {
 // бейджа; Prometheus остаётся fallback'ом. Реализуется adapter/out/redis.
 // Может быть nil (нет Redis) → applyLastOutcomes деградирует на Prometheus.
 type NodeStatusReader interface {
-	// GetLastOutcomes возвращает исход последнего вызова (ok/degraded/down) для
-	// указанных путей узлов. Узлы без записи в Redis либо с нераспознанным
-	// значением в карту НЕ попадают (вызывающий добивает их из Prometheus).
-	GetLastOutcomes(ctx context.Context, nodePaths []string) (map[string]domain.NodeOutcome, error)
+	// GetLastOutcomes возвращает исход последнего вызова (ok/degraded/down) по
+	// id узлов (§101.6), карта — тоже по id. Узлы без записи в Redis либо с
+	// нераспознанным значением в карту НЕ попадают (вызывающий добивает их из
+	// Prometheus).
+	GetLastOutcomes(ctx context.Context, nodeIDs []string) (map[string]domain.NodeOutcome, error)
+}
+
+// NodeStatusMigrator — перенос исходов узлов со старых ключей Redis по пути на
+// ключи по id (§101.6). Реализуется adapter/out/redis поверх platform/nodestatus.
+type NodeStatusMigrator interface {
+	// LegacyMigrated — перенос уже выполнен.
+	LegacyMigrated(ctx context.Context) (bool, error)
+	// LegacyOutcomePaths — пути узлов, у которых остался ключ исхода по пути.
+	LegacyOutcomePaths(ctx context.Context) ([]string, error)
+	// MigrateLegacyOutcomes переносит исходы для пар «путь → id», не трогая уже
+	// записанные ключи по id, отмечает перенос выполненным и возвращает число
+	// перенесённых ключей.
+	MigrateLegacyOutcomes(ctx context.Context, idsByPath map[string]string) (int, error)
 }

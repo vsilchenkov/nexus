@@ -96,6 +96,7 @@ type App struct {
 	// §94.5: чистка журнала отказов по сроку хранения.
 	rejectedHousekeepingDone <-chan struct{}
 	shipperDone              <-chan struct{} // §51: done-канал шиппера служебных логов
+	statusMigrationDone      <-chan struct{} // §101.6: перенос ключей исхода узлов
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
@@ -709,7 +710,17 @@ func (a *App) Start(ctx context.Context) error {
 	// ВАЖНО: тип переменной — интерфейс, иначе typed-nil попал бы в non-nil интерфейс.
 	var nodeStatusReader webport.NodeStatusReader
 	if a.redis != nil {
-		nodeStatusReader = rediscache.NewNodeStatusReaderRedis(a.redis, a.logger)
+		statusRedis := rediscache.NewNodeStatusReaderRedis(a.redis, a.logger)
+		nodeStatusReader = statusRedis
+		// §101.6: исходы узлов переехали на ключи по id. Старые ключи по пути
+		// переносятся один раз и в фоне — старт Web не ждёт SCAN по Redis.
+		migration := usecase.NewNodeStatusMigration(statusRedis, nodeRepo, a.logger)
+		a.statusMigrationDone = safego.Go(a.logger, "web.nodeStatusMigration", func() {
+			if err := migration.Run(ctx); err != nil {
+				a.logger.Warn("node status migration failed; idle nodes show no outcome until their next call",
+					a.logger.Err(err))
+			}
+		})
 	}
 	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, nodeStatusReader, a.logger,
 		// §79.5.1: порог точной формы графика — рычаг оператора на больших таблицах.
@@ -908,6 +919,7 @@ func (a *App) Stop(ctx context.Context) error {
 	safego.Await(awaitCtx, a.housekeepingDone, a.logger, "web.housekeeping")
 	safego.Await(awaitCtx, a.rejectedHousekeepingDone, a.logger, "web.rejectedHousekeeping")
 	safego.Await(awaitCtx, a.shipperDone, a.logger, "web.logShipper")
+	safego.Await(awaitCtx, a.statusMigrationDone, a.logger, "web.nodeStatusMigration")
 	awaitCancel()
 	if a.chMgr != nil {
 		closeCtx, cancelClose := context.WithTimeout(ctx, 5*time.Second)

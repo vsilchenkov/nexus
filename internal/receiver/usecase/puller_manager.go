@@ -39,7 +39,8 @@ type PullerManager struct {
 	lease           NodeLease
 	logger          logging.Logger
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// running — воркеры по id узла (§101.7): путь уникален лишь внутри команды.
 	running map[string]*workerHandle
 	wg      sync.WaitGroup
 }
@@ -47,9 +48,9 @@ type PullerManager struct {
 type workerHandle struct {
 	cancel    context.CancelFunc
 	updatedAt time.Time
-	// nodeID — под каким именем взята аренда (§93.8). Хранится здесь, потому
-	// что running индексирован по пути, а путь у узла меняется.
-	nodeID string
+	// path — только для журнала: карта индексирована по id, а оператор ищет
+	// узел по пути.
+	path string
 }
 
 func NewPullerManager(
@@ -161,43 +162,45 @@ func (mgr *PullerManager) reconcile(ctx context.Context) {
 		return
 	}
 
+	// По id, а не по пути (§101.7): одноимённые pull-узлы разных команд
+	// вытесняли друг друга из карты, и очередь одного из них не читал никто.
 	desired := make(map[string]*domain.Node, len(nodes))
 	for _, n := range nodes {
-		desired[n.Path] = n
+		desired[n.ID] = n
 	}
 
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
 
 	// Остановить удалённые и изменённые (конфиг поменялся → перезапуск).
-	for path, h := range mgr.running {
-		n, ok := desired[path]
+	for id, h := range mgr.running {
+		n, ok := desired[id]
 		if !ok {
-			mgr.stopLocked(path, h)
+			mgr.stopLocked(id, h)
 			continue
 		}
 		if n.UpdatedAt.After(h.updatedAt) {
 			mgr.logger.Info("puller: node config changed, restarting worker",
-				mgr.logger.Str("node", path))
-			mgr.stopLocked(path, h)
+				mgr.logger.Str("node", h.path))
+			mgr.stopLocked(id, h)
 		}
 	}
 
 	// Запустить недостающие — и только те узлы, которые ведёт эта реплика.
 	// Аренда продлевается здесь же для уже работающих воркеров: отдельного
 	// таймера продления нет, его роль играет сам reconcile-тик.
-	for path, n := range desired {
+	for id, n := range desired {
 		if !mgr.holdsLease(ctx, n) {
 			// Узел увели (соседняя реплика перехватила аренду после нашей
 			// заминки) — воркер надо остановить, иначе очередь читают двое.
-			if h, ok := mgr.running[path]; ok {
+			if h, ok := mgr.running[id]; ok {
 				mgr.logger.Info("puller: node lease lost, stopping worker",
-					mgr.logger.Str("node", path))
-				mgr.stopLocked(path, h)
+					mgr.logger.Str("node", n.Path))
+				mgr.stopLocked(id, h)
 			}
 			continue
 		}
-		if _, ok := mgr.running[path]; ok {
+		if _, ok := mgr.running[id]; ok {
 			continue
 		}
 		mgr.startLocked(ctx, n)
@@ -211,7 +214,7 @@ func (mgr *PullerManager) startLocked(parent context.Context, n *domain.Node) {
 	wctx, cancel := context.WithCancel(context.WithoutCancel(parent))
 	w := NewPullerWorker(n, mgr.connector, mgr.producer, mgr.asyncTopic,
 		mgr.maxMessageBytes, mgr.metrics, mgr.sink, mgr.logger)
-	mgr.running[n.Path] = &workerHandle{cancel: cancel, updatedAt: n.UpdatedAt, nodeID: n.ID}
+	mgr.running[n.ID] = &workerHandle{cancel: cancel, updatedAt: n.UpdatedAt, path: n.Path}
 	mgr.wg.Go(func() {
 		defer safego.Recover(mgr.logger, "receiver.pullerWorker")
 		w.Run(wctx)
@@ -219,22 +222,23 @@ func (mgr *PullerManager) startLocked(parent context.Context, n *domain.Node) {
 	mgr.logger.Info("puller: worker started", mgr.logger.Str("node", n.Path))
 }
 
-func (mgr *PullerManager) stopLocked(path string, h *workerHandle) {
+func (mgr *PullerManager) stopLocked(nodeID string, h *workerHandle) {
 	h.cancel()
-	delete(mgr.running, path)
-	mgr.logger.Info("puller: worker stopped", mgr.logger.Str("node", path))
+	delete(mgr.running, nodeID)
+	mgr.logger.Info("puller: worker stopped",
+		mgr.logger.Str("node", h.path), mgr.logger.Str("node_id", nodeID))
 }
 
 // stopAll останавливает все воркеры и ждёт graceful-завершения (§27.5).
 func (mgr *PullerManager) stopAll() {
 	mgr.mu.Lock()
 	released := make([]string, 0, len(mgr.running))
-	for path, h := range mgr.running {
+	for id, h := range mgr.running {
 		h.cancel()
-		if h.nodeID != "" {
-			released = append(released, h.nodeID)
+		if id != "" {
+			released = append(released, id)
 		}
-		delete(mgr.running, path)
+		delete(mgr.running, id)
 	}
 	mgr.mu.Unlock()
 

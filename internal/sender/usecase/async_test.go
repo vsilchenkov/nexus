@@ -458,14 +458,14 @@ type stubNodeStatus struct {
 }
 
 type nodeStatusRec struct {
-	path    string
+	nodeID  string
 	outcome domain.NodeOutcome
 }
 
 // SetLastOutcome возвращает исход как есть: порог подряд идущих отказов (§52-доп)
 // живёт в Redis-реализации.
-func (s *stubNodeStatus) SetLastOutcome(_ context.Context, path string, outcome domain.NodeOutcome) domain.NodeOutcome {
-	s.calls = append(s.calls, nodeStatusRec{path: path, outcome: outcome})
+func (s *stubNodeStatus) SetLastOutcome(_ context.Context, nodeID string, outcome domain.NodeOutcome) domain.NodeOutcome {
+	s.calls = append(s.calls, nodeStatusRec{nodeID: nodeID, outcome: outcome})
 	return outcome
 }
 
@@ -492,6 +492,7 @@ func TestAsync_WritesNodeStatus(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			node := &domain.Node{
+				ID:              "7c9e6679-7425-40de-944b-e07fc1f90ae7",
 				Path:            "partner/echo",
 				Status:          domain.NodeStatusEnabled,
 				TimeoutMs:       1000,
@@ -513,7 +514,7 @@ func TestAsync_WritesNodeStatus(t *testing.T) {
 			p.Handle(context.Background(), makeEnvelope(t, "partner/echo"), nil)
 
 			require.Len(t, ns.calls, 1, "§46: SetLastOutcome вызывается ровно раз на сообщение")
-			assert.Equal(t, "partner/echo", ns.calls[0].path)
+			assert.Equal(t, node.ID, ns.calls[0].nodeID, "§101.6: исход пишется по id узла, а не по пути")
 			assert.Equal(t, tc.wantOutcome, ns.calls[0].outcome)
 			if tc.wantDLQ {
 				assert.Len(t, dlq.produced, 1, "не-2xx уходит в DLQ — §52 это не меняет")

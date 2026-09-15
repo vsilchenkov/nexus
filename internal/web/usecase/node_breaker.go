@@ -89,7 +89,7 @@ func (u *NodeBreakerUsecase) State(ctx context.Context, nodeID, teamID string) (
 		return BreakerStateResult{Available: false, State: string(domain.BreakerStateClosed)}, nil
 	}
 
-	st, err := u.breaker.State(ctx, node.Path)
+	st, err := u.breaker.State(ctx, node.ID)
 	if err != nil {
 		// НЕ fail-open: соврать оператору «закрыт», когда состояние неизвестно,
 		// хуже, чем честно сказать «не знаю». Fail-open нужен там, где на кону
@@ -123,7 +123,7 @@ func (u *NodeBreakerUsecase) Reset(ctx context.Context, actor Actor, nodeID, tea
 		return BreakerResetResult{}, ErrBreakerUnavailable
 	}
 
-	before, err := u.breaker.Reset(ctx, node.Path)
+	before, err := u.breaker.Reset(ctx, node.ID)
 	if err != nil {
 		u.logger.ErrorWithOp("breaker reset failed", err, "breaker.reset",
 			u.logger.Str("node", node.Path))
@@ -139,7 +139,7 @@ func (u *NodeBreakerUsecase) Reset(ctx context.Context, actor Actor, nodeID, tea
 	// Снятие бейджа — best-effort: главное сделано (защита снята), и ронять
 	// операцию из-за второстепенной записи нельзя. Оператор видит исход в ответе.
 	if u.status != nil {
-		if err := u.status.ClearLastOutcome(ctx, node.Path); err != nil {
+		if err := u.status.ClearLastOutcome(ctx, node.ID); err != nil {
 			u.logger.Warn("breaker reset: node status not cleared",
 				u.logger.Str("node", node.Path), u.logger.Err(err))
 		} else {

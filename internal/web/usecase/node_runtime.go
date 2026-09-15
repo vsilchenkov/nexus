@@ -58,8 +58,8 @@ func (u *NodeRuntimeUsecase) State(ctx context.Context, nodeID, teamID string) (
 		return NodeRuntimeResult{}, domain.ErrNodeNotFound
 	}
 
-	got := u.resolver.Resolve(ctx, u.clock.Now(), []string{node.Path})
-	o := got[node.Path]
+	got := u.resolver.Resolve(ctx, u.clock.Now(), []NodeRef{{ID: node.ID, Path: node.Path}})
+	o := got[node.ID]
 	if !o.Known {
 		// §51.9: тихая деградация обязана оставлять след — иначе «почему бейджа
 		// нет» придётся выяснять по конфигурации инсталляции.

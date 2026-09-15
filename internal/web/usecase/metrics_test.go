@@ -146,11 +146,13 @@ func (f *fakeNodeRepo) List(_ context.Context, _ port.ListNodesFilter) ([]*domai
 // fakeNodeStatus — Redis-источник исхода последнего вызова (§46/§52,
 // port.NodeStatusReader).
 type fakeNodeStatus struct {
-	m   map[string]domain.NodeOutcome
-	err error
+	m     map[string]domain.NodeOutcome
+	err   error
+	asked []string // §101.6: по каким id спрашивали
 }
 
-func (f *fakeNodeStatus) GetLastOutcomes(_ context.Context, _ []string) (map[string]domain.NodeOutcome, error) {
+func (f *fakeNodeStatus) GetLastOutcomes(_ context.Context, ids []string) (map[string]domain.NodeOutcome, error) {
+	f.asked = append(f.asked, ids...)
 	return f.m, f.err
 }
 
@@ -260,8 +262,8 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 		// Redis: a/x → degraded (перебивает Prometheus down), b/y → down;
 		// c/z и d/w отсутствуют → fallback на Prometheus.
 		rs := &fakeNodeStatus{m: map[string]domain.NodeOutcome{
-			"a/x": domain.NodeOutcomeDegraded,
-			"b/y": domain.NodeOutcomeDown,
+			"n1": domain.NodeOutcomeDegraded, // a/x
+			"n2": domain.NodeOutcomeDown,     // b/y
 		}}
 		repo := &fakeNodeRepo{list: []*domain.Node{
 			{ID: "n1", Path: "a/x"}, {ID: "n2", Path: "b/y"},
@@ -280,6 +282,31 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			"нет в Redis → fallback на Prometheus gauge=1 → degraded")
 		require.Equal(t, domain.NodeOutcomeOK, by["d/w"].LastOutcome,
 			"нет ни в Redis, ни в Prometheus → ok")
+	})
+
+	// §101.6: в режиме «Все команды» строки одноимённых узлов стоят рядом, и у
+	// каждой свой исход — Redis спрашивается по id, а не по пути.
+	t.Run("last outcome: same path in two teams keeps own outcome", func(t *testing.T) {
+		t.Parallel()
+		prom := &fakeProm{throughput: map[string]port.NodeThroughput{"telegram": {In: 1}}}
+		rs := &fakeNodeStatus{m: map[string]domain.NodeOutcome{
+			"id-messengers": domain.NodeOutcomeDown,
+			"id-webhook":    domain.NodeOutcomeOK,
+		}}
+		repo := &fakeNodeRepo{list: []*domain.Node{
+			{ID: "id-messengers", Path: "telegram", TeamID: "t-messengers"},
+			{ID: "id-webhook", Path: "telegram", TeamID: "t-webhook"},
+		}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, rs, log)
+		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
+		by := map[string]NodeThroughputRow{}
+		for _, it := range got.Items {
+			by[it.NodeID] = it
+		}
+		require.Len(t, by, 2)
+		require.Equal(t, domain.NodeOutcomeDown, by["id-messengers"].LastOutcome)
+		require.Equal(t, domain.NodeOutcomeOK, by["id-webhook"].LastOutcome)
+		require.ElementsMatch(t, []string{"id-messengers", "id-webhook"}, rs.asked)
 	})
 
 	// §46: ошибка Redis не валит — деградация на Prometheus.

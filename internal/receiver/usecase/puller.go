@@ -442,6 +442,7 @@ func (w *PullerWorker) publishHealth(ctx context.Context, qd, cc int64) {
 		w.lastConsumers = cc
 	}
 	h := domain.RMQHealth{
+		NodeID:        w.node.ID,
 		NodePath:      w.node.Path,
 		ConnState:     w.state,
 		Degraded:      w.degraded,

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/circuitbreaker"
 	"nexus/internal/sender/usecase/port"
 )
 
@@ -25,6 +26,17 @@ const (
 	breakerBookkeepingTimeout = 2 * time.Second
 	nodeStatusWriteTimeout    = 2 * time.Second
 )
+
+// breakerKey — ключ circuit breaker'а узла (§101.6): по id узла, потому что
+// путь уникален лишь внутри команды и одноимённые узлы разных команд делили бы
+// один breaker. Пустой id — ключ по пути, как до §101: защита не выключается,
+// лишь остаётся общей у одноимённых узлов.
+func breakerKey(nodeID, nodePath string) string {
+	if nodeID == "" {
+		return nodePath
+	}
+	return circuitbreaker.NodeKey(nodeID)
+}
 
 // classifyUpstream различает «приёмник не смог» и «ответа никто уже не ждёт».
 //
@@ -104,7 +116,7 @@ func (u *SendUsecase) voteBreaker(ctx context.Context, in SendInput, resp *port.
 	defer cancel()
 
 	if vote == voteHealthy {
-		if err := u.cb.RecordSuccess(bookCtx, in.NodePath); err != nil {
+		if err := u.cb.RecordSuccess(bookCtx, breakerKey(in.NodeID, in.NodePath)); err != nil {
 			// §51.9: сбой учёта раньше гасился в «_» и был невидим полностью.
 			u.logger.Debug("send: breaker success not recorded",
 				u.logger.Str("id", in.ID),
@@ -118,7 +130,7 @@ func (u *SendUsecase) voteBreaker(ctx context.Context, in SendInput, resp *port.
 		Threshold: int(in.BreakerThreshold),
 		Cooldown:  time.Duration(in.BreakerCooldownSec) * time.Second,
 	}
-	if err := u.cb.RecordFailure(bookCtx, in.NodePath, policy); err != nil {
+	if err := u.cb.RecordFailure(bookCtx, breakerKey(in.NodeID, in.NodePath), policy); err != nil {
 		u.logger.Debug("send: breaker failure not recorded",
 			u.logger.Str("id", in.ID),
 			u.logger.Str("node", in.NodePath),

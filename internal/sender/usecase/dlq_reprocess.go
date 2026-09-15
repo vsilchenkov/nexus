@@ -189,7 +189,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 	// иначе fast-fail-churn. Republish в хвост, backoff = интервал прохода.
 	// Ошибка проверки → fail-open: пытаемся доставить.
 	if r.breaker != nil {
-		open, err := r.breaker.IsOpen(ctx, env.NodePath)
+		open, err := r.breaker.IsOpen(ctx, breakerKey(node.ID, node.Path))
 		if err != nil {
 			r.logger.Warn("dlq breaker check failed; attempting delivery",
 				r.logger.Str("node_path", env.NodePath), r.logger.Err(err))

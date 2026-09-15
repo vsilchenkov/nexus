@@ -56,7 +56,7 @@ func TestNodeRuntimeUsecase_State(t *testing.T) {
 		// Redis говорит degraded, Prometheus — down (гаудж 2). Побеждает Redis:
 		// он персистентный и переживает рестарт Sender'а (§46).
 		uc := runtimeUC(
-			&fakeNodeStatus{m: map[string]domain.NodeOutcome{"acs_sigur": domain.NodeOutcomeDegraded}},
+			&fakeNodeStatus{m: map[string]domain.NodeOutcome{"n1": domain.NodeOutcomeDegraded}},
 			&fakeProm{lastErrs: map[string]float64{"acs_sigur": 2}},
 			node,
 		)
@@ -136,13 +136,27 @@ func TestNodeRuntimeUsecase_State(t *testing.T) {
 func TestLastOutcomeResolver_UnknownIsOKForOverview(t *testing.T) {
 	t.Parallel()
 	r := NewLastOutcomeResolver(nil, nil, logging.NewNoop())
-	got := r.Resolve(context.Background(), time.Now(), []string{"a", "b"})
+	got := r.Resolve(context.Background(), time.Now(), []NodeRef{{ID: "a", Path: "a"}, {ID: "b", Path: "b"}})
 	require.Len(t, got, 2)
 	for _, p := range []string{"a", "b"} {
 		require.False(t, got[p].Known)
 		require.Equal(t, domain.NodeOutcomeOK, got[p].Outcome,
 			"значение по умолчанию ok — на нём держится таблица рабочего стола")
 	}
+}
+
+// §101.6: узел без id в карту не попадает — ключа Redis у него нет, а по пути
+// одноимённые узлы разных команд неразличимы.
+func TestLastOutcomeResolver_SkipsNodeWithoutID(t *testing.T) {
+	t.Parallel()
+	st := &fakeNodeStatus{m: map[string]domain.NodeOutcome{"n1": domain.NodeOutcomeDown}}
+	r := NewLastOutcomeResolver(st, nil, logging.NewNoop())
+	got := r.Resolve(context.Background(), time.Now(),
+		[]NodeRef{{ID: "n1", Path: "telegram"}, {Path: "telegram"}})
+	require.Equal(t, map[string]Outcome{
+		"n1": {Outcome: domain.NodeOutcomeDown, Source: OutcomeSourceRedis, Known: true},
+	}, got)
+	require.Equal(t, []string{"n1"}, st.asked)
 }
 
 func TestLastOutcomeResolver_EmptyPaths(t *testing.T) {

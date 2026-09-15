@@ -15,7 +15,8 @@ import (
 //
 // Формат ключа не дублируется — берётся из circuitbreaker.Key, как у
 // nodestatus.Key для §52. Разойдись он — интерфейс показывал бы «закрыт» над
-// открытым breaker'ом, и заметить это было бы нечем.
+// открытым breaker'ом, и заметить это было бы нечем. Узел адресуется по id —
+// circuitbreaker.NodeKey (§101.6).
 type NodeBreakerRedis struct {
 	admin  *circuitbreaker.Admin
 	logger logging.Logger
@@ -29,8 +30,8 @@ func NewNodeBreakerRedis(client *goredis.Client, logger logging.Logger) *NodeBre
 
 // State — снимок без побочных эффектов: половинчато-открытая проба не
 // расходуется (иначе открытая вкладка UI съедала бы пробы боевого трафика).
-func (r *NodeBreakerRedis) State(ctx context.Context, nodePath string) (port.BreakerState, error) {
-	snap, err := r.admin.Snapshot(ctx, nodePath)
+func (r *NodeBreakerRedis) State(ctx context.Context, nodeID string) (port.BreakerState, error) {
+	snap, err := r.admin.Snapshot(ctx, circuitbreaker.NodeKey(nodeID))
 	if err != nil {
 		return port.BreakerState{}, err
 	}
@@ -38,13 +39,13 @@ func (r *NodeBreakerRedis) State(ctx context.Context, nodePath string) (port.Bre
 }
 
 // Reset снимает блокировку и возвращает состояние ДО сброса — для аудита.
-func (r *NodeBreakerRedis) Reset(ctx context.Context, nodePath string) (port.BreakerState, error) {
-	snap, err := r.admin.Reset(ctx, nodePath)
+func (r *NodeBreakerRedis) Reset(ctx context.Context, nodeID string) (port.BreakerState, error) {
+	snap, err := r.admin.Reset(ctx, circuitbreaker.NodeKey(nodeID))
 	if err != nil {
 		return port.BreakerState{}, err
 	}
 	r.logger.Debug("breaker: state reset",
-		r.logger.Str("node", nodePath),
+		r.logger.Str("node_id", nodeID),
 		r.logger.Str("previous_state", string(snap.State)),
 		r.logger.Int("previous_failures", snap.Failures))
 	return toPortState(snap), nil

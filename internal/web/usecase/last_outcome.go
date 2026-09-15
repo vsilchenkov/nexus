@@ -54,20 +54,38 @@ type Outcome struct {
 	Known   bool
 }
 
-// Resolve — исходы для набора путей узлов.
+// NodeRef — узел для резолва исхода. ID — ключ Redis (§101.6); Path — метка
+// Prometheus-гауджа, пока чтение метрик не различает команду (§101.9).
+type NodeRef struct {
+	ID   string
+	Path string
+}
+
+// Resolve — исходы для набора узлов, карта по id узла.
 //
 // Приоритет: Redis (персистентный, §46) → Prometheus (instant-gauge §41,
 // fallback для узлов, которых ещё нет в Redis) → неизвестно. Ошибка любого
 // источника деградирует мягко: он просто не участвует.
-func (r *LastOutcomeResolver) Resolve(ctx context.Context, at time.Time, paths []string) map[string]Outcome {
-	out := make(map[string]Outcome, len(paths))
-	if len(paths) == 0 {
+//
+// Узел без id в карту не попадает: ключа в Redis у него нет, а по пути
+// одноимённые узлы разных команд неразличимы.
+func (r *LastOutcomeResolver) Resolve(ctx context.Context, at time.Time, nodes []NodeRef) map[string]Outcome {
+	out := make(map[string]Outcome, len(nodes))
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if n.ID == "" {
+			r.logger.Debug("last outcome: node without id skipped", r.logger.Str("node", n.Path))
+			continue
+		}
+		ids = append(ids, n.ID)
+	}
+	if len(ids) == 0 {
 		return out
 	}
 
 	var redisLO map[string]domain.NodeOutcome
 	if r.status != nil {
-		if m, err := r.status.GetLastOutcomes(ctx, paths); err != nil {
+		if m, err := r.status.GetLastOutcomes(ctx, ids); err != nil {
 			r.logger.Warn("redis node last outcomes failed", r.logger.Err(err))
 		} else {
 			redisLO = m
@@ -83,16 +101,19 @@ func (r *LastOutcomeResolver) Resolve(ctx context.Context, at time.Time, paths [
 		}
 	}
 
-	for _, p := range paths {
-		if v, ok := redisLO[p]; ok {
-			out[p] = Outcome{Outcome: v, Source: OutcomeSourceRedis, Known: true}
+	for _, n := range nodes {
+		if n.ID == "" {
 			continue
 		}
-		if v, ok := promLE[p]; ok {
-			out[p] = Outcome{Outcome: domain.OutcomeFromGaugeValue(v), Source: OutcomeSourcePrometheus, Known: true}
+		if v, ok := redisLO[n.ID]; ok {
+			out[n.ID] = Outcome{Outcome: v, Source: OutcomeSourceRedis, Known: true}
 			continue
 		}
-		out[p] = Outcome{Outcome: domain.NodeOutcomeOK, Source: OutcomeSourceNone}
+		if v, ok := promLE[n.Path]; ok {
+			out[n.ID] = Outcome{Outcome: domain.OutcomeFromGaugeValue(v), Source: OutcomeSourcePrometheus, Known: true}
+			continue
+		}
+		out[n.ID] = Outcome{Outcome: domain.NodeOutcomeOK, Source: OutcomeSourceNone}
 	}
 	return out
 }

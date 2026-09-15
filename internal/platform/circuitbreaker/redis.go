@@ -65,6 +65,13 @@ const (
 // не продублирован литералом в каждом пакете.
 func Key(nodeKey string) string { return keyPrefix + nodeKey }
 
+// NodeKey — ключ breaker'а узла по его id (§101.6): аргумент Allow, Record* и
+// Admin, в Redis ляжет как `circuit:id:<node_id>`. Breaker по пути делили бы
+// одноимённые узлы разных команд, и отказы одного закрывали бы доставку
+// другому. Двоеточие запрещено в пути узла — с ключом по пути NodeKey не
+// совпадёт.
+func NodeKey(nodeID string) string { return "id:" + nodeID }
+
 // allowProbeScript — атомарная часть Allow для состояний open/half_open.
 // KEYS[1] — hash ключа; ARGV[1] — now (unix ns); ARGV[2] — cooldown (ns).
 // Возвращает 1 (пропустить запрос) или 0 (отбросить).

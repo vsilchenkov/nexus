@@ -19,7 +19,7 @@ import (
 // RMQHealthReader — порт чтения runtime-health Puller-воркера узла
 // RabbitMQAsync (§27.8). Реализуется Redis-адаптером; nil — health не отдаётся.
 type RMQHealthReader interface {
-	Get(ctx context.Context, nodePath string) (*domain.RMQHealth, error)
+	Get(ctx context.Context, nodeID string) (*domain.RMQHealth, error)
 }
 
 // NodeHandler — HTTP-обработчики для /api/nodes.
@@ -122,7 +122,7 @@ func (h *NodeHandler) Get(c *gin.Context) {
 	resp := nodeToResponse(n)
 	// §27.8: для RabbitMQAsync доклеиваем runtime-health из общего стора.
 	if n.RootMethod.IsPull() && h.health != nil {
-		if hp, herr := h.health.Get(c.Request.Context(), n.Path); herr == nil && hp != nil {
+		if hp, herr := h.health.Get(c.Request.Context(), n.ID); herr == nil && hp != nil {
 			resp.RMQStatus = rmqHealthToDTO(hp)
 		}
 	}

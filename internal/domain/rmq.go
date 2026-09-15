@@ -17,6 +17,8 @@ const (
 // поднимается, когда RabbitMQ недоступен дольше DegradeAfter или очередь не
 // найдена; снимается автоматически после восстановления.
 type RMQHealth struct {
+	// NodeID — поле снимка в Redis (§101.7): путь уникален лишь внутри команды.
+	NodeID        string       `json:"node_id"`
 	NodePath      string       `json:"node_path"`
 	ConnState     RMQConnState `json:"connection_state"`
 	Degraded      bool         `json:"degraded"`

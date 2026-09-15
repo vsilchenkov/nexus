@@ -48,7 +48,10 @@ type NodeStatusWriter interface {
 	// SetLastOutcome возвращает ЭФФЕКТИВНЫЙ исход: сырой down остаётся degraded,
 	// пока подряд идущих отказов меньше порога (§52-доп). По нему же выставляется
 	// Prometheus-гаудж — иначе бейдж и алерты трактовали бы один узел по-разному.
-	SetLastOutcome(ctx context.Context, nodePath string, outcome domain.NodeOutcome) domain.NodeOutcome
+	//
+	// nodeID — ключ исхода (§101.6): по пути одноимённые узлы разных команд
+	// делили бы один бейдж.
+	SetLastOutcome(ctx context.Context, nodeID string, outcome domain.NodeOutcome) domain.NodeOutcome
 }
 
 // AsyncProcessor — обработчик одного Kafka-сообщения для Sender.
@@ -243,7 +246,7 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 	effOutcome := outcome
 	if p.nodeStatus != nil && !out.ParentGone {
 		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
-		effOutcome = p.nodeStatus.SetLastOutcome(statusCtx, env.NodePath, outcome)
+		effOutcome = p.nodeStatus.SetLastOutcome(statusCtx, node.ID, outcome)
 		cancel()
 	}
 	if p.metrics != nil {
