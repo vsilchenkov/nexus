@@ -5906,7 +5906,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §101, правки контрактов §6/§78/§86.8/§94.8/§98.2 | ✅ Phase 101.1 | [sections/101-team-node-identity.md](sections/101-team-node-identity.md) |
-| Receiver: метки после резолва (утечка токенов) | ⛔ Phase 101.2 | — |
+| Receiver: метки после резолва (утечка токенов) | ✅ Phase 101.2 | [resolver.go](../internal/receiver/usecase/resolver.go) (слог найденного узла), [route.go](../internal/receiver/usecase/route.go) `RouteInput.OnNodeResolved`, [handler.go](../internal/receiver/adapter/in/http/handler.go) `nodeLabelSetter`/`nodeForLog`, [metrics/gin.go](../internal/platform/metrics/gin.go) `TeamLabelKey`, [sentry/middleware.go](../internal/platform/sentry/middleware.go); тест [handler_labels_test.go](../internal/receiver/adapter/in/http/handler_labels_test.go) |
 | Контракт доставки `node_id`/`team`, Sender ищет узел по id | ⛔ Phase 101.3 | — |
 | Метка `team` во всех per-node метриках | ⛔ Phase 101.4 | — |
 | Рантайм-ключи Redis и pull-воркеры по `node_id` | ⛔ Phase 101.5 | — |
@@ -5934,6 +5934,23 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 - **Метку нельзя поставить, передвинув резолв в начало handler'а.** 404 на непрочитанном теле рвёт
   соединение (`drainCap`), за прокси это 502. Поэтому usecase сообщает найденный узел наблюдателю
   `RouteInput.OnNodeResolved` — одна точка вместо обёртки десятка ошибочных `return`.
+
+- **Слог для метки — тот, где узел НАЙДЕН, а не из адреса (101.2).** `/api/v1/request/a/b` при узле
+  `a/b` в default-команде резолвится по интерпретации B: первый сегмент адреса оказался частью пути.
+  До §101 метка была `node="b"` — ряд отрывался от узла. `resolveNode` теперь возвращает слог
+  (A — слог адреса или default, B — default), `NodeRootMethod` зовёт тот же наблюдатель. Наблюдатель
+  срабатывает ДО проверки статуса: у выключенного узла метка — его путь (`ErrNodeDisabled` не
+  `ErrNodeNotFound`, `<unresolved>` ему не ставится), у paused-sync — дважды с одинаковыми значениями.
+
+- **Запасное значение из `c.Param("path")` удалено из `metrics.GinMiddleware` и Sentry-тега `node`.**
+  Выходы до резолва (400/405/413/429/508, rate-limit в middleware группы) теперь несут `node=""`.
+  Побочно у прокси Web `/api/v1/*path` метка тоже пуста — раньше там оседали сырые пути.
+
+- **Граница 101.2: логи до резолва по-прежнему несут путь из адреса.** `nodeForLog` берёт путь
+  найденного узла, если резолв состоялся; иначе — путь адреса (он нужен для разбора «почему 404»).
+  Сюда же попадает инфра-ошибка PostgreSQL посреди резолва — это `ErrorWithOp`, то есть Sentry.
+  Warn петли §32 тоже пишется до резолва. Фильтр `diagnostics` Web по команде перенесён из 101.2 в
+  101.7: без метки `team` в рядах фильтровать нечем.
 
 - **Утечка токенов найдена по дороге.** Receiver ставил `node` из хвоста адреса ДО резолва;
   у passthrough-узла `telegram` это `telegram/bot<id>:<токен>/getUpdates`. На бою

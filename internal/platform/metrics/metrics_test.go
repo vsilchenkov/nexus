@@ -96,6 +96,8 @@ func TestGinMiddleware_RecordsRequestsAndDuration(t *testing.T) {
 	r.Any("/api/v1/request/*path", func(c *gin.Context) {
 		// Имитируем работу — observe в гистограмме должен быть > 0.
 		time.Sleep(2 * time.Millisecond)
+		// §101.3: метку узла кладёт обработчик после резолва, как Receiver.
+		c.Set(metrics.NodeLabelKey, "orders")
 		c.Status(http.StatusOK)
 	})
 
@@ -106,13 +108,13 @@ func TestGinMiddleware_RecordsRequestsAndDuration(t *testing.T) {
 
 	dump := dumpMetrics(t, m.Handler())
 
-	// requests_total{method="request",node="partner/orders",status="200"} == 1.
+	// requests_total{method="request",node="orders",status="200"} == 1.
 	requireSample(t, dump,
-		`nexus_requests_total{method="request",node="partner/orders",service="receiver",status="200"} 1`)
+		`nexus_requests_total{method="request",node="orders",service="receiver",status="200"} 1`)
 
 	// duration: количество наблюдений ровно 1.
 	requireSample(t, dump,
-		`nexus_request_duration_seconds_count{method="request",node="partner/orders",service="receiver"} 1`)
+		`nexus_request_duration_seconds_count{method="request",node="orders",service="receiver"} 1`)
 }
 
 func TestGinMiddleware_SkipsHealthAndMetrics(t *testing.T) {

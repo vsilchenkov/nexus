@@ -89,6 +89,16 @@ func shortURLNode(path string, root domain.RootMethod) *domain.Node {
 // заданного набора узлов.
 func newShortURLHandler(t *testing.T, nodes map[string]*domain.Node, m *metrics.Metrics) (*gin.Engine, *asyncStubQueue) {
 	t.Helper()
+	return newIngressHandler(t, nodes, m, nil)
+}
+
+// newIngressHandler — newShortURLHandler с заданными лимитами тела (nil — дефолт
+// домена) и middleware группы /api/v1 (rate-limit, перехват меток).
+func newIngressHandler(
+	t *testing.T, nodes map[string]*domain.Node, m *metrics.Metrics,
+	limits *usecase.BodyLimitsProvider, mws ...gin.HandlerFunc,
+) (*gin.Engine, *asyncStubQueue) {
+	t.Helper()
 	reader := shortURLReader{nodes: nodes}
 	sender := syncStubSender{resp: &senderv1.SendResponse{
 		StatusCode: http.StatusOK,
@@ -100,13 +110,16 @@ func newShortURLHandler(t *testing.T, nodes map[string]*domain.Node, m *metrics.
 	route := usecase.NewRouteUsecase(reader, sender, 5, logger)
 	routeAsync := usecase.NewRouteAsyncUsecase(reader, queue, "nexus.async", 5, logger)
 
-	h := New(route, routeAsync, usecase.NewBodyLimitsProvider(0, 0, logger), m, logger)
+	if limits == nil {
+		limits = usecase.NewBodyLimitsProvider(0, 0, logger)
+	}
+	h := New(route, routeAsync, limits, m, logger)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	if m != nil {
 		r.Use(metrics.GinMiddleware(m))
 	}
-	h.Register(r)
+	h.Register(r, mws...)
 	return r, queue
 }
 

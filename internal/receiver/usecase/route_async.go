@@ -83,10 +83,11 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 		return nil, domain.ErrLoopDetected
 	}
 
-	node, remainder, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
+	node, remainder, teamSlug, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
 	}
+	in.notifyResolved(teamSlug, node.Path)
 	if node.Status == domain.NodeStatusDisabled {
 		// Наружу — 404 «узла нет» (§94.2), в журнале — честное «узел выключен».
 		return nil, domain.ErrNodeDisabled

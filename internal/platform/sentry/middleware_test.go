@@ -131,9 +131,10 @@ func TestRootMethod(t *testing.T) {
 		if got := rootMethod(c); got != "requestAsync" {
 			t.Errorf("/api/v1/requestAsync: got %q", got)
 		}
-		// Без метки в контексте — фолбэк на сырой параметр (прежнее поведение).
-		if got := nodePathFromGin(c); got != "x" {
-			t.Errorf("/api/v1/requestAsync node fallback: got %q", got)
+		// §101.3: без метки в контексте тег пуст — сырой параметр адреса в тег не
+		// попадает (у passthrough-узла там секреты).
+		if got := nodePathFromGin(c); got != "" {
+			t.Errorf("/api/v1/requestAsync node without label: got %q, want empty", got)
 		}
 		c.Status(200)
 	})

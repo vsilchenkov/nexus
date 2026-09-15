@@ -98,25 +98,15 @@ func routeName(c *gin.Context) string {
 	return c.Request.URL.Path
 }
 
-// nodePathFromGin — путь узла для тега `node`: канонический путь, положенный
-// обработчиком (metrics.NodeLabelKey), иначе сырой path-параметр без ведущего
-// слеша.
+// nodePathFromGin — путь узла для тега `node`: путь резолвнутого узла, положенный
+// обработчиком (metrics.NodeLabelKey), и только он — тот же источник, что у
+// метки `node` в Prometheus.
 //
-// §78.2: сырой параметр у боевых маршрутов теперь содержит и сегмент метода
-// (`request/webhook/sbp-qr`), поэтому предпочтение — значению из контекста: с
-// ним тег совпадает с меткой `node` в Prometheus и не меняется от формы адреса.
+// §101.3: запасного значения из path-параметра больше нет. У passthrough-узла
+// хвост адреса несёт секреты (токены ботов), а в Sentry теги уходят мимо
+// маскирования тела; до резолва путь задаёт клиент. Без метки тег не ставится.
 func nodePathFromGin(c *gin.Context) string {
-	if v := c.GetString(metrics.NodeLabelKey); v != "" {
-		return v
-	}
-	p := c.Param("path")
-	if p == "" {
-		return ""
-	}
-	if p[0] == '/' {
-		return p[1:]
-	}
-	return p
+	return c.GetString(metrics.NodeLabelKey)
 }
 
 // rootMethod — корневой метод узла для тега `root_method`. Источник тот же, что

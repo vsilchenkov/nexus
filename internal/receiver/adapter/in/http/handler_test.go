@@ -119,6 +119,7 @@ func TestReplyDomainError_MarksReject(t *testing.T) {
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/vika/telephony", nil)
 		c.Set(metrics.NodeLabelKey, "telephony")
+		c.Set(metrics.TeamLabelKey, "vika")
 		return c, w
 	}
 	h := &Handler{metrics: metrics.New("receiver"), logger: logging.NewNoop()}
@@ -130,6 +131,8 @@ func TestReplyDomainError_MarksReject(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, w.Code)
 		assert.Equal(t, string(domain.RejectReasonNodeNotFound), c.GetString(RejectReasonKey))
 		assert.Equal(t, metrics.NodeUnresolved, c.GetString(metrics.NodeLabelKey))
+		// §101.3: у <unresolved> команды нет — иначе ряд 404 делился бы по слогам.
+		assert.Empty(t, c.GetString(metrics.TeamLabelKey))
 	})
 
 	t.Run("existing node keeps its label", func(t *testing.T) {
@@ -141,6 +144,7 @@ func TestReplyDomainError_MarksReject(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, w.Code)
 		assert.Equal(t, string(domain.RejectReasonNodeNotFound), c.GetString(RejectReasonKey))
 		assert.Equal(t, "telephony", c.GetString(metrics.NodeLabelKey))
+		assert.Equal(t, "vika", c.GetString(metrics.TeamLabelKey))
 	})
 
 	t.Run("bus failure is not a client reject", func(t *testing.T) {
