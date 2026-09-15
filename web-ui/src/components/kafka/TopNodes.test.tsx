@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TopNodes } from "./TopNodes";
 import type { KafkaByNode } from "../../api/client";
@@ -14,21 +14,43 @@ vi.mock("react-i18next", () => ({
 const FROM = 1_757_000_000_000;
 const TO = 1_757_003_600_000;
 
+// Боевой случай §101: путь telegram есть у двух команд, плюс ряды, собранные до
+// разделения метрик по командам, которые сервер не смог приписать узлу.
 const DATA: KafkaByNode = {
   top_producers: [
-    { node_path: "vika/telephony", node_id: "n-1", produced: 12400, share: 0.41 },
+    { node_path: "vika/telephony", team: "vika", node_id: "n-1", produced: 12400, share: 0.41 },
     { node_path: "<unresolved>", produced: 820, share: 0.03 },
   ],
-  top_failures: [{ node_path: "conv/dconv", node_id: "n-2", failed: 318, rate: 0.04 }],
+  top_failures: [
+    { node_path: "telegram", team: "messengers", node_id: "tg-m", failed: 1747, rate: 0.195 },
+    { node_path: "telegram", team: "webhook", node_id: "tg-w", failed: 8, rate: 0.035 },
+    { node_path: "telegram", failed: 412, rate: 0.021 },
+    { node_path: "conv/old", team: "conv", failed: 5, rate: 0.01 },
+  ],
   prometheus_available: true,
 };
 
-function renderTop() {
+function renderTop(data: KafkaByNode = DATA) {
   render(
     <MemoryRouter>
-      <TopNodes data={DATA} from={FROM} to={TO} />
+      <TopNodes data={data} from={FROM} to={TO} />
     </MemoryRouter>,
   );
+}
+
+// linkTo — ссылка на узел по id: имена ссылок одного пути различает только
+// слог команды, а адрес однозначен всегда.
+function linkTo(id: string): HTMLElement {
+  const link = screen
+    .getAllByRole("link")
+    .find((a) => (a.getAttribute("href") ?? "").startsWith(`/nodes/${id}?`));
+  expect(link, `ссылка на /nodes/${id}`).toBeTruthy();
+  return link!;
+}
+
+// textCell — ячейка строки без ссылки, та, что несёт подсказку.
+function textCell(text: string): HTMLElement {
+  return screen.getByText(text).closest("span[title]") as HTMLElement;
 }
 
 describe("TopNodes — узлы ведут на журнал (§98.2)", () => {
@@ -37,14 +59,14 @@ describe("TopNodes — узлы ведут на журнал (§98.2)", () => {
   // неработающими — ровно так вкладки узла и получили адрес без ссылки.
   it("узел с id — настоящая ссылка (<a href>), а не кнопка", () => {
     renderTop();
-    const link = screen.getByRole("link", { name: "vika/telephony" });
+    const link = screen.getByRole("link", { name: "vika/telephony vika" });
     expect(link.tagName).toBe("A");
     expect(link).toHaveAttribute("href");
   });
 
   it("ссылка ведёт на вкладку «Логи» узла в периоде экрана Kafka", () => {
     renderTop();
-    const href = screen.getByRole("link", { name: "vika/telephony" }).getAttribute("href") ?? "";
+    const href = linkTo("n-1").getAttribute("href") ?? "";
     const [path, query] = href.split("?");
     const params = new URLSearchParams(query);
 
@@ -55,28 +77,80 @@ describe("TopNodes — узлы ведут на журнал (§98.2)", () => {
     // Журнал открывается целиком, а не только ошибками: всплеск виден лишь
     // рядом с успешными доставками.
     expect(params.get("status")).toBeNull();
-  });
-
-  it("блок ошибок ссылается так же", () => {
-    renderTop();
-    const href = screen.getByRole("link", { name: "conv/dconv" }).getAttribute("href") ?? "";
-    expect(href.startsWith("/nodes/n-2?")).toBe(true);
+    // Команду переключает страница узла по самому узлу (§58), а не адрес.
+    expect(params.get("team")).toBeNull();
   });
 
   it("путь без id остаётся текстом — ссылки «в никуда» быть не должно", () => {
     renderTop();
     expect(screen.getByText("<unresolved>")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "<unresolved>" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /<unresolved>/ })).toBeNull();
   });
 
   // Молчаливое отсутствие ссылки читается как «ссылки не работают» — так и было
-  // доложено со стенда. Причина в данных (Prometheus хранит путь удалённого или
-  // переименованного узла), и строка обязана её называть.
+  // доложено со стенда. Причина в данных, и строка обязана её называть.
   it("строка без ссылки объясняет, почему её нет", () => {
     renderTop();
-    expect(screen.getByText("<unresolved>")).toHaveAttribute("title", "kafka.node_unresolved");
+    expect(textCell("<unresolved>")).toHaveAttribute("title", "kafka.node_placeholder");
     // У рабочей ссылки такого пояснения быть не должно.
-    expect(screen.getByRole("link", { name: "vika/telephony" })).not.toHaveAttribute("title");
+    expect(linkTo("n-1")).not.toHaveAttribute("title");
+  });
+});
+
+// §101.10: строка — пара (команда, путь). На бою путь telegram был у двух
+// команд, метрики складывали их в одну строку, и ссылки у неё не было.
+describe("TopNodes — одноимённые узлы разных команд (§101.10)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("один путь в двух командах — две ссылки, каждая на свой узел", () => {
+    renderTop();
+
+    const messengers = linkTo("tg-m");
+    const webhook = linkTo("tg-w");
+    expect(within(messengers).getByText("messengers")).toBeInTheDocument();
+    expect(within(webhook).getByText("webhook")).toBeInTheDocument();
+    // Доступные имена различаются: иначе скринридер читал бы две одинаковые
+    // ссылки «telegram».
+    expect(messengers).toHaveAccessibleName("telegram messengers");
+    expect(webhook).toHaveAccessibleName("telegram webhook");
+  });
+
+  // Ключ по одному пути у одноимённых строк совпадает: React молча
+  // переиспользует DOM чужой строки, и при обновлении числа и ссылки
+  // перепутываются. Единственный видимый в тесте след — предупреждение.
+  it("ключи строк уникальны", () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    renderTop();
+
+    const dupKey = errors.mock.calls.filter((args) => args.join(" ").includes("same key"));
+    expect(dupKey).toEqual([]);
+  });
+
+  it("ряды до разделения по командам — текст с чипом «без команды» и своей подсказкой", () => {
+    renderTop();
+
+    const cell = textCell("kafka.no_team");
+    expect(cell).toHaveTextContent("telegram");
+    expect(cell).toHaveAttribute("title", "kafka.node_legacy");
+    expect(cell.closest("a")).toBeNull();
+  });
+
+  it("узла с этой парой нет — текст с чипом команды и подсказкой «переименован, удалён, перенесён»", () => {
+    renderTop();
+
+    const cell = textCell("conv/old");
+    expect(within(cell).getByText("conv")).toBeInTheDocument();
+    expect(cell).toHaveAttribute("title", "kafka.node_unresolved");
+  });
+
+  // У заглушки команды не бывает: чип «без команды» рядом с ней читался бы как
+  // ещё одна строка до разделения по командам.
+  it("у заглушки <unresolved> чипа нет", () => {
+    renderTop();
+
+    expect(textCell("<unresolved>")).toHaveTextContent(/^<unresolved>$/);
   });
 });
 
@@ -86,8 +160,8 @@ describe("TopNodes — зона клика по строке", () => {
   it("ссылка растянута по всей строке в обоих топах", () => {
     renderTop();
 
-    for (const name of ["vika/telephony", "conv/dconv"]) {
-      const link = screen.getByRole("link", { name });
+    for (const id of ["n-1", "tg-m", "tg-w"]) {
+      const link = linkTo(id);
       expectStretchedTo(link, link.closest("tr") as HTMLElement);
     }
   });
@@ -97,8 +171,10 @@ describe("TopNodes — зона клика по строке", () => {
   it("строка без ссылки не подсвечивается и не служит опорой", () => {
     renderTop();
 
-    const row = screen.getByText("<unresolved>").closest("tr") as HTMLElement;
-    expect(row.className).not.toMatch(/hover:bg-bg-muted/);
-    expect(row).not.toHaveClass("relative");
+    for (const text of ["<unresolved>", "kafka.no_team", "conv/old"]) {
+      const row = screen.getByText(text).closest("tr") as HTMLElement;
+      expect(row.className).not.toMatch(/hover:bg-bg-muted/);
+      expect(row).not.toHaveClass("relative");
+    }
   });
 });

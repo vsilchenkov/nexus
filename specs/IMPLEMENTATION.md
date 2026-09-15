@@ -5912,7 +5912,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Рантайм-ключи Redis и pull-воркеры по `node_id` | ✅ Phase 101.5 | ключи — [nodestatus/redis.go](../internal/platform/nodestatus/redis.go) `Key`/`StreakKey`/`LegacyKey`, [circuitbreaker/redis.go](../internal/platform/circuitbreaker/redis.go) `NodeKey`; перенос — [nodestatus/migrate.go](../internal/platform/nodestatus/migrate.go) `LegacyMigrator`, [node_status_migration.go](../internal/web/usecase/node_status_migration.go), запуск в [web/app.go](../internal/web/app.go); Sender — [breaker_vote.go](../internal/sender/usecase/breaker_vote.go) `breakerKey`, [send.go](../internal/sender/usecase/send.go), [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go), [async.go](../internal/sender/usecase/async.go), [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go); Receiver — [puller_manager.go](../internal/receiver/usecase/puller_manager.go), [healthsink.go](../internal/receiver/adapter/out/rabbitmq/healthsink.go); Web — [last_outcome.go](../internal/web/usecase/last_outcome.go) `NodeRef`, [node_breaker.go](../internal/web/usecase/node_breaker.go), адаптеры [redis/](../internal/web/adapter/out/redis/); контракт писателей и читателя — [runtime_keys_test.go](../tests/contract/runtime_keys_test.go) |
 | «Очередь»: принадлежность сообщения, чтение тела | ✅ Phase 101.6 | владелец — [port/async_queue.go](../internal/web/usecase/port/async_queue.go) `QueueOwner`/`Owns`/`ErrQueueMessageNotOwned`; отбор и сверка тела — [kafkaadmin/async_queue.go](../internal/web/adapter/out/kafkaadmin/async_queue.go) `decodeQueueMeta`/`PeekBody`; однозначность пути — [async_queue.go](../internal/web/usecase/async_queue.go) `queueOwner`; тесты [port/async_queue_test.go](../internal/web/usecase/port/async_queue_test.go), [async_queue_owner_test.go](../tests/integration/async_queue_owner_test.go), сверка проекции конверта — [envelope_test.go](../tests/contract/envelope_test.go) `TestQueueEnvelopeProjectionSubsetOfCanon` |
 | Web: чтение Prometheus по (team, node) | ✅ Phase 101.7 | порт — [port/metrics_provider.go](../internal/web/usecase/port/metrics_provider.go) `NodeKey`, [port/node_repo.go](../internal/web/usecase/port/node_repo.go) `NodeKeyResolver`; запросы — [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) `instantByNodeKey`/`teamMatcher`; узлы по путям — [postgres/node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) `RefsByPaths`; ряды до §101 — [nodekeys.go](../internal/web/usecase/nodekeys.go) `withLegacy`/`resolveLegacyOwners`; потребители — [metrics.go](../internal/web/usecase/metrics.go) `nodesOverviewProm`/`diagPrometheus`, [last_outcome.go](../internal/web/usecase/last_outcome.go), [notification.go](../internal/web/usecase/notification.go) `listTeamNodes`, [kafka_bynode.go](../internal/web/usecase/kafka_bynode.go) `foldLegacyRows`, [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go) поле `team`; тесты [nodekeys_test.go](../internal/web/usecase/nodekeys_test.go), [node_ids_by_paths_test.go](../tests/integration/node_ids_by_paths_test.go) `TestNodeRepoRefsByPaths_E2E` |
-| UI: команда в топах Kafka, снятие правила §86.8 | ⛔ Phase 101.8 | — |
+| UI: команда в топах Kafka, снятие правила §86.8 | ✅ Phase 101.8 | [TopNodes.tsx](../web-ui/src/components/kafka/TopNodes.tsx) `NodeCell`/`TeamChip`/`unlinkedReason`/`rowKey`, [client.ts](../web-ui/src/api/client.ts) `KafkaByNode.team`, [Overview.tsx](../web-ui/src/pages/Overview.tsx) (снят `ambiguousPaths`), локали `kafka.node_legacy`/`node_placeholder`/`no_team`; тесты [TopNodes.test.tsx](../web-ui/src/components/kafka/TopNodes.test.tsx), [Overview.rank.test.tsx](../web-ui/src/pages/Overview.rank.test.tsx) |
 | Grafana, алерты, `make check-alerts` | ⛔ Phase 101.9 | — |
 | DEPLOYMENT, CHANGELOG | ⛔ Phase 101.10 | — |
 
@@ -6122,3 +6122,26 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   по неполному списку; диагностика с «сиротами» всех команд, итогами без слога и без пропуска
   неизвестного слога; топы Kafka с id по пути, без свёртки и с запросом строк без команды;
   `RefsByPaths`, отдающий только однозначные пути (ловит integration-тест на живом PostgreSQL).
+
+- **Топы Kafka: у строки без ссылки три причины, и подсказка называет одну (101.8).** До §101 одна
+  подсказка «переименован, удалён либо путь занят несколькими командами» покрывала всё. После
+  разделения рядов по командам её вторая половина стала неправдой для строк с командой, а для
+  заглушки `<unresolved>` неправдой была с самого начала. `unlinkedReason` проверяет по порядку:
+  заглушка → строка без команды (ряды до §101) → пара без узла. У заглушки чипа нет: чип «без
+  команды» рядом с ней выглядел бы как ещё одна строка до §101.
+
+- **Доступное имя ссылки включает слог (101.8).** Между путём и чипом стоит текстовый пробел: без него
+  имя склеивается в «telegrammessengers». Чип — `inline-flex`, то есть атомарный инлайн-элемент:
+  подчёркивание ссылки при наведении на него не распространяется, а цвет у чипа свой. Ссылка по-прежнему
+  без `?team=` — команду переключает `useEnsureNodeTeam` (§58), тест это закрепляет.
+
+- **Снятие §86.8 в «Узлах» (101.8).** `ambiguousPaths` удалён вместе с вариантом `lastOutcome:
+  "unknown"`: других источников «неизвестно» у исхода нет (сервер отдаёт `ok`/`degraded`/`down`),
+  серый бейдж остался только для «метрики ещё не пришли» (`nodeVariant`, `!ready || !m`). Своих
+  тестов у правила не было. Регресс-тест добавлен в `Overview.rank.test.tsx`: на старом коде оба
+  одноимённых узла стоят серыми.
+
+- **Red-проверка 101.8.** Откат `TopNodes.tsx` и `Overview.tsx` к HEAD делает красными 5 тестов: две
+  ссылки одного пути, уникальные ключи строк, строку «без команды», пару без узла и бейджи
+  одноимённых узлов. Тест «у заглушки нет чипа» на старом коде зелёный (чипов там не было вовсе) и
+  проверен мутациями, как и подсказка заглушки и адрес без `?team=`: 3 из 3 красные.
