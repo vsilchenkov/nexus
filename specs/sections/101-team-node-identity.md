@@ -250,6 +250,8 @@ Sync-запросы узел в Sender не ищут: адрес, авториз
 - переменная `node` зависит от `team`;
 - выражения — `by (team, node)` с фильтром `team=~"$team"`, легенды `{{team}}/{{node}}`;
 - стат-панели DOWN/DEGRADED/OK считают `count(max by (team, node)(…))`: одноимённые узлы — два узла;
+  они и таблица «Problem nodes (now)» фильтруются только по `$team` — по узлу они не фильтровались
+  и раньше;
 - сводная таблица узлов склеивается по двум меткам (трансформация `merge` вместо `joinByField` по
   одному полю `node`).
 
@@ -257,7 +259,11 @@ Sync-запросы узел в Sender не ищут: адрес, авториз
 в summary — `{{ $labels.team }}/{{ $labels.node }}`.
 
 **Проверка правил** — `make check-alerts` (`promtool check rules` + `promtool test rules` в
-docker-образе Prometheus) и job в CI. Юнит-тест правил: один `node`, разные `team` → два алерта.
+docker-образе Prometheus той же версии, что в docker-compose) и job `alerts-check` в CI. Юнит-тесты
+правил — `deploy/prometheus.alerts.test.yml`: все восемь правил группы `nexus.nodes` на одноимённых
+узлах двух команд. Они ловят два дефекта агрегации `by (node)`: склейку (два лежащих узла — один
+алерт без команды) и маскировку (`max by (node)` прятал DEGRADED одной команды за DOWN другой, а
+трафик соседа размывал долю ошибок ниже порога).
 
 ## 101.12 Выкат и смешанные версии
 

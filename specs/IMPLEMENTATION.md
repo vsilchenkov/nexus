@@ -3190,6 +3190,7 @@ make build-ui                                  # SPA → internal/web/static/
 make test                                      # unit (-race -short)
 make test-coverage                             # покрытие в coverage.html
 make test-integration                          # testcontainers (нужен Docker)
+make check-alerts                              # §101.11: promtool check + test rules (нужен Docker)
 make test-int-logs-scale LOG_SCALE_ROWS=50000000  # §77.5: замер прокрутки логов (вручную)
 make loadtest TARGET_RPS=500 DURATION=10m NODES=50 ADMIN_PASSWORD=…
 
@@ -5913,7 +5914,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | «Очередь»: принадлежность сообщения, чтение тела | ✅ Phase 101.6 | владелец — [port/async_queue.go](../internal/web/usecase/port/async_queue.go) `QueueOwner`/`Owns`/`ErrQueueMessageNotOwned`; отбор и сверка тела — [kafkaadmin/async_queue.go](../internal/web/adapter/out/kafkaadmin/async_queue.go) `decodeQueueMeta`/`PeekBody`; однозначность пути — [async_queue.go](../internal/web/usecase/async_queue.go) `queueOwner`; тесты [port/async_queue_test.go](../internal/web/usecase/port/async_queue_test.go), [async_queue_owner_test.go](../tests/integration/async_queue_owner_test.go), сверка проекции конверта — [envelope_test.go](../tests/contract/envelope_test.go) `TestQueueEnvelopeProjectionSubsetOfCanon` |
 | Web: чтение Prometheus по (team, node) | ✅ Phase 101.7 | порт — [port/metrics_provider.go](../internal/web/usecase/port/metrics_provider.go) `NodeKey`, [port/node_repo.go](../internal/web/usecase/port/node_repo.go) `NodeKeyResolver`; запросы — [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) `instantByNodeKey`/`teamMatcher`; узлы по путям — [postgres/node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) `RefsByPaths`; ряды до §101 — [nodekeys.go](../internal/web/usecase/nodekeys.go) `withLegacy`/`resolveLegacyOwners`; потребители — [metrics.go](../internal/web/usecase/metrics.go) `nodesOverviewProm`/`diagPrometheus`, [last_outcome.go](../internal/web/usecase/last_outcome.go), [notification.go](../internal/web/usecase/notification.go) `listTeamNodes`, [kafka_bynode.go](../internal/web/usecase/kafka_bynode.go) `foldLegacyRows`, [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go) поле `team`; тесты [nodekeys_test.go](../internal/web/usecase/nodekeys_test.go), [node_ids_by_paths_test.go](../tests/integration/node_ids_by_paths_test.go) `TestNodeRepoRefsByPaths_E2E` |
 | UI: команда в топах Kafka, снятие правила §86.8 | ✅ Phase 101.8 | [TopNodes.tsx](../web-ui/src/components/kafka/TopNodes.tsx) `NodeCell`/`TeamChip`/`unlinkedReason`/`rowKey`, [client.ts](../web-ui/src/api/client.ts) `KafkaByNode.team`, [Overview.tsx](../web-ui/src/pages/Overview.tsx) (снят `ambiguousPaths`), локали `kafka.node_legacy`/`node_placeholder`/`no_team`; тесты [TopNodes.test.tsx](../web-ui/src/components/kafka/TopNodes.test.tsx), [Overview.rank.test.tsx](../web-ui/src/pages/Overview.rank.test.tsx) |
-| Grafana, алерты, `make check-alerts` | ⛔ Phase 101.9 | — |
+| Grafana, алерты, `make check-alerts` | ✅ Phase 101.9 | дашборды [nexus-nodes.json](../deploy/grafana/nexus-nodes.json), [nexus-kafka.json](../deploy/grafana/nexus-kafka.json) (переменная `team`, `by (team, node)`, Merge), [README](../deploy/grafana/README.md); правила [prometheus.alerts.yml](../deploy/prometheus.alerts.yml), тесты [prometheus.alerts.test.yml](../deploy/prometheus.alerts.test.yml); [Makefile](../Makefile) `check-alerts`, [.gitlab-ci.yml](../.gitlab-ci.yml) job `alerts-check` |
 | DEPLOYMENT, CHANGELOG | ⛔ Phase 101.10 | — |
 
 - **Повод выглядел как косметика, а оказался дефектом доставки.** Жалоба «в топе Kafka нет ссылки
@@ -6145,3 +6146,25 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   ссылки одного пути, уникальные ключи строк, строку «без команды», пару без узла и бейджи
   одноимённых узлов. Тест «у заглушки нет чипа» на старом коде зелёный (чипов там не было вовсе) и
   проверен мутациями, как и подсказка заглушки и адрес без `?team=`: 3 из 3 красные.
+
+- **Grafana: «All» у `team` — регэксп `.*`, сводная таблица — Merge (101.9).** По умолчанию «All»
+  подставляет перечисление найденных значений `(a|b)`. Ряды с `team=""`, собранные до обновления,
+  в него не попадают и пропали бы с панелей. `joinByField` склеивает по одному полю, и строки
+  одноимённых узлов двух команд слились бы. Merge склеивает по всем общим полям (`Time`, `team`,
+  `node`); порядок столбцов задаёт `indexByName` по исходным именам (`Value #A`…), переименование
+  идёт после. Стат-панели и «Problem nodes» фильтруются только по `$team` — по узлу они не
+  фильтровались и раньше. Отрисовку дашборда тестом не проверить, это делается на стенде во
+  временной Grafana.
+
+- **Юнит-тест алертов нашёл маскировку, а не только склейку (101.9).** Ожидаемый дефект `by (node)` —
+  один алерт без команды на два лежащих узла. Тест показал ещё два: `max by (node)` у DOWN одной
+  команды поглощал DEGRADED другой, и `NexusNodeDegraded` не срабатывал вовсе; долю ошибок одной
+  команды размывал трафик соседа (1/11 ≈ 9% при пороге 20%). Red-проверка: на старых правилах
+  красные все 8 проверок.
+
+- **`make check-alerts` на Windows и в CI (101.9).** `MSYS_NO_PATHCONV=1`: без него Git Bash
+  переписывает `/rules` в `C:/Program Files/Git/rules`. Файлы внутри контейнера заданы относительно
+  `-w`. Образ `prom/prometheus:v2.55.0` взят из docker-compose: promtool другой версии мог бы
+  принять выражение, которое отвергнет боевой Prometheus. В CI job `alerts-check` задан
+  `entrypoint: [""]` (ENTRYPOINT образа — сам prometheus). Пользователь образа — nobody, но job
+  файлы только читает.

@@ -123,7 +123,7 @@
 | Планировщик уведомлений | [redis/notif_lock.go](../internal/web/adapter/out/redis/notif_lock.go) | Лок **уже написан под несколько реплик Web** — готовый образец |
 | async-consumer, DLQ-reprocessor, paused-sweeper | [sender/adapter/in/kafka/](../internal/sender/adapter/in/kafka/) | consumer-группы Kafka → партиции делятся между репликами сами |
 | Логи при недоступном CH | [chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) | NDJSON-fallback заменён Kafka retry-топиком (§38) → **локальный диск состояния не держит** |
-| Метрики панели | [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) | все PromQL уже `sum(...)` / `sum by (node)` → по репликам суммируются корректно |
+| Метрики панели | [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) | все PromQL уже `sum(...)` / `sum by (team, node)` (§101) → по репликам суммируются корректно |
 | Алерты | [prometheus.alerts.yml](../deploy/prometheus.alerts.yml) | `max by (...)` → устойчивы к нескольким сериям на одну сущность |
 | Миграции | [platform/pg/migrate.go](../internal/platform/pg/migrate.go) | advisory-lock; состояние `Ahead` — не ошибка старта → выкат со смешанными версиями легален |
 | gRPC health на Sender | [sender/app.go](../internal/sender/app.go) | `grpc_health_v1` уже зарегистрирован → клиентская балансировка включается почти даром |

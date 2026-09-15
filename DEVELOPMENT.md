@@ -282,6 +282,10 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   сверх лимитов, снятие отметки «разобрано» новым отказом, чистка по сроку и полное
   выключение журнала, скоупы команд. Входит в общий `make test-integration`. Тесты гоняются
   на `postgres:12-alpine` — той же мажорной версии, что на бою.
+- `make check-alerts` (§101.11) — `promtool check rules` и `promtool test rules` по
+  `deploy/prometheus.alerts*.yml` в образе `prom/prometheus` той же версии, что в compose (нужен
+  Docker). В CI — job `alerts-check`. Поменяли правило алерта — поправьте и
+  `deploy/prometheus.alerts.test.yml`: тест сверяет метки и тексты алертов целиком.
 - `make test-int-logs-scale` (§77.5) — **ручной** замер прокрутки логов на большом объёме: сидит
   таблицу одним `INSERT … SELECT FROM numbers` и прогоняет 20 страниц по 50 строк по keyset-курсору,
   печатая avg/max и эталон «без автоокна». Объём — `LOG_SCALE_ROWS` (по умолчанию 1 млн; боевой
