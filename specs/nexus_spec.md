@@ -6819,7 +6819,8 @@ Telegram-ботов из хвоста passthrough-адреса, а `/api/metrics
 правило §86.8 снято. Grafana: переменная `team` с `allValue: ".*"`, выражения `by (team, node)`;
 алерты `by (team, node…)`; `make check-alerts` (promtool) и job в CI.
 
-**Выкат.** Миграций нет; порядок Sender → Receiver → Web; `docker compose restart prometheus`,
+**Выкат.** Миграций нет; порядок Sender → Receiver → Web (в окне между Sender и Receiver неоднозначное
+async-сообщение теряется с алертом, а не уходит чужой команде); `docker compose restart prometheus`,
 переимпорт дашбордов; ряды меняют идентичность — графики разрываются на выкате.
 
 **Границы:** уже собранные ряды с токенами живут до истечения retention или удаления через admin API

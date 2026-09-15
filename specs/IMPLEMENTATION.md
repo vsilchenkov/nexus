@@ -5902,7 +5902,8 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 ### 4.86 §101 — команда в идентичности узла: почему `node_id`, а не «слог + путь»
 
 Раздел [101-team-node-identity.md](sections/101-team-node-identity.md). Ветка
-`feature/team-node-identity`. Статус ◐ — ТЗ записано, реализация идёт блоками.
+`feature/team-node-identity`. Статус ✅ — блоки 101.1–101.10 реализованы; слияние в `dev` — после
+сдачи.
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -5915,7 +5916,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Web: чтение Prometheus по (team, node) | ✅ Phase 101.7 | порт — [port/metrics_provider.go](../internal/web/usecase/port/metrics_provider.go) `NodeKey`, [port/node_repo.go](../internal/web/usecase/port/node_repo.go) `NodeKeyResolver`; запросы — [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) `instantByNodeKey`/`teamMatcher`; узлы по путям — [postgres/node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) `RefsByPaths`; ряды до §101 — [nodekeys.go](../internal/web/usecase/nodekeys.go) `withLegacy`/`resolveLegacyOwners`; потребители — [metrics.go](../internal/web/usecase/metrics.go) `nodesOverviewProm`/`diagPrometheus`, [last_outcome.go](../internal/web/usecase/last_outcome.go), [notification.go](../internal/web/usecase/notification.go) `listTeamNodes`, [kafka_bynode.go](../internal/web/usecase/kafka_bynode.go) `foldLegacyRows`, [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go) поле `team`; тесты [nodekeys_test.go](../internal/web/usecase/nodekeys_test.go), [node_ids_by_paths_test.go](../tests/integration/node_ids_by_paths_test.go) `TestNodeRepoRefsByPaths_E2E` |
 | UI: команда в топах Kafka, снятие правила §86.8 | ✅ Phase 101.8 | [TopNodes.tsx](../web-ui/src/components/kafka/TopNodes.tsx) `NodeCell`/`TeamChip`/`unlinkedReason`/`rowKey`, [client.ts](../web-ui/src/api/client.ts) `KafkaByNode.team`, [Overview.tsx](../web-ui/src/pages/Overview.tsx) (снят `ambiguousPaths`), локали `kafka.node_legacy`/`node_placeholder`/`no_team`; тесты [TopNodes.test.tsx](../web-ui/src/components/kafka/TopNodes.test.tsx), [Overview.rank.test.tsx](../web-ui/src/pages/Overview.rank.test.tsx) |
 | Grafana, алерты, `make check-alerts` | ✅ Phase 101.9 | дашборды [nexus-nodes.json](../deploy/grafana/nexus-nodes.json), [nexus-kafka.json](../deploy/grafana/nexus-kafka.json) (переменная `team`, `by (team, node)`, Merge), [README](../deploy/grafana/README.md); правила [prometheus.alerts.yml](../deploy/prometheus.alerts.yml), тесты [prometheus.alerts.test.yml](../deploy/prometheus.alerts.test.yml); [Makefile](../Makefile) `check-alerts`, [.gitlab-ci.yml](../.gitlab-ci.yml) job `alerts-check` |
-| DEPLOYMENT, CHANGELOG | ⛔ Phase 101.10 | — |
+| DEPLOYMENT, CHANGELOG | ✅ Phase 101.10 | [DEPLOYMENT.md](../DEPLOYMENT.md) §9.1.4 (порядок выката, матрица версий, Prometheus, дашборды, ряды с токенами, `exported_team`) и чек-лист раскатки; [CHANGELOG.md](../CHANGELOG.md) `[Unreleased]`; [nexus-prod SKILL](../.claude/skills/nexus-prod/SKILL.md) — diagnostics по команде |
 
 - **Повод выглядел как косметика, а оказался дефектом доставки.** Жалоба «в топе Kafka нет ссылки
   на `telegram`» объяснялась одноимёнными узлами двух команд. Но тот же приём «узел = путь» стоит в
@@ -6168,3 +6169,33 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   принять выражение, которое отвергнет боевой Prometheus. В CI job `alerts-check` задан
   `entrypoint: [""]` (ENTRYPOINT образа — сам prometheus). Пользователь образа — nobody, но job
   файлы только читает.
+
+- **Выкат §101 — сборка и перекат по одному сервису (101.10).** Обычная команда
+  `up -d --build web receiver sender` пересоздаёт все три сервиса разом, и порядок Sender → Receiver →
+  Web не соблюдается. Отдельные `build` и `up -d` — ещё и урок малой памяти: сборка трёх образов
+  одной командой уводила сервер в своп. HA-стеку ничего делать не нужно: `rolling.sh` по умолчанию
+  катит `sender receiver web`.
+- **Sender первым — ценой потери неоднозначных async-сообщений в окне выката.** Пока Receiver старый,
+  конверты идут без `node_id`, и новый Sender отправляет путь нескольких команд в DLQ со сбросом.
+  Обратный порядок это окно не убирает, а меняет потерю на прежнюю доставку узлу чужой команды (старый
+  Sender берёт первый узел по пути, с его адресом и кредами) — тот же выбор fail-closed, что для старых
+  сообщений §101.5. Проверка матрицы по коду: `node_id` в sync-запросе Receiver передаёт с §37, поэтому
+  breaker нового Sender'а при старом Receiver ведётся по id, а не по пути (первая редакция §101.12
+  ошибалась). DEPLOYMENT даёт SQL затронутых путей и требует собрать образы до `up -d`.
+
+- **`docker compose restart prometheus`, а не `up -d` (101.10).** Файл правил смонтирован как файл,
+  и Prometheus перечитывает его только при старте или по SIGHUP. `up -d` контейнер не пересоздаёт:
+  его спецификация не менялась. На приёмке 1.22.0 так не заработал новый scrape job.
+
+- **Ряды с токенами удаляются вручную (101.10).** Admin API Prometheus по умолчанию выключен, и
+  держать его включённым ради разовой операции — значит отдать удаление данных любому, кто дотянется
+  до порта. Поэтому процедура такая: временный override с `--web.enable-admin-api`, сначала
+  `/api/v1/series` (что будет удалено), затем `delete_series` и `clean_tombstones`, затем возврат
+  без флага. `command` в override заменяет список целиком, поэтому флаги базового compose повторяются;
+  у профиля малой памяти retention свой (`15d`), и в override надо брать его значение.
+
+- **`exported_team` (101.10).** Если внешний Prometheus вешает на цель собственную метку `team`, то
+  при `honor_labels: false` (по умолчанию) метка метрики переименовывается в `exported_team`, а `team`
+  получает значение цели. Дашборды и алерты §101.11 тогда группируют по метке цели, а не по команде
+  узла, и одноимённые узлы снова слипаются. Решение на стороне внешнего Prometheus — переименовать
+  метку цели.
