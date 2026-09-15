@@ -223,10 +223,10 @@ func TestKafkaTopics_SizesDegradeOnPromError(t *testing.T) {
 
 func TestKafkaByNode_TopProducersAndFailures(t *testing.T) {
 	t.Parallel()
-	prom := &fakeProm{throughput: map[string]port.NodeThroughput{
-		"billing":    {Out: 800, Errors: 0},
-		"geo/notify": {Out: 200, Errors: 0},
-		"old/legacy": {Out: 100, Errors: 50},
+	prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+		{Team: "fin", Path: "billing"}:    {Out: 800, Errors: 0},
+		{Team: "geo", Path: "geo/notify"}: {Out: 200, Errors: 0},
+		{Team: "old", Path: "old/legacy"}: {Out: 100, Errors: 50},
 	}}
 	uc := NewKafkaMonitorUsecase(prom, nil, nil, nil, defaultTh(), logging.NewNoop())
 	since, until := kafkaWindow()

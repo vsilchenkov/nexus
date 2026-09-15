@@ -33,6 +33,7 @@ var (
 	_ port.NodeRepo         = (*NodeRepoPg)(nil)
 	_ port.NodeTableUsage   = (*NodeRepoPg)(nil)
 	_ port.NodePathResolver = (*NodeRepoPg)(nil)
+	_ port.NodeKeyResolver  = (*NodeRepoPg)(nil)
 )
 
 func NewNodeRepoPg(db DBTX, cipher *crypto.Cipher, logger logging.Logger) *NodeRepoPg {
@@ -143,6 +144,40 @@ func (r *NodeRepoPg) IDsByPaths(ctx context.Context, paths []string) (map[string
 		out[path] = id
 	}
 	return out, rows.Err()
+}
+
+// RefsByPaths реализует port.NodeKeyResolver (§101.9): все узлы с данными
+// путями во всех командах, со слогом команды.
+//
+// Однозначность пути здесь не проверяется, в отличие от IDsByPaths: экрану
+// Kafka нужен id по точной паре (слог, путь), а приписывание рядов до §101 —
+// проверка «путь один во всём инстансе». Обе выводятся из полного списка.
+// Синтаксис совместим с PostgreSQL 12.
+func (r *NodeRepoPg) RefsByPaths(ctx context.Context, paths []string) ([]port.NodeKeyRef, error) {
+	out := []port.NodeKeyRef{}
+	if len(paths) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT n.id::text, t.slug, n.path
+		FROM nodes n
+		JOIN teams t ON t.id = n.team_id
+		WHERE n.path = ANY($1)`, paths)
+	if err != nil {
+		return nil, fmt.Errorf("node refs by paths: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ref port.NodeKeyRef
+		if err := rows.Scan(&ref.ID, &ref.Key.Team, &ref.Key.Path); err != nil {
+			return nil, fmt.Errorf("scan node ref by path: %w", err)
+		}
+		out = append(out, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("node refs by paths rows: %w", err)
+	}
+	return out, nil
 }
 
 func (r *NodeRepoPg) List(ctx context.Context, f port.ListNodesFilter) ([]*domain.Node, error) {

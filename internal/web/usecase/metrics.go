@@ -1,7 +1,9 @@
 package usecase
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -31,6 +33,7 @@ type MetricsUsecase struct {
 	teams      port.TeamRepo         // §86.4: членства для сквозного скоупа (может быть nil)
 	settings   port.AppSettingsRepo  // §44-perf: режим подсчёта уникальных (может быть nil)
 	nodeStatus port.NodeStatusReader // §46: персистентный «Down» из Redis (может быть nil)
+	nodeKeys   port.NodeKeyResolver  // §101.9: владельцы рядов Prometheus до §101 (может быть nil)
 	clock      clock.Clock           // §4: «сейчас» для окон по умолчанию
 	// exactChartMax — §79.5.1: потолок записей окна, до которого график строится
 	// точной формой («по итогу записи»). 0 → defaultExactChartMaxRecords.
@@ -88,6 +91,14 @@ func NewMetricsUsecase(prom port.PromMetrics, nodeLogs port.NodeLogMetrics, node
 // nil (опция не задана) оставляет режим недоступным, а не падающим.
 func WithMetricsTeams(teams port.TeamRepo) MetricsOption {
 	return func(u *MetricsUsecase) { u.teams = teams }
+}
+
+// WithMetricsNodeKeys включает приписывание рядов Prometheus, собранных до
+// §101 (без метки team), узлу с однозначным во всём инстансе путём (§101.9).
+// nil оставляет такие ряды неучтёнными: в окне выката числа занижены, но чужой
+// трафик узлу не достаётся.
+func WithMetricsNodeKeys(nodes port.NodeKeyResolver) MetricsOption {
+	return func(u *MetricsUsecase) { u.nodeKeys = nodes }
 }
 
 // WithTotalsCacheTTL задаёт время жизни кеша агрегата шапки (§86.4).
@@ -355,7 +366,7 @@ func (u *MetricsUsecase) nodesOverviewScoped(ctx context.Context, sc NodesScope,
 	}
 	// §41/§52: оверлей исхода последнего вызова поверх любой ветки
 	// (CH-источник его не считает, gauge живёт только в Prometheus).
-	u.applyLastOutcomes(ctx, until, &res)
+	u.applyLastOutcomes(ctx, until, nodes, &res)
 	// §44.A: агрегат для шапки = сумма строк (в любом источнике, за тот же
 	// период) → «итог в шапке = сумме видимых строк таблицы».
 	res.Totals = sumTotals(res.Items)
@@ -373,15 +384,20 @@ func (u *MetricsUsecase) nodesOverviewScoped(ctx context.Context, sc NodesScope,
 // маппинг на строки таблицы. Поведение прежнее, в том числе трактовка
 // «неизвестно» как ok: в таблице рабочего стола у бейджа нет пустого
 // состояния, каждая строка обязана иметь тон.
-func (u *MetricsUsecase) applyLastOutcomes(ctx context.Context, at time.Time, res *NodesOverview) {
+func (u *MetricsUsecase) applyLastOutcomes(ctx context.Context, at time.Time, nodes []*domain.Node, res *NodesOverview) {
 	if len(res.Items) == 0 {
 		return
 	}
-	refs := make([]NodeRef, len(res.Items))
-	for i := range res.Items {
-		refs[i] = NodeRef{ID: res.Items[i].NodeID, Path: res.Items[i].Node}
+	// §101.9: команда узла нужна ключу гауджа Prometheus, а в строке её нет.
+	teamOf := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		teamOf[n.ID] = n.TeamID
 	}
-	got := NewLastOutcomeResolver(u.nodeStatus, u.prom, u.logger).Resolve(ctx, at, refs)
+	refs := make([]NodeRef, len(res.Items))
+	for i, it := range res.Items {
+		refs[i] = NodeRef{ID: it.NodeID, Path: it.Node, TeamID: teamOf[it.NodeID]}
+	}
+	got := NewLastOutcomeResolver(u.nodeStatus, u.prom, u.teams, u.logger).Resolve(ctx, at, refs)
 	for i := range res.Items {
 		// По id (§101.6): в режиме «Все команды» строки одноимённых узлов разных
 		// команд стоят рядом, и по пути их исходы склеивались.
@@ -493,41 +509,24 @@ func (u *MetricsUsecase) nodesOverviewProm(ctx context.Context, nodes []*domain.
 		u.logger.Warn("prometheus node throughput failed", u.logger.Err(err))
 		return NodesOverview{Items: []NodeThroughputRow{}}
 	}
-	// §86.4: у метки Prometheus нет команды (`node = <path>`, §37/IMPLEMENTATION),
-	// поэтому запрос отдаёт узлы ВСЕХ команд инстанса. До §86 эта ветка вообще не
-	// скоупилась — рабочий стол без ClickHouse показывал чужие пути. Сужаем по
-	// набору узлов скоупа; совпадение путей в разных командах при этом остаётся
-	// (§86.8), но чужие команды из выдачи уходят.
-	allowed := make(map[string]struct{}, len(nodes))
-	for _, n := range nodes {
-		allowed[n.Path] = struct{}{}
-	}
-	for node := range m {
-		if _, ok := allowed[node]; !ok {
-			delete(m, node)
-		}
-	}
-	// Спарклайн (12 точек) одним range-запросом на весь список. Ошибка
-	// спарклайна не валит throughput — деградируем до пустых рядов.
-	series := map[string][]float64{}
-	if withSpark {
-		got, serr := u.prom.NodeSeries(ctx, since, until, nodesSparkBuckets)
-		if serr != nil {
-			u.logger.Warn("prometheus node series failed", u.logger.Err(serr))
-		} else {
-			series = got
-		}
-	}
+	// §101.9: ряд узла ищется по паре (слог команды, путь). До §101 у метки не
+	// было команды, и одноимённые узлы разных команд получали одинаковые числа
+	// (граница §86.8). Чужие команды в выдачу не попадают и так: строки
+	// строятся по узлам скоупа (§86.4).
+	slugs := teamSlugsByID(ctx, u.teams, u.logger)
+	owners := resolveLegacyOwners(ctx, u.nodeKeys, legacyRowPaths(m, scopePaths(nodes)), u.logger)
+	series := u.nodeSeries(ctx, since, until, withSpark)
 	// Строка на КАЖДЫЙ узел скоупа, а не на каждую серию Prometheus: так ветка
 	// сходится с CH-веткой (там строка есть у любого узла, даже молчащего) и у
 	// каждой строки появляется node_id, которого в метках Prometheus нет.
-	// Узлы с одинаковым путём в разных командах получат одинаковые числа — это
-	// та же граница §86.8, что и у бейджа исхода.
 	items := make([]NodeThroughputRow, 0, len(nodes))
 	for _, n := range nodes {
-		t := m[n.Path]
-		spark := series[n.Path]
-		if spark == nil {
+		key := port.NodeKey{Team: slugs[n.TeamID], Path: n.Path}
+		t := withLegacy(m, key, owners, addCounters)
+		// Спарклайн — только по паре: точки рядов разной длины позиционно не
+		// складываются, а ряд до §101 обрывается на выкате.
+		spark := series[key]
+		if spark == nil || key.Team == "" {
 			spark = []float64{}
 		}
 		items = append(items, NodeThroughputRow{
@@ -541,6 +540,33 @@ func (u *MetricsUsecase) nodesOverviewProm(ctx context.Context, nodes []*domain.
 		})
 	}
 	return NodesOverview{Items: items, PrometheusAvailable: true}
+}
+
+// scopePaths — фильтр путей узлов скоупа: ряды без команды с другими путями
+// приписывать некому, и базу про них не спрашивают.
+func scopePaths(nodes []*domain.Node) func(string) bool {
+	set := make(map[string]struct{}, len(nodes))
+	for _, n := range nodes {
+		set[n.Path] = struct{}{}
+	}
+	return func(p string) bool {
+		_, ok := set[p]
+		return ok
+	}
+}
+
+// nodeSeries — спарклайны (12 точек) одним range-запросом на весь список. Ошибка
+// спарклайна не валит throughput — деградируем до пустых рядов.
+func (u *MetricsUsecase) nodeSeries(ctx context.Context, since, until time.Time, withSpark bool) map[port.NodeKey][]float64 {
+	if !withSpark {
+		return nil
+	}
+	got, err := u.prom.NodeSeries(ctx, since, until, nodesSparkBuckets)
+	if err != nil {
+		u.logger.Warn("prometheus node series failed", u.logger.Err(err))
+		return nil
+	}
+	return got
 }
 
 // NodeMetrics — ТОЧНЫЕ KPI + ряд графика одного узла за окно из ClickHouse-логов
@@ -681,7 +707,7 @@ type DiagSource struct {
 }
 
 // DiagNode — сверка одного узла: ClickHouse (уникальные запросы) vs Prometheus
-// (попытки). Ключ — path узла.
+// (попытки). Ключ — path узла в пределах команды (§101.9).
 type DiagNode struct {
 	Node                        string
 	CHIn, CHOut, CHErrors       uint64
@@ -706,6 +732,11 @@ type Diagnostics struct {
 // Diagnostics собирает обе стороны за окно и per-node-сверку. CH-сторона
 // переиспользует NodesOverview (тот же расчёт, что и таблица/шапка). Деградирует
 // мягко: недоступный источник → нули + Available=false.
+//
+// Prometheus-сторона ограничена командой teamID (§101.9): и итоги, и узлы
+// «только в Prometheus» — ряды с её слогом. Без известного слога сторона не
+// заполняется: сравнивать ClickHouse одной команды не с чем, а ряды всех команд
+// снова отдали бы пути чужих команд (на бою — и хвосты адресов с токенами).
 func (u *MetricsUsecase) Diagnostics(ctx context.Context, teamID string, since, until time.Time) Diagnostics {
 	if until.IsZero() {
 		until = u.clock.Now()
@@ -723,44 +754,73 @@ func (u *MetricsUsecase) Diagnostics(ctx context.Context, teamID string, since, 
 		Incoming: ch.Totals.Incoming, Outgoing: ch.Totals.Outgoing,
 		Errors: ch.Totals.Errors, Available: d.ClickHouseAvailable,
 	}
-
-	// Prometheus-сторона: глобальные попытки + per-node.
-	promByNode := map[string]port.NodeThroughput{}
-	if u.prom != nil {
-		if gt, err := u.prom.GlobalTotals(ctx, until.Sub(since)); err == nil {
-			d.Prometheus = DiagSource{
-				Incoming: f2u(gt.Incoming), Outgoing: f2u(gt.Outgoing),
-				Errors: f2u(gt.Errors), Available: true,
-			}
-			d.PrometheusAvailable = true
-		} else {
-			u.logger.Warn("diagnostics: prometheus global totals failed", u.logger.Err(err))
-		}
-		if pt, err := u.prom.NodeThroughput(ctx, since, until); err == nil {
-			promByNode = pt
-		} else {
-			u.logger.Warn("diagnostics: prometheus node throughput failed", u.logger.Err(err))
-		}
-	}
-
-	// Per-node merge: узлы из CH + те, что есть только в Prometheus (orphan).
 	d.Nodes = make([]DiagNode, 0, len(ch.Items))
-	seen := make(map[string]bool, len(ch.Items))
 	for _, it := range ch.Items {
-		p := promByNode[it.Node]
-		d.Nodes = append(d.Nodes, DiagNode{
-			Node: it.Node, CHIn: it.In, CHOut: it.Out, CHErrors: it.Errors,
-			PromIn: f2u(p.In), PromOut: f2u(p.Out), PromErrors: f2u(p.Errors),
-		})
-		seen[it.Node] = true
+		d.Nodes = append(d.Nodes, DiagNode{Node: it.Node, CHIn: it.In, CHOut: it.Out, CHErrors: it.Errors})
 	}
-	for node, p := range promByNode {
-		if seen[node] {
+	u.diagPrometheus(ctx, teamID, since, until, &d)
+	return d
+}
+
+// diagPrometheus заполняет Prometheus-сторону сверки по слогу команды teamID:
+// глобальные попытки и per-node-числа.
+func (u *MetricsUsecase) diagPrometheus(ctx context.Context, teamID string, since, until time.Time, d *Diagnostics) {
+	if u.prom == nil {
+		return
+	}
+	slug := teamSlugsByID(ctx, u.teams, u.logger)[teamID]
+	if slug == "" {
+		u.logger.Debug("diagnostics: team slug unknown, prometheus side skipped",
+			u.logger.Str("team_id", teamID))
+		return
+	}
+	if gt, err := u.prom.GlobalTotals(ctx, until.Sub(since), slug); err == nil {
+		d.Prometheus = DiagSource{
+			Incoming: f2u(gt.Incoming), Outgoing: f2u(gt.Outgoing),
+			Errors: f2u(gt.Errors), Available: true,
+		}
+		d.PrometheusAvailable = true
+	} else {
+		u.logger.Warn("diagnostics: prometheus global totals failed", u.logger.Err(err))
+	}
+	pt, err := u.prom.NodeThroughput(ctx, since, until)
+	if err != nil {
+		u.logger.Warn("diagnostics: prometheus node throughput failed", u.logger.Err(err))
+		return
+	}
+	known := make(map[string]struct{}, len(d.Nodes))
+	for _, n := range d.Nodes {
+		known[n.Node] = struct{}{}
+	}
+	inTeam := func(p string) bool {
+		_, ok := known[p]
+		return ok
+	}
+	owners := resolveLegacyOwners(ctx, u.nodeKeys, legacyRowPaths(pt, inTeam), u.logger)
+	mergeDiagNodes(d, slug, pt, owners)
+}
+
+// mergeDiagNodes дописывает Prometheus-числа узлам команды и добавляет узлы
+// «только в Prometheus» — ряды с её слогом без узла в конфигурации
+// (переименованные и удалённые узлы команды), по пути. Ряды других команд, ряды
+// до §101 без узла и заглушка <unresolved> сюда не попадают.
+func mergeDiagNodes(d *Diagnostics, slug string, pt map[port.NodeKey]port.NodeThroughput, owners map[string]port.NodeKeyRef) {
+	seen := make(map[string]bool, len(d.Nodes))
+	for i := range d.Nodes {
+		n := &d.Nodes[i]
+		p := withLegacy(pt, port.NodeKey{Team: slug, Path: n.Node}, owners, addCounters)
+		n.PromIn, n.PromOut, n.PromErrors = f2u(p.In), f2u(p.Out), f2u(p.Errors)
+		seen[n.Node] = true
+	}
+	var orphans []DiagNode
+	for key, p := range pt {
+		if key.Team != slug || seen[key.Path] {
 			continue
 		}
-		d.Nodes = append(d.Nodes, DiagNode{
-			Node: node, PromIn: f2u(p.In), PromOut: f2u(p.Out), PromErrors: f2u(p.Errors),
+		orphans = append(orphans, DiagNode{
+			Node: key.Path, PromIn: f2u(p.In), PromOut: f2u(p.Out), PromErrors: f2u(p.Errors),
 		})
 	}
-	return d
+	slices.SortFunc(orphans, func(a, b DiagNode) int { return cmp.Compare(a.Node, b.Node) })
+	d.Nodes = append(d.Nodes, orphans...)
 }

@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/platform/logging"
+	"nexus/internal/web/usecase/port"
 )
 
 // vectorResp формирует Prometheus instant-vector JSON.
@@ -49,14 +51,17 @@ func newTestServer(t *testing.T) *httptest.Server {
 		case strings.Contains(q, "nexus_node_last_request_error"):
 			// §41/§52: webhook/send — degraded (1), webhook/push — down (2).
 			_, _ = w.Write([]byte(vectorResp(
-				sample(`{"node":"webhook/send"}`, "1"),
-				sample(`{"node":"webhook/push"}`, "2"))))
-		case strings.Contains(q, "status=~") && strings.Contains(q, "by (node)"):
-			_, _ = w.Write([]byte(vectorResp(sample(`{"node":"webhook/send"}`, "2"))))
-		case strings.Contains(q, `service="receiver"`) && strings.Contains(q, "by (node)"):
-			_, _ = w.Write([]byte(vectorResp(sample(`{"node":"webhook/send"}`, "4201"))))
-		case strings.Contains(q, `service="sender"`) && strings.Contains(q, "by (node)"):
-			_, _ = w.Write([]byte(vectorResp(sample(`{"node":"webhook/send"}`, "4198"))))
+				sample(`{"team":"hooks","node":"webhook/send"}`, "1"),
+				sample(`{"team":"hooks","node":"webhook/push"}`, "2"))))
+		case strings.Contains(q, "status=~") && strings.Contains(q, "by (team, node)"):
+			// §101.9: тот же путь в соседней команде — отдельный ряд.
+			_, _ = w.Write([]byte(vectorResp(
+				sample(`{"team":"hooks","node":"webhook/send"}`, "2"),
+				sample(`{"team":"other","node":"webhook/send"}`, "9"))))
+		case strings.Contains(q, `service="receiver"`) && strings.Contains(q, "by (team, node)"):
+			_, _ = w.Write([]byte(vectorResp(sample(`{"team":"hooks","node":"webhook/send"}`, "4201"))))
+		case strings.Contains(q, `service="sender"`) && strings.Contains(q, "by (team, node)"):
+			_, _ = w.Write([]byte(vectorResp(sample(`{"team":"hooks","node":"webhook/send"}`, "4198"))))
 		case strings.Contains(q, "status=~"):
 			_, _ = w.Write([]byte(vectorResp(sample("{}", "1845"))))
 		case strings.Contains(q, `service="receiver"`):
@@ -67,6 +72,31 @@ func newTestServer(t *testing.T) *httptest.Server {
 			_, _ = w.Write([]byte(vectorResp())) // empty vector
 		}
 	}))
+}
+
+// queryRecorder — фейковый Prometheus, запоминающий запросы: часть контракта
+// адаптера — сам PromQL (группировка, матчеры), а не только разбор ответа.
+type queryRecorder struct {
+	mu      sync.Mutex
+	queries []string
+}
+
+func (r *queryRecorder) server(t *testing.T, resp string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_ = req.ParseForm()
+		r.mu.Lock()
+		r.queries = append(r.queries, req.FormValue("query"))
+		r.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(resp))
+	}))
+}
+
+func (r *queryRecorder) all() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.queries...)
 }
 
 func TestClient_New_EmptyURL(t *testing.T) {
@@ -83,11 +113,38 @@ func TestClient_GlobalTotals(t *testing.T) {
 	c, err := New(srv.URL, time.Second, logging.NewNoop())
 	require.NoError(t, err)
 
-	totals, err := c.GlobalTotals(context.Background(), 24*time.Hour)
+	totals, err := c.GlobalTotals(context.Background(), 24*time.Hour, "")
 	require.NoError(t, err)
 	require.EqualValues(t, 1_240_000, totals.Incoming)
 	require.EqualValues(t, 1_230_000, totals.Outgoing)
 	require.EqualValues(t, 1845, totals.Errors)
+}
+
+// TestClient_GlobalTotals_TeamFilter (§101.9): итоги диагностики сравниваются
+// с ClickHouse одной команды, поэтому каждый из трёх запросов обязан нести
+// матчер её слога (с экранированием). Пустой слог фильтра не добавляет.
+func TestClient_GlobalTotals_TeamFilter(t *testing.T) {
+	t.Parallel()
+	rec := &queryRecorder{}
+	srv := rec.server(t, vectorResp(sample("{}", "1")))
+	defer srv.Close()
+
+	c, err := New(srv.URL, time.Second, logging.NewNoop())
+	require.NoError(t, err)
+
+	_, err = c.GlobalTotals(context.Background(), time.Hour, `mess"engers`)
+	require.NoError(t, err)
+	queries := rec.all()
+	require.Len(t, queries, 3)
+	for _, q := range queries {
+		require.Contains(t, q, `,team="mess\"engers"}`)
+	}
+
+	_, err = c.GlobalTotals(context.Background(), time.Hour, "")
+	require.NoError(t, err)
+	for _, q := range rec.all()[3:] {
+		require.NotContains(t, q, "team=")
+	}
 }
 
 func TestClient_KafkaQueue(t *testing.T) {
@@ -141,6 +198,8 @@ func TestClient_KafkaTopicSizes_NoMetric(t *testing.T) {
 	require.Empty(t, sizes)
 }
 
+// TestClient_NodeThroughput (§101.9): ключ — пара (team, node). Тот же путь в
+// соседней команде даёт свой ряд, а не прибавляется к чужому.
 func TestClient_NodeThroughput(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t)
@@ -151,10 +210,15 @@ func TestClient_NodeThroughput(t *testing.T) {
 
 	m, err := c.NodeThroughput(context.Background(), time.Now().Add(-time.Hour), time.Now())
 	require.NoError(t, err)
-	require.Contains(t, m, "webhook/send")
-	require.EqualValues(t, 4201, m["webhook/send"].In)
-	require.EqualValues(t, 4198, m["webhook/send"].Out)
-	require.EqualValues(t, 2, m["webhook/send"].Errors)
+	hooks := port.NodeKey{Team: "hooks", Path: "webhook/send"}
+	other := port.NodeKey{Team: "other", Path: "webhook/send"}
+	require.Contains(t, m, hooks)
+	require.EqualValues(t, 4201, m[hooks].In)
+	require.EqualValues(t, 4198, m[hooks].Out)
+	require.EqualValues(t, 2, m[hooks].Errors)
+	require.EqualValues(t, 9, m[other].Errors)
+	require.Zero(t, m[other].In)
+	require.Len(t, m, 2)
 }
 
 // TestClient_NodeLastErrors (§41/§52): instant gauge последнего вызова
@@ -170,78 +234,59 @@ func TestClient_NodeLastErrors(t *testing.T) {
 
 	m, err := c.NodeLastErrors(context.Background(), time.Now())
 	require.NoError(t, err)
-	require.EqualValues(t, 1, m["webhook/send"])
-	require.EqualValues(t, 2, m["webhook/push"])
+	require.EqualValues(t, 1, m[port.NodeKey{Team: "hooks", Path: "webhook/send"}])
+	require.EqualValues(t, 2, m[port.NodeKey{Team: "hooks", Path: "webhook/push"}])
 }
 
-func TestClient_NodeKPI(t *testing.T) {
+// TestClient_NodeErrors_SameNameTeams (§101.9) — боевой случай: путь telegram в
+// командах messengers (1 747 ошибок) и webhook (8). До §101 это был один ряд
+// 1 755, и уведомление приписывало его обеим командам. Ряд без team (собран до
+// обновления) остаётся отдельным ключом, ряд без node (выход до резолва узла) —
+// отбрасывается.
+func TestClient_NodeErrors_SameNameTeams(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		q := r.FormValue("query")
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.Contains(q, "histogram_quantile(0.95"):
-			_, _ = w.Write([]byte(vectorResp(sample("{}", "0.087")))) // 87 мс
-		case strings.Contains(q, "histogram_quantile(0.99"):
-			_, _ = w.Write([]byte(vectorResp(sample("{}", "0.142")))) // 142 мс
-		case strings.Contains(q, "nexus_request_incomplete_total"):
-			_, _ = w.Write([]byte(vectorResp(sample("{}", "2"))))
-		case strings.Contains(q, "nexus_requests_total"):
-			_, _ = w.Write([]byte(vectorResp(sample("{}", "100"))))
-		default:
-			_, _ = w.Write([]byte(vectorResp()))
-		}
-	}))
+	rec := &queryRecorder{}
+	srv := rec.server(t, vectorResp(
+		sample(`{"team":"messengers","node":"telegram"}`, "1747"),
+		sample(`{"team":"webhook","node":"telegram"}`, "8"),
+		sample(`{"node":"telegram"}`, "412"),
+		sample(`{"team":"","node":""}`, "5")))
 	defer srv.Close()
 
 	c, err := New(srv.URL, time.Second, logging.NewNoop())
 	require.NoError(t, err)
 
-	kpi, err := c.NodeKPI(context.Background(), "webhook/send", time.Now().Add(-time.Hour), time.Now())
+	m, err := c.NodeErrors(context.Background(), time.Hour)
 	require.NoError(t, err)
-	require.EqualValues(t, 100, kpi.Total)
-	require.EqualValues(t, 2, kpi.Errors)
-	require.EqualValues(t, 98, kpi.Delivered) // total - errors
-	require.InDelta(t, 87, kpi.P95ms, 0.5)
-	require.InDelta(t, 142, kpi.P99ms, 0.5)
+	require.Equal(t, map[port.NodeKey]float64{
+		{Team: "messengers", Path: "telegram"}: 1747,
+		{Team: "webhook", Path: "telegram"}:    8,
+		{Path: "telegram"}:                     412,
+	}, m)
+	require.Contains(t, rec.all()[0], "sum by (team, node)(")
 }
 
-// matrixResp формирует Prometheus range-matrix JSON с одной серией.
-func matrixResp(values ...string) string {
-	return `{"status":"success","data":{"resultType":"matrix","result":[` +
-		`{"metric":{},"values":[` + strings.Join(values, ",") + `]}]}}`
-}
-
-func TestClient_NodeChart(t *testing.T) {
+// TestClient_NodeSeries_ByTeamAndNode (§101.9): спарклайны одноимённых узлов —
+// два ряда; серия без метки node пропускается.
+func TestClient_NodeSeries_ByTeamAndNode(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		q := r.FormValue("query")
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case strings.Contains(q, "nexus_request_incomplete_total"):
-			_, _ = w.Write([]byte(matrixResp(`[1700000060,"1"]`, `[1700000120,"3"]`)))
-		case strings.Contains(q, "nexus_requests_total"):
-			_, _ = w.Write([]byte(matrixResp(`[1700000060,"10"]`, `[1700000120,"20"]`)))
-		default:
-			_, _ = w.Write([]byte(matrixResp()))
-		}
-	}))
+	rec := &queryRecorder{}
+	srv := rec.server(t, `{"status":"success","data":{"resultType":"matrix","result":[`+
+		`{"metric":{"team":"messengers","node":"telegram"},"values":[[1700000060,"10"],[1700000120,"20"]]},`+
+		`{"metric":{"team":"webhook","node":"telegram"},"values":[[1700000060,"1"]]},`+
+		`{"metric":{},"values":[[1700000060,"99"]]}]}}`)
 	defer srv.Close()
 
 	c, err := New(srv.URL, time.Second, logging.NewNoop())
 	require.NoError(t, err)
 
-	since := time.Now().Add(-2 * time.Minute)
-	until := time.Now()
-	pts, err := c.NodeChart(context.Background(), "webhook/send", since, until, 2)
+	m, err := c.NodeSeries(context.Background(), time.Now().Add(-2*time.Minute), time.Now(), 2)
 	require.NoError(t, err)
-	require.Len(t, pts, 2)
-	require.EqualValues(t, 10, pts[0].Count)
-	require.EqualValues(t, 1, pts[0].Errors)
-	require.EqualValues(t, 20, pts[1].Count)
-	require.EqualValues(t, 3, pts[1].Errors)
+	require.Equal(t, map[port.NodeKey][]float64{
+		{Team: "messengers", Path: "telegram"}: {10, 20},
+		{Team: "webhook", Path: "telegram"}:    {1},
+	}, m)
+	require.Contains(t, rec.all()[0], "sum by (team, node)(")
 }
 
 func TestClient_EmptyVector(t *testing.T) {

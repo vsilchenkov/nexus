@@ -228,20 +228,22 @@ type errStats struct {
 
 // collectErrors берёт per-node счётчик «незавершённых» вызовов из Prometheus
 // (§22, одна метрика nexus_request_incomplete_total за окно), затем раскладывает
-// его по командам, сопоставляя метку node с path узла. Это заменяет N запросов
-// CountErrors к ClickHouse одним запросом к тому же источнику, что и графики.
+// его по командам, сопоставляя пару меток (team, node) со слогом команды и path
+// узла (§101.9): одноимённый узел соседней команды в сумму не попадает. Это
+// заменяет N запросов CountErrors к ClickHouse одним запросом к тому же
+// источнику, что и графики.
 func (s *NotificationScheduler) collectErrors(ctx context.Context, sinceMs, untilMs int64) errStats {
 	var stats errStats
 	window := time.Duration(untilMs-sinceMs) * time.Millisecond
 	if window <= 0 {
 		return stats
 	}
-	byNode, err := s.prom.NodeErrors(ctx, window)
+	byKey, err := s.prom.NodeErrors(ctx, window)
 	if err != nil {
 		s.logger.ErrorWithOp("notif collect: prometheus node errors", err, "notif.collect")
 		return stats
 	}
-	if len(byNode) == 0 {
+	if len(byKey) == 0 {
 		return stats
 	}
 	teams, err := s.teams.List(ctx)
@@ -249,16 +251,12 @@ func (s *NotificationScheduler) collectErrors(ctx context.Context, sinceMs, unti
 		s.logger.ErrorWithOp("notif collect: list teams", err, "notif.collect")
 		return stats
 	}
-	for _, team := range teams {
-		nodes, err := s.nodes.List(ctx, port.ListNodesFilter{TeamID: team.ID})
-		if err != nil {
-			s.logger.ErrorWithOp("notif collect: list nodes", err, "notif.collect",
-				s.logger.Str("team", team.Slug))
-			continue
-		}
+	tn := s.listTeamNodes(ctx, teams)
+	for i, team := range teams {
 		ts := teamErrStat{name: team.Name, slug: team.Slug}
-		for _, n := range nodes {
-			cnt := f2u(byNode[n.Path])
+		for _, n := range tn.nodes[i] {
+			key := port.NodeKey{Team: team.Slug, Path: n.Path}
+			cnt := f2u(withLegacy(byKey, key, tn.owners, addFloat))
 			if cnt > 0 {
 				ts.nodes = append(ts.nodes, nodeErrStat{path: n.Path, table: n.ClickHouseTable, count: cnt})
 				ts.total += cnt
@@ -270,6 +268,42 @@ func (s *NotificationScheduler) collectErrors(ctx context.Context, sinceMs, unti
 		}
 	}
 	return stats
+}
+
+// teamNodes — узлы команд (по индексу команды в списке) и однозначные во всём
+// инстансе пути, которым приписываются ряды до §101.
+type teamNodes struct {
+	nodes  [][]*domain.Node
+	owners map[string]port.NodeKeyRef
+}
+
+// listTeamNodes читает узлы всех команд. Однозначность пути считается по этому
+// же полному списку, без отдельного запроса. Сбой списка хоть одной команды
+// отключает приписывание рядов до §101 (fail-closed): по неполному списку
+// однозначность пути не доказать.
+func (s *NotificationScheduler) listTeamNodes(ctx context.Context, teams []*domain.Team) teamNodes {
+	tn := teamNodes{nodes: make([][]*domain.Node, len(teams))}
+	var refs []port.NodeKeyRef
+	complete := true
+	for i, team := range teams {
+		nodes, err := s.nodes.List(ctx, port.ListNodesFilter{TeamID: team.ID})
+		if err != nil {
+			s.logger.ErrorWithOp("notif collect: list nodes", err, "notif.collect",
+				s.logger.Str("team", team.Slug))
+			complete = false
+			continue
+		}
+		tn.nodes[i] = nodes
+		for _, n := range nodes {
+			refs = append(refs, port.NodeKeyRef{ID: n.ID, Key: port.NodeKey{Team: team.Slug, Path: n.Path}})
+		}
+	}
+	if !complete {
+		s.logger.Debug("notif collect: node list incomplete, legacy rows left unattributed")
+		return tn
+	}
+	tn.owners = uniquePathOwners(refs)
+	return tn
 }
 
 var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")

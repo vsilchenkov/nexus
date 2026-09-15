@@ -728,14 +728,17 @@ func (a *App) Start(ctx context.Context) error {
 		// §86.4: сквозной скоуп «Все команды» + кеш агрегата шапки. Без членств
 		// режим просто недоступен, поведение одной команды не меняется.
 		usecase.WithMetricsTeams(teamRepo),
+		// §101.9: ряды Prometheus до обновления (без метки team) приписываются
+		// узлу только при однозначном во всём инстансе пути.
+		usecase.WithMetricsNodeKeys(nodeRepo),
 		usecase.WithTotalsCacheTTL(usecase.DefaultTotalsCacheTTL))
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +
 	// Kafka Admin (топики/брокеры/ping, только при заданных брокерах) + Redis-кеш
 	// метаданных (TTL 30с). Все источники опциональны — usecase деградирует.
-	// §98.2: nodeRepo здесь — резолвер «путь → id», чтобы строки top-узлов вели
-	// на журнал узла. Метрики Prometheus несут только путь (метка node).
+	// §98.2/§101.9: nodeRepo здесь — резолвер узлов по путям со слогом команды:
+	// строка top-узлов ведёт на журнал узла по точной паре меток (team, node).
 	kafkaUC := usecase.NewKafkaMonitorUsecase(
 		promMetrics, kafkaAdmin, rediscache.NewKafkaCacheRedis(a.redis, 30*time.Second),
 		nodeRepo, kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
@@ -778,7 +781,7 @@ func (a *App) Start(ctx context.Context) error {
 	nodeRuntimeHandler := httpadapter.NewNodeRuntimeHandler(
 		usecase.NewNodeRuntimeUsecase(
 			nodeRepo,
-			usecase.NewLastOutcomeResolver(nodeStatusReader, promMetrics, a.logger),
+			usecase.NewLastOutcomeResolver(nodeStatusReader, promMetrics, teamRepo, a.logger),
 			clock.System(),
 			a.logger,
 		), a.logger)

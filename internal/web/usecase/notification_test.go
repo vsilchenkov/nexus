@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -50,30 +51,24 @@ func (r notifNodeRepo) UpdateAllowedHostsSnapshot(context.Context, string, []str
 
 // notifProm — фейк PromMetrics: per-node «незавершённые» вызовы (§22).
 type notifProm struct {
-	errs map[string]float64
+	errs map[port.NodeKey]float64
 	err  error
 }
 
-func (p notifProm) GlobalTotals(context.Context, time.Duration) (port.GlobalTotals, error) {
+func (p notifProm) GlobalTotals(context.Context, time.Duration, string) (port.GlobalTotals, error) {
 	return port.GlobalTotals{}, nil
 }
 func (p notifProm) KafkaQueue(context.Context) (float64, error) { return 0, nil }
-func (p notifProm) NodeThroughput(context.Context, time.Time, time.Time) (map[string]port.NodeThroughput, error) {
+func (p notifProm) NodeThroughput(context.Context, time.Time, time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
 	return nil, nil
 }
-func (p notifProm) NodeErrors(context.Context, time.Duration) (map[string]float64, error) {
+func (p notifProm) NodeErrors(context.Context, time.Duration) (map[port.NodeKey]float64, error) {
 	return p.errs, p.err
 }
-func (p notifProm) NodeLastErrors(context.Context, time.Time) (map[string]float64, error) {
+func (p notifProm) NodeLastErrors(context.Context, time.Time) (map[port.NodeKey]float64, error) {
 	return nil, nil
 }
-func (p notifProm) NodeSeries(context.Context, time.Time, time.Time, int) (map[string][]float64, error) {
-	return nil, nil
-}
-func (p notifProm) NodeKPI(context.Context, string, time.Time, time.Time) (port.NodeKPI, error) {
-	return port.NodeKPI{}, nil
-}
-func (p notifProm) NodeChart(context.Context, string, time.Time, time.Time, int) ([]port.SeriesPoint, error) {
+func (p notifProm) NodeSeries(context.Context, time.Time, time.Time, int) (map[port.NodeKey][]float64, error) {
 	return nil, nil
 }
 func (p notifProm) KafkaOverview(context.Context, time.Time, time.Time) (port.KafkaSummary, error) {
@@ -136,7 +131,7 @@ func TestNotifCycle_SendsWhenErrors(t *testing.T) {
 	sender := &notifSender{}
 	cp := &memCheckpoint{}
 	s := newScheduler(notifSettings(true, "*/5 * * * *"), oneNode(),
-		notifProm{errs: map[string]float64{"svc/hook": 5}}, sender, fakeLock{ok: true}, cp)
+		notifProm{errs: map[port.NodeKey]float64{{Team: "default", Path: "svc/hook"}: 5}}, sender, fakeLock{ok: true}, cp)
 
 	s.cycle(context.Background())
 	require.Len(t, sender.msgs, 1)
@@ -150,7 +145,7 @@ func TestNotifCycle_NoErrorsNoSend(t *testing.T) {
 	sender := &notifSender{}
 	cp := &memCheckpoint{}
 	s := newScheduler(notifSettings(true, "*/5 * * * *"), oneNode(),
-		notifProm{errs: map[string]float64{}}, sender, fakeLock{ok: true}, cp)
+		notifProm{errs: map[port.NodeKey]float64{}}, sender, fakeLock{ok: true}, cp)
 
 	s.cycle(context.Background())
 	assert.Empty(t, sender.msgs, "no errors → no message")
@@ -162,7 +157,7 @@ func TestNotifCycle_NoLockNoWork(t *testing.T) {
 	sender := &notifSender{}
 	cp := &memCheckpoint{}
 	s := newScheduler(notifSettings(true, "*/5 * * * *"), oneNode(),
-		notifProm{errs: map[string]float64{"svc/hook": 5}}, sender, fakeLock{ok: false}, cp)
+		notifProm{errs: map[port.NodeKey]float64{{Team: "default", Path: "svc/hook"}: 5}}, sender, fakeLock{ok: false}, cp)
 
 	s.cycle(context.Background())
 	assert.Empty(t, sender.msgs)
@@ -174,7 +169,7 @@ func TestNotifCycle_SendFailKeepsCheckpoint(t *testing.T) {
 	sender := &notifSender{err: assertErr}
 	cp := &memCheckpoint{}
 	s := newScheduler(notifSettings(true, "*/5 * * * *"), oneNode(),
-		notifProm{errs: map[string]float64{"svc/hook": 2}}, sender, fakeLock{ok: true}, cp)
+		notifProm{errs: map[port.NodeKey]float64{{Team: "default", Path: "svc/hook"}: 2}}, sender, fakeLock{ok: true}, cp)
 
 	s.cycle(context.Background())
 	assert.Equal(t, 0, cp.sets, "send failed → do not advance checkpoint (retry next tick)")
@@ -250,3 +245,73 @@ var assertErr = &stubError{"send failed"}
 type stubError struct{ s string }
 
 func (e *stubError) Error() string { return e.s }
+
+// failingNodeRepo — список узлов одной команды не читается.
+type failingNodeRepo struct {
+	notifNodeRepo
+	failTeam string
+}
+
+func (r failingNodeRepo) List(ctx context.Context, f port.ListNodesFilter) ([]*domain.Node, error) {
+	if f.TeamID == r.failTeam {
+		return nil, errors.New("pg down")
+	}
+	return r.notifNodeRepo.List(ctx, f)
+}
+
+func collectScheduler(nodes port.NodeRepo, prom port.PromMetrics) *NotificationScheduler {
+	teams := notifTeamRepo{teams: []*domain.Team{
+		{ID: "t-msg", Slug: "messengers", Name: "Messengers"},
+		{ID: "t-wh", Slug: "webhook", Name: "Webhook"},
+	}}
+	return NewNotificationScheduler(fakeSettingsReader{notifSettings(true, "*/5 * * * *")}, teams, nodes, prom,
+		&notifSender{}, fakeLock{ok: true}, &memCheckpoint{}, "", logging.NewNoop())
+}
+
+func totalsByTeam(stats errStats) map[string]uint64 {
+	out := map[string]uint64{}
+	for _, ts := range stats.teams {
+		out[ts.slug] = ts.total
+	}
+	return out
+}
+
+// TestNotifCollect_SameNamePathsSplitByTeam (§101.9) — боевой случай: путь
+// telegram в командах messengers (1 747 ошибок) и webhook (8). До §101 ряд был
+// один, 1 755, и попадал в сумму ОБЕИХ команд. Ряды до обновления (без team)
+// приписываются только однозначному пути.
+func TestNotifCollect_SameNamePathsSplitByTeam(t *testing.T) {
+	t.Parallel()
+	nodes := notifNodeRepo{byTeam: map[string][]*domain.Node{
+		"t-msg": {{ID: "n1", Path: "telegram", TeamID: "t-msg"}, {ID: "n2", Path: "solo", TeamID: "t-msg"}},
+		"t-wh":  {{ID: "n3", Path: "telegram", TeamID: "t-wh"}},
+	}}
+	prom := notifProm{errs: map[port.NodeKey]float64{
+		{Team: "messengers", Path: "telegram"}: 1747,
+		{Team: "webhook", Path: "telegram"}:    8,
+		{Path: "telegram"}:                     412, // до §101, путь в двух командах
+		{Path: "solo"}:                         4,   // до §101, путь однозначен
+	}}
+
+	stats := collectScheduler(nodes, prom).collectErrors(context.Background(), 0, time.Hour.Milliseconds())
+
+	assert.Equal(t, map[string]uint64{"messengers": 1751, "webhook": 8}, totalsByTeam(stats))
+	assert.EqualValues(t, 1759, stats.total)
+}
+
+// Fail-closed: без полного списка узлов однозначность пути не доказать, и ряд
+// до §101 не приписывается никому.
+func TestNotifCollect_IncompleteNodeListKeepsLegacyRowsOut(t *testing.T) {
+	t.Parallel()
+	nodes := failingNodeRepo{failTeam: "t-msg", notifNodeRepo: notifNodeRepo{byTeam: map[string][]*domain.Node{
+		"t-wh": {{ID: "n3", Path: "solo", TeamID: "t-wh"}},
+	}}}
+	prom := notifProm{errs: map[port.NodeKey]float64{
+		{Team: "webhook", Path: "solo"}: 1,
+		{Path: "solo"}:                  4,
+	}}
+
+	stats := collectScheduler(nodes, prom).collectErrors(context.Background(), 0, time.Hour.Milliseconds())
+
+	assert.Equal(t, map[string]uint64{"webhook": 1}, totalsByTeam(stats))
+}

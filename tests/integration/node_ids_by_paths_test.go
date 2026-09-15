@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -15,9 +16,53 @@ import (
 	"nexus/internal/platform/logging"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
 	"nexus/internal/web/usecase"
+	"nexus/internal/web/usecase/port"
 )
 
-// TestNodeRepoIDsByPaths_E2E — §98.2: резолв «путь узла → id» для вкладки Kafka.
+// pathResolveFixture — PostgreSQL с командами и узлами для резолва путей.
+type pathResolveFixture struct {
+	nodeRepo *pgrepo.NodeRepoPg
+	mkTeam   func(slug, name string) *domain.Team
+	mkNode   func(team *domain.Team, path string) *domain.Node
+}
+
+func newPathResolveFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool) pathResolveFixture {
+	t.Helper()
+	cipher, err := crypto.NewCipher(testEncryptionKey)
+	require.NoError(t, err)
+	logger := logging.NewNoop()
+
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	nodeRepo := pgrepo.NewNodeRepoPg(pool, cipher, logger)
+	auditUC := usecase.NewAuditUsecase(pgrepo.NewAuditRepoPg(pool, logger), logger)
+	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo,
+		nil, nil, time.Minute, 0, defaultTeam, nil, logger)
+
+	return pathResolveFixture{
+		nodeRepo: nodeRepo,
+		mkTeam: func(slug, name string) *domain.Team {
+			tm := &domain.Team{Slug: slug, Name: name, CHDatabase: domain.CHDatabaseForSlug(slug)}
+			require.NoError(t, teamRepo.Create(ctx, tm))
+			return tm
+		},
+		mkNode: func(team *domain.Team, path string) *domain.Node {
+			n := &domain.Node{
+				Path:            path,
+				RootMethod:      domain.RootMethodRequestAsync,
+				URLMode:         domain.URLModeStatic,
+				TargetURL:       "https://example.test/hook",
+				TeamID:          team.ID,
+				ClickHouseTable: "logs",
+			}
+			require.NoError(t, nodeUC.Create(ctx, usecase.SystemActor(), n))
+			return n
+		},
+	}
+}
+
+// TestNodeRepoIDsByPaths_E2E — §98.2: резолв «путь узла → id» без команды.
 //
 // Проверяется на ЖИВОМ PostgreSQL, а не стабом, по двум причинам сразу.
 // Во-первых, запрос написан руками и содержит `min(id::text)`: у типа uuid
@@ -32,55 +77,60 @@ func TestNodeRepoIDsByPaths_E2E(t *testing.T) {
 
 	pool, cleanup := startPostgres(t, ctx)
 	defer cleanup()
+	fx := newPathResolveFixture(t, ctx, pool)
 
-	cipher, err := crypto.NewCipher(testEncryptionKey)
-	require.NoError(t, err)
-	logger := logging.NewNoop()
+	teamA := fx.mkTeam("kafka_a", "Kafka A")
+	teamB := fx.mkTeam("kafka_b", "Kafka B")
 
-	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
-	nodeRepo := pgrepo.NewNodeRepoPg(pool, cipher, logger)
-	auditUC := usecase.NewAuditUsecase(pgrepo.NewAuditRepoPg(pool, logger), logger)
-	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
-	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
-	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo,
-		nil, nil, time.Minute, 0, defaultTeam, nil, logger)
-
-	mkTeam := func(slug, name string) *domain.Team {
-		tm := &domain.Team{Slug: slug, Name: name, CHDatabase: domain.CHDatabaseForSlug(slug)}
-		require.NoError(t, teamRepo.Create(ctx, tm))
-		return tm
-	}
-	teamA := mkTeam("kafka_a", "Kafka A")
-	teamB := mkTeam("kafka_b", "Kafka B")
-
-	mkNode := func(team *domain.Team, path string) *domain.Node {
-		n := &domain.Node{
-			Path:            path,
-			RootMethod:      domain.RootMethodRequestAsync,
-			URLMode:         domain.URLModeStatic,
-			TargetURL:       "https://example.test/hook",
-			TeamID:          team.ID,
-			ClickHouseTable: "logs",
-		}
-		require.NoError(t, nodeUC.Create(ctx, usecase.SystemActor(), n))
-		return n
-	}
-
-	unique := mkNode(teamA, "billing")
+	unique := fx.mkNode(teamA, "billing")
 	// Один и тот же путь в двух командах: UNIQUE (team_id, path) это допускает,
-	// и именно такую строку экран обязан оставить текстом.
-	mkNode(teamA, "twin")
-	mkNode(teamB, "twin")
+	// и именно такой путь резолвер обязан не отдавать.
+	fx.mkNode(teamA, "twin")
+	fx.mkNode(teamB, "twin")
 
-	got, err := nodeRepo.IDsByPaths(ctx, []string{"billing", "twin", "never-existed"})
+	got, err := fx.nodeRepo.IDsByPaths(ctx, []string{"billing", "twin", "never-existed"})
 	require.NoError(t, err)
 
 	assert.Equal(t, unique.ID, got["billing"], "однозначный путь резолвится в свой id")
-	assert.NotContains(t, got, "twin", "путь в двух командах неоднозначен — ссылки быть не должно")
+	assert.NotContains(t, got, "twin", "путь в двух командах неоднозначен")
 	assert.NotContains(t, got, "never-existed")
 
 	// Пустой вход не должен доходить до СУБД и обязан давать пустую карту, а не nil.
-	empty, err := nodeRepo.IDsByPaths(ctx, nil)
+	empty, err := fx.nodeRepo.IDsByPaths(ctx, nil)
+	require.NoError(t, err)
+	assert.NotNil(t, empty)
+	assert.Empty(t, empty)
+}
+
+// TestNodeRepoRefsByPaths_E2E — §101.9: узлы по путям во всех командах вместе
+// со слогом команды. По этому списку экран Kafka строит ссылку по точной паре
+// (команда, путь), а рабочий стол проверяет однозначность пути для рядов до
+// §101. Запрос с JOIN teams проверяется на живой СУБД: имя колонки и тип
+// приведения `id::text` стаб не проверит. Синтаксис совместим с PostgreSQL 12.
+func TestNodeRepoRefsByPaths_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+	fx := newPathResolveFixture(t, ctx, pool)
+
+	teamA := fx.mkTeam("refs_a", "Refs A")
+	teamB := fx.mkTeam("refs_b", "Refs B")
+	solo := fx.mkNode(teamA, "solo")
+	twinA := fx.mkNode(teamA, "twin")
+	twinB := fx.mkNode(teamB, "twin")
+	fx.mkNode(teamB, "unrelated")
+
+	got, err := fx.nodeRepo.RefsByPaths(ctx, []string{"solo", "twin", "never-existed"})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []port.NodeKeyRef{
+		{ID: solo.ID, Key: port.NodeKey{Team: "refs_a", Path: "solo"}},
+		{ID: twinA.ID, Key: port.NodeKey{Team: "refs_a", Path: "twin"}},
+		{ID: twinB.ID, Key: port.NodeKey{Team: "refs_b", Path: "twin"}},
+	}, got, "одноимённые узлы — обе строки, каждая со своим слогом")
+
+	empty, err := fx.nodeRepo.RefsByPaths(ctx, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, empty)
 	assert.Empty(t, empty)

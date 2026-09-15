@@ -259,8 +259,13 @@ func (h *KafkaHandler) Topics(c *gin.Context) {
 // node_id (§98.2) отсутствует, если путь не сопоставлен ровно одному узлу:
 // узел удалён, путь занят несколькими командами, либо резолв недоступен.
 // Интерфейс тогда показывает путь текстом, а не ссылкой.
+// kafkaProducerDTO / kafkaFailureDTO — строки топов Kafka. Поля повторяют
+// usecase.NodeProducer / NodeFailure один в один: DTO получается приведением
+// типа. Team (§101.9) — слог команды узла; пуст у строки рядов, собранных до
+// §101, которую не удалось приписать узлу.
 type kafkaProducerDTO struct {
 	NodePath string  `json:"node_path"`
+	Team     string  `json:"team,omitempty"`
 	NodeID   string  `json:"node_id,omitempty"`
 	Produced uint64  `json:"produced"`
 	Share    float64 `json:"share"`
@@ -268,6 +273,7 @@ type kafkaProducerDTO struct {
 
 type kafkaFailureDTO struct {
 	NodePath string  `json:"node_path"`
+	Team     string  `json:"team,omitempty"`
 	NodeID   string  `json:"node_id,omitempty"`
 	Failed   uint64  `json:"failed"`
 	Rate     float64 `json:"rate"`

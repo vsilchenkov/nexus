@@ -5911,7 +5911,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Метка `team` во всех per-node метриках | ✅ Phase 101.4 | [node_labels.go](../internal/platform/metrics/node_labels.go) `NodeLabels` и типизированные методы, [metrics.go](../internal/platform/metrics/metrics.go) (14 векторов), [gin.go](../internal/platform/metrics/gin.go) `NodeLabelsFromGin`; запись — [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) (слог из `team_slug`), [envelope_node.go](../internal/sender/usecase/envelope_node.go) `nodeLabels`/`envelopeLabels`, [async.go](../internal/sender/usecase/async.go), [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go), [puller.go](../internal/receiver/usecase/puller.go), [handler.go](../internal/receiver/adapter/in/http/handler.go), [replay.go](../internal/web/usecase/replay.go) `nodeTeamSlug`; guard-тесты [node_labels_test.go](../internal/platform/metrics/node_labels_test.go) |
 | Рантайм-ключи Redis и pull-воркеры по `node_id` | ✅ Phase 101.5 | ключи — [nodestatus/redis.go](../internal/platform/nodestatus/redis.go) `Key`/`StreakKey`/`LegacyKey`, [circuitbreaker/redis.go](../internal/platform/circuitbreaker/redis.go) `NodeKey`; перенос — [nodestatus/migrate.go](../internal/platform/nodestatus/migrate.go) `LegacyMigrator`, [node_status_migration.go](../internal/web/usecase/node_status_migration.go), запуск в [web/app.go](../internal/web/app.go); Sender — [breaker_vote.go](../internal/sender/usecase/breaker_vote.go) `breakerKey`, [send.go](../internal/sender/usecase/send.go), [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go), [async.go](../internal/sender/usecase/async.go), [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go); Receiver — [puller_manager.go](../internal/receiver/usecase/puller_manager.go), [healthsink.go](../internal/receiver/adapter/out/rabbitmq/healthsink.go); Web — [last_outcome.go](../internal/web/usecase/last_outcome.go) `NodeRef`, [node_breaker.go](../internal/web/usecase/node_breaker.go), адаптеры [redis/](../internal/web/adapter/out/redis/); контракт писателей и читателя — [runtime_keys_test.go](../tests/contract/runtime_keys_test.go) |
 | «Очередь»: принадлежность сообщения, чтение тела | ✅ Phase 101.6 | владелец — [port/async_queue.go](../internal/web/usecase/port/async_queue.go) `QueueOwner`/`Owns`/`ErrQueueMessageNotOwned`; отбор и сверка тела — [kafkaadmin/async_queue.go](../internal/web/adapter/out/kafkaadmin/async_queue.go) `decodeQueueMeta`/`PeekBody`; однозначность пути — [async_queue.go](../internal/web/usecase/async_queue.go) `queueOwner`; тесты [port/async_queue_test.go](../internal/web/usecase/port/async_queue_test.go), [async_queue_owner_test.go](../tests/integration/async_queue_owner_test.go), сверка проекции конверта — [envelope_test.go](../tests/contract/envelope_test.go) `TestQueueEnvelopeProjectionSubsetOfCanon` |
-| Web: чтение Prometheus по (team, node) | ⛔ Phase 101.7 | — |
+| Web: чтение Prometheus по (team, node) | ✅ Phase 101.7 | порт — [port/metrics_provider.go](../internal/web/usecase/port/metrics_provider.go) `NodeKey`, [port/node_repo.go](../internal/web/usecase/port/node_repo.go) `NodeKeyResolver`; запросы — [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) `instantByNodeKey`/`teamMatcher`; узлы по путям — [postgres/node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) `RefsByPaths`; ряды до §101 — [nodekeys.go](../internal/web/usecase/nodekeys.go) `withLegacy`/`resolveLegacyOwners`; потребители — [metrics.go](../internal/web/usecase/metrics.go) `nodesOverviewProm`/`diagPrometheus`, [last_outcome.go](../internal/web/usecase/last_outcome.go), [notification.go](../internal/web/usecase/notification.go) `listTeamNodes`, [kafka_bynode.go](../internal/web/usecase/kafka_bynode.go) `foldLegacyRows`, [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go) поле `team`; тесты [nodekeys_test.go](../internal/web/usecase/nodekeys_test.go), [node_ids_by_paths_test.go](../tests/integration/node_ids_by_paths_test.go) `TestNodeRepoRefsByPaths_E2E` |
 | UI: команда в топах Kafka, снятие правила §86.8 | ⛔ Phase 101.8 | — |
 | Grafana, алерты, `make check-alerts` | ⛔ Phase 101.9 | — |
 | DEPLOYMENT, CHANGELOG | ⛔ Phase 101.10 | — |
@@ -5950,7 +5950,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   найденного узла, если резолв состоялся; иначе — путь адреса (он нужен для разбора «почему 404»).
   Сюда же попадает инфра-ошибка PostgreSQL посреди резолва — это `ErrorWithOp`, то есть Sentry.
   Warn петли §32 тоже пишется до резолва. Фильтр `diagnostics` Web по команде перенесён из 101.2 в
-  101.7: без метки `team` в рядах фильтровать нечем.
+  101.7 (без метки `team` в рядах фильтровать было нечем) и там закрыт.
 
 - **Утечка токенов найдена по дороге.** Receiver ставил `node` из хвоста адреса ДО резолва;
   у passthrough-узла `telegram` это `telegram/bot<id>:<токен>/getUpdates`. На бою
@@ -6010,8 +6010,8 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   реинъекции; раньше команда читалась только перед отправкой. Отказ резолва, как и прежде, —
   пустой слог и debug-строка.
 
-- **Чтение метрик Web пока не знает о `team`.** Выражения `sum by (node)` работают и дальше, складывая
-  команды, — прежнее поведение; разнесение по `(team, node)` — 101.7, дашборды и алерты — 101.9.
+- **Между 101.4 и 101.7 чтение метрик Web не знало о `team`.** Выражения `sum by (node)` работали и
+  дальше, складывая команды; разнесение по `(team, node)` сделано в 101.7, дашборды и алерты — 101.9.
   Сопоставления векторов (`on`, `group_left`) в клиенте Prometheus Web нет, лишняя метка его не
   ломает.
 
@@ -6027,7 +6027,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 
 - **Порт `UniqueByPaths` из плана не понадобился (101.5).** Переносу нужна карта «однозначный путь →
   id», и её уже отдаёт `IDsByPaths` (§98.2, `HAVING count(*) = 1`). Слог команды переносу не нужен;
-  JOIN teams понадобится экрану Kafka — это 101.7. Перенос проверен на настоящем Redis
+  JOIN teams понадобился экрану Kafka в 101.7 (`RefsByPaths`). Перенос проверен на настоящем Redis
   (`TestNodeStatus_LegacyMigration_Redis`): сроки ключей miniredis воспроизводит не во всём.
 
 - **Пустой `node_id` в 101.5.** Breaker работает по ключу пути (`breakerKey`), исход не пишется
@@ -6035,9 +6035,9 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   берут id узла из БД — ветка страхует выкат и в рабочем режиме не срабатывает.
 
 - **Бейдж рабочего стола сшивается по `NodeThroughputRow.NodeID` (101.5).** `LastOutcomeResolver`
-  принимает `NodeRef{ID, Path}`: Redis спрашивается по id, а Prometheus-гаудж пока по пути, потому
-  что метку `team` Web начнёт читать в 101.7. До тех пор одноимённые узлы без записи в Redis получают
-  общий fallback. Строка без id, как и раньше при «неизвестно», получает ok.
+  принимает `NodeRef`: Redis спрашивается по id. Prometheus-гаудж до 101.7 читался по пути, и
+  одноимённые узлы без записи в Redis получали общий fallback; с 101.7 — по паре (`NodeRef.TeamID`).
+  Строка без id, как и раньше при «неизвестно», получает ok.
 
 - **Карта pull-воркеров — по id (101.5).** `desired[n.Path]` оставлял один из одноимённых узлов без
   воркера — его очередь не читал никто, хотя lease уже был по id. Переименование узла по-прежнему
@@ -6078,3 +6078,47 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   без `node_id`, список без сверки владельца, старые конверты «свои всегда», проекция без `node_id`,
   чужое сообщение не 404, `Body` без владельца в usecase и `PeekBody` без сверки `node_id` (последнее
   ловит только integration-тест на живом Kafka).
+
+- **Резолвер узлов для метрик отдаёт все узлы с путём, а не id по паре (101.7).** План предлагал
+  `RefsByKeys`, но потребителям нужны два ответа из одних данных: id по точной паре `(слог, путь)` для
+  ссылки и «путь один во всём инстансе» для рядов до §101. `NodeKeyResolver.RefsByPaths` (JOIN teams,
+  `path = ANY($1)`, синтаксис PostgreSQL 12) отдаёт полный список, однозначность считает
+  `uniquePathOwners`. `IDsByPaths` остался «Очереди» и переносу ключей Redis.
+
+- **Ряды до §101 (`team=""`) приписываются только счётчикам и только однозначному пути (101.7).**
+  `withLegacy` прибавляет ряд без команды, если единственный во всём инстансе узел с этим путём —
+  именно этот ключ. p95 и гаудж не складываются, спарклайн тоже: `NodeSeries` отдаёт точки без меток
+  времени, а ряд до §101 обрывается на выкате, и сложение сдвинуло бы точки. Fail-closed: нет
+  резолвера, упал PostgreSQL, список узлов уведомлений неполон — ряд не приписывается никому. К
+  PostgreSQL обращаются, только когда такие ряды есть в окне, то есть в окнах, захватывающих выкат.
+
+- **Узел без известного слога получает нули (101.7).** Слог — `teams.List` по `team_id`. Ключ с
+  пустым слогом не читается вовсе: это ряд до §101, и без проверки однозначности он мог принадлежать
+  любому из одноимённых узлов. Сбой справочника команд — warn и нули, а не прежняя склейка.
+
+- **Топы Kafka сворачивают ряды до §101 до отбора top-N (101.7).** Свёртка меняет числа и порядок.
+  Ряд неоднозначного пути остаётся строкой с пустым `team` и без ссылки — строка «без команды» из
+  эскиза §101.10. `foldLegacyRows` меняет карту Prometheus на месте: адаптер создаёт её на каждый
+  запрос. Поле `team` добавлено в `kafkaProducerDTO`/`kafkaFailureDTO` в той же позиции, что в
+  usecase-структурах: DTO получается приведением типа, и порядок полей обязан совпадать.
+
+- **Диагностика: Prometheus-сторона — по слогу команды сессии (101.7).** `GlobalTotals(ctx, window,
+  team)` добавляет матчер `team="<слог>"`; per-node — только ключи со слогом команды; «сироты» — её
+  переименованные и удалённые узлы, по порядку пути. Без известного слога (сессия без текущей
+  команды) сторона не заполняется и `prometheus_available=false`: сравнивать ClickHouse одной команды
+  не с чем, а ряды всех команд вернули бы утечку путей.
+
+- **`LastOutcomeResolver` получил справочник команд (101.7).** Ключ гауджа — пара, а у узла есть
+  только `team_id`. Список команд читается, лишь когда Prometheus вернул гауджи, — на рабочем столе
+  это один лёгкий запрос на опрос; кеш с инвалидацией при создании команды стоил бы дороже.
+
+- **Удалены `NodeKPI`/`NodeChart` Prometheus-клиента (101.7).** Вызовов не было с §44; вместе с ними
+  ушли `rangeSeriesValues` и `nonNegU64`. Тип `port.NodeKPI` остался — его отдаёт ClickHouse.
+
+- **Red-проверка 101.7.** Откат каждой из 17 правок к поведению до §101 делает тест красным: в
+  клиенте — ключ без `team`, `NodeErrors` `by (node)`, итоги без матчера команды; в свёртке — ряд до
+  §101 прибавляется всегда, читается ключ без слога, путь двух команд считается однозначным; слог не
+  своей команды на рабочем столе и в бейдже; уведомления со слогом первой команды и однозначностью
+  по неполному списку; диагностика с «сиротами» всех команд, итогами без слога и без пропуска
+  неизвестного слога; топы Kafka с id по пути, без свёртки и с запросом строк без команды;
+  `RefsByPaths`, отдающий только однозначные пути (ловит integration-тест на живом PostgreSQL).

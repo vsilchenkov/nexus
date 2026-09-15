@@ -2569,7 +2569,7 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы (ретраи → outgoing\u003eincoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих; занижение increase). Деградирует при недоступном источнике.",
+                "description": "Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы (ретраи → outgoing\u003eincoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих; занижение increase). Prometheus-сторона — только ряды текущей команды (§101.9): итоги по её слогу, «узлы только в Prometheus» — её переименованные и удалённые узлы; без текущей команды сторона пуста. Деградирует при недоступном источнике.",
                 "produces": [
                     "application/json"
                 ],
@@ -9480,6 +9480,9 @@ const docTemplate = `{
                 },
                 "rate": {
                     "type": "number"
+                },
+                "team": {
+                    "type": "string"
                 }
             }
         },
@@ -9559,6 +9562,9 @@ const docTemplate = `{
                 },
                 "share": {
                     "type": "number"
+                },
+                "team": {
+                    "type": "string"
                 }
             }
         },
