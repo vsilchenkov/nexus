@@ -3,7 +3,6 @@ package usecase
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -109,20 +108,10 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 		return ReprocessCommit
 	}
 
-	// §36.3 шаг1: резолв узла.
-	node, err := r.nodes.GetByPath(ctx, env.NodePath)
-	if err != nil {
-		if errors.Is(err, domain.ErrNodeNotFound) {
-			r.logger.Info("dlq drop: unknown node",
-				r.logger.Str("node_path", env.NodePath),
-				r.logger.Str("id", env.ID))
-			r.record(env.NodePath, reprocessDropped)
-			return ReprocessCommit
-		}
-		// Транзиентная ошибка чтения — не коммитим, попробуем в другой раз.
-		r.logger.ErrorWithOp("dlq node read failed", err, "dlq.reprocess",
-			r.logger.Str("node_path", env.NodePath))
-		return ReprocessRetry
+	// §36.3 шаг1: резолв узла (§101.5: по node_id конверта).
+	node, res, ok := r.nodeForEnvelope(ctx, env)
+	if !ok {
+		return res
 	}
 
 	// §36.3 шаг2: tombstone (оператор отменил сообщение через UI, §34.4).
@@ -252,14 +241,14 @@ func (r *DLQReprocessor) republish(ctx context.Context, raw []byte, env Envelope
 	if p.incAttempts {
 		attempts++
 	}
-	hdrs := map[string]string{
+	hdrs := withNodeIdentity(map[string]string{
 		"id":              env.ID,
 		"node_path":       env.NodePath,
 		"orig_topic":      headerOr(inHeaders, "orig_topic", "nexus.async"),
 		"reason":          p.reason,
 		"last_attempt_at": r.clock.Now().UTC().Format(time.RFC3339Nano),
 		"attempts":        strconv.Itoa(attempts),
-	}
+	}, env)
 	if !p.nextAttemptAt.IsZero() {
 		hdrs["next_attempt_at"] = p.nextAttemptAt.UTC().Format(time.RFC3339Nano)
 	}

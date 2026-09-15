@@ -53,7 +53,7 @@ func (p *AsyncProcessor) dropNotAsync(ctx context.Context, raw []byte, env Envel
 		p.logger.Str("id", env.ID),
 		p.logger.Str("reason", reason))
 
-	hdrs := map[string]string{
+	hdrs := withNodeIdentity(map[string]string{
 		"id":         env.ID,
 		"node_path":  env.NodePath,
 		"orig_topic": "nexus.async",
@@ -62,7 +62,7 @@ func (p *AsyncProcessor) dropNotAsync(ctx context.Context, raw []byte, env Envel
 		// здесь: иначе отбой по гейту неотличим от обычной ошибки доставки.
 		"reason":          reason,
 		"last_attempt_at": time.Now().UTC().Format(time.RFC3339Nano),
-	}
+	}, env)
 	if err := p.dlq.Produce(ctx, p.dlqTopic, env.NodePath, raw, hdrs); err != nil {
 		p.logger.ErrorWithOp("dlq publish failed", err, "async.dropNotAsync",
 			p.logger.Str("id", env.ID))

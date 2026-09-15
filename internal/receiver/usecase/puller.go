@@ -251,6 +251,8 @@ func (w *PullerWorker) handleDelivery(ctx context.Context, msg RMQDelivery) {
 	headers := map[string]string{
 		"id":        w.msgID(msg),
 		"node_path": w.node.Path,
+		"node_id":   w.node.ID, // §101.7
+		"team":      w.node.TeamSlug,
 		"attempt":   "0",
 	}
 	produceCtx, finish := otelpf.StartKafkaProducerSpan(ctx, w.asyncTopic)
@@ -313,6 +315,8 @@ func (w *PullerWorker) buildPayload(msg RMQDelivery) ([]byte, error) {
 	env := &Envelope{
 		ID:         w.msgID(msg),
 		NodePath:   w.node.Path,
+		NodeID:     w.node.ID, // §101.7: одноимённые pull-узлы различают только id и слог
+		Team:       w.node.TeamSlug,
 		Method:     outMethod,
 		TargetURL:  targetURL,
 		AuthHeader: authHeader,

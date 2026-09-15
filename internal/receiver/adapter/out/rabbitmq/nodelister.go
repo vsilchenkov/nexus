@@ -37,8 +37,10 @@ SELECT
 	n.forward_headers, n.status,
 	n.rmq_host, n.rmq_port, n.rmq_vhost, n.rmq_user, n.rmq_password, n.rmq_queue, n.rmq_use_tls,
 	n.pull_interval_sec, n.pull_batch_size, n.pull_prefetch,
-	n.updated_at
+	n.updated_at,
+	t.slug
 FROM nodes n
+JOIN teams t ON t.id = n.team_id
 WHERE n.root_method = 'RabbitMQAsync' AND n.status <> 'disabled'`
 
 // ListRabbitMQAsync возвращает активные (не disabled) узлы RabbitMQAsync.
@@ -46,6 +48,10 @@ WHERE n.root_method = 'RabbitMQAsync' AND n.status <> 'disabled'`
 // В v1 paused-узел не забирается (его пропускает Sender как async paused). Но
 // чтобы не плодить дубли логики, paused-узлы исключаем из поллинга на уровне
 // менеджера — см. ниже фильтр по статусу.
+//
+// §101.7: вместе с узлом выбирается слог его команды (domain.Node.TeamSlug):
+// путь уникален лишь внутри команды, и без слога конверты одноимённых
+// pull-узлов неразличимы.
 func (l *NodeLister) ListRabbitMQAsync(ctx context.Context) ([]*domain.Node, error) {
 	rows, err := l.pg.Query(ctx, selectPullNodes)
 	if err != nil {
@@ -67,6 +73,7 @@ func (l *NodeLister) ListRabbitMQAsync(ctx context.Context) ([]*domain.Node, err
 			&n.RMQHost, &n.RMQPort, &n.RMQVHost, &n.RMQUser, &encRMQ, &n.RMQQueue, &n.RMQUseTLS,
 			&n.PullIntervalSec, &n.PullBatchSize, &n.PullPrefetch,
 			&updated,
+			&n.TeamSlug,
 		); err != nil {
 			return nil, fmt.Errorf("scan rabbitmq node: %w", err)
 		}

@@ -47,8 +47,12 @@ func (scenarioLogWriter) Flush(context.Context) error                      { ret
 // scenarioNodeReader — фиксированный узел.
 type scenarioNodeReader struct{ node *domain.Node }
 
-func (r *scenarioNodeReader) GetByPath(context.Context, string) (*domain.Node, error) {
+func (r *scenarioNodeReader) GetByID(context.Context, string) (*domain.Node, error) {
 	return r.node, nil
+}
+
+func (r *scenarioNodeReader) ListByPath(context.Context, string) ([]*domain.Node, error) {
+	return []*domain.Node{r.node}, nil
 }
 
 // scenarioDLQ — no-op DLQProducer (не-2xx уходят в DLQ, здесь это не предмет проверки).

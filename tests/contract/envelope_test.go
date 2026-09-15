@@ -91,6 +91,8 @@ func TestAsyncEnvelopeRoundTrip(t *testing.T) {
 	src := receiverusecase.Envelope{
 		ID:          "01J0",
 		NodePath:    "partner/orders",
+		NodeID:      "7d0b6f4e-8a51-4d3e-9c1a-2f0e5b7c9d10",
+		Team:        "partner",
 		Method:      "POST",
 		TargetURL:   "https://example.test/api?x=1",
 		AuthHeader:  "Bearer t",
@@ -112,6 +114,10 @@ func TestAsyncEnvelopeRoundTrip(t *testing.T) {
 	requireJSONRoundTrip(t, src, &dst)
 
 	assert.Equal(t, src.ID, dst.ID)
+	// §101.4: без node_id Sender искал бы узел по пути, а он уникален лишь
+	// внутри команды.
+	assert.Equal(t, src.NodeID, dst.NodeID)
+	assert.Equal(t, src.Team, dst.Team)
 	assert.Equal(t, src.TargetURL, dst.TargetURL)
 	assert.Equal(t, src.Headers, dst.Headers)
 	assert.Equal(t, src.Body, dst.Body)

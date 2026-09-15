@@ -16,8 +16,15 @@ import (
 
 // NodeReader — interface чтения актуального узла перед обработкой
 // сообщения (sender перечитывает status/retry на каждое сообщение).
+//
+// §101.5: узел ищется по id из конверта. Путь — только у конвертов, записанных
+// до §101, и он может быть занят узлами нескольких команд.
 type NodeReader interface {
-	GetByPath(ctx context.Context, path string) (*domain.Node, error)
+	// GetByID — узел по id; нет узла — domain.ErrNodeNotFound.
+	GetByID(ctx context.Context, id string) (*domain.Node, error)
+	// ListByPath — все узлы с этим путём во всех командах; нет ни одного —
+	// пустой список без ошибки.
+	ListByPath(ctx context.Context, path string) ([]*domain.Node, error)
 }
 
 // DLQProducer — publish failed message в nexus.async.dlq.
@@ -158,17 +165,10 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		return HandleAck // не повторяем — это битое сообщение
 	}
 
-	node, err := p.nodes.GetByPath(ctx, env.NodePath)
-	if err != nil {
-		if errors.Is(err, domain.ErrNodeNotFound) {
-			p.logger.Warn("async message for unknown node, dropping",
-				p.logger.Str("node_path", env.NodePath),
-				p.logger.Str("id", env.ID))
-			return HandleAck
-		}
-		p.logger.ErrorWithOp("node read failed", err, "async.Handle",
-			p.logger.Str("node_path", env.NodePath))
-		return HandleRetry
+	// §101.5: узел — по node_id конверта; по пути — только у конвертов до §101.
+	node, res, ok := p.nodeForEnvelope(ctx, raw, env)
+	if !ok {
+		return res
 	}
 	if node.Status == domain.NodeStatusDisabled {
 		p.logger.Info("async drop: node disabled",
@@ -359,23 +359,23 @@ func (p *AsyncProcessor) pausedHeaders(env Envelope, in map[string]string) map[s
 	if since == "" {
 		since = now
 	}
-	return map[string]string{
+	return withNodeIdentity(map[string]string{
 		"id":              env.ID,
 		"node_path":       env.NodePath,
 		"orig_topic":      headerOr(in, "orig_topic", "nexus.async"),
 		"paused_since":    since,
 		"last_requeue_at": now,
-	}
+	}, env)
 }
 
 func (p *AsyncProcessor) publishDLQ(ctx context.Context, raw []byte, env Envelope, out SendOutput) error {
-	hdrs := map[string]string{
+	hdrs := withNodeIdentity(map[string]string{
 		"id":         env.ID,
 		"node_path":  env.NodePath,
 		"orig_topic": "nexus.async",
 		"reason": fmt.Sprintf("status=%d attempts=%d duration_ms=%d err=%s",
 			out.StatusCode, out.Attempts, out.DurationMs, out.Error),
 		"last_attempt_at": time.Now().UTC().Format(time.RFC3339Nano),
-	}
+	}, env)
 	return p.dlq.Produce(ctx, p.dlqTopic, env.NodePath, raw, hdrs)
 }

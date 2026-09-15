@@ -16,14 +16,52 @@ import (
 	"nexus/internal/sender/usecase/port"
 )
 
-// stubNodeReader — fake реализация NodeReader.
+// stubAsyncNodeReader — fake реализация NodeReader.
+//
+// node — единственный узел: отдаётся на любой id и любой путь (так тесты
+// жили до §101, когда ридер искал только по пути). nodes — несколько узлов
+// (одноимённые в разных командах, §101.5): поиск честный, по id и по пути.
 type stubAsyncNodeReader struct {
-	node *domain.Node
-	err  error
+	node  *domain.Node
+	nodes []*domain.Node
+	err   error
 }
 
-func (s *stubAsyncNodeReader) GetByPath(_ context.Context, _ string) (*domain.Node, error) {
-	return s.node, s.err
+func (s *stubAsyncNodeReader) GetByID(_ context.Context, id string) (*domain.Node, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.nodes == nil && s.node != nil {
+		return s.node, nil
+	}
+	for _, n := range s.nodes {
+		if n.ID == id {
+			return n, nil
+		}
+	}
+	return nil, domain.ErrNodeNotFound
+}
+
+func (s *stubAsyncNodeReader) ListByPath(_ context.Context, path string) ([]*domain.Node, error) {
+	if errors.Is(s.err, domain.ErrNodeNotFound) {
+		return nil, nil // у списка «узла нет» — пустой результат, а не ошибка
+	}
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.nodes == nil {
+		if s.node == nil {
+			return nil, nil
+		}
+		return []*domain.Node{s.node}, nil
+	}
+	var out []*domain.Node
+	for _, n := range s.nodes {
+		if n.Path == path {
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 // stubDLQProducer — собирает все производства DLQ для проверки.

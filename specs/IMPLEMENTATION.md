@@ -5907,7 +5907,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 |---|---|---|
 | ТЗ §101, правки контрактов §6/§78/§86.8/§94.8/§98.2 | ✅ Phase 101.1 | [sections/101-team-node-identity.md](sections/101-team-node-identity.md) |
 | Receiver: метки после резолва (утечка токенов) | ✅ Phase 101.2 | [resolver.go](../internal/receiver/usecase/resolver.go) (слог найденного узла), [route.go](../internal/receiver/usecase/route.go) `RouteInput.OnNodeResolved`, [handler.go](../internal/receiver/adapter/in/http/handler.go) `nodeLabelSetter`/`nodeForLog`, [metrics/gin.go](../internal/platform/metrics/gin.go) `TeamLabelKey`, [sentry/middleware.go](../internal/platform/sentry/middleware.go); тест [handler_labels_test.go](../internal/receiver/adapter/in/http/handler_labels_test.go) |
-| Контракт доставки `node_id`/`team`, Sender ищет узел по id | ⛔ Phase 101.3 | — |
+| Контракт доставки `node_id`/`team`, Sender ищет узел по id | ✅ Phase 101.3 | [sender.proto](../proto/sender/v1/sender.proto) `team_slug = 33`; конверт `node_id`/`team` — [envelope.go](../internal/receiver/usecase/envelope.go), [async_envelope.go](../internal/sender/usecase/async_envelope.go); заголовки Kafka — [route_async.go](../internal/receiver/usecase/route_async.go), [puller.go](../internal/receiver/usecase/puller.go), `withNodeIdentity`; слог pull-узла — [nodelister.go](../internal/receiver/adapter/out/rabbitmq/nodelister.go); выбор узла — [envelope_node.go](../internal/sender/usecase/envelope_node.go) `resolveEnvelopeNode`/`ErrNodeAmbiguous`, [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `GetByID`/`ListByPath`; тесты [envelope_node_test.go](../internal/sender/usecase/envelope_node_test.go), [route_identity_test.go](../internal/receiver/usecase/route_identity_test.go), [node_identity_test.go](../tests/integration/node_identity_test.go), [tests/contract/envelope_test.go](../tests/contract/envelope_test.go) |
 | Метка `team` во всех per-node метриках | ⛔ Phase 101.4 | — |
 | Рантайм-ключи Redis и pull-воркеры по `node_id` | ⛔ Phase 101.5 | — |
 | «Очередь»: принадлежность сообщения, чтение тела | ⛔ Phase 101.6 | — |
@@ -5956,6 +5956,37 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   у passthrough-узла `telegram` это `telegram/bot<id>:<токен>/getUpdates`. На бою
   `/api/metrics/diagnostics` под токеном одной команды вернул 393 пути всех команд и 31 ряд с
   токенами. Уже собранные ряды код не удаляет — процедура в DEPLOYMENT.
+
+- **Sender берёт узел из `node_id` конверта, путь — только у старых конвертов (101.3).** Старый
+  конверт ищется `ListByPath` по всем командам: ни одного узла — отброс, один — доставка, несколько —
+  основной consumer шлёт его в DLQ с `reason=node_ambiguous`, репроцессор сбрасывает с
+  `result="dropped"`. Сразу сбрасывать нельзя: DLQ оставляет сообщение видимым оператору, а сброс
+  репроцессором попадает в алерт потерь. Ошибка чтения PostgreSQL не маскируется под «узла нет» —
+  сообщение повторяется.
+
+- **`node_id` проверяется строго: 36 символов и `uuid.Parse`.** Одного `uuid.Parse` мало: он
+  принимает `urn:uuid:…`, `{…}` и запись без дефисов, а PostgreSQL на `urn:uuid:` отвечает ошибкой
+  синтаксиса — её не отличить от сбоя БД, и сообщение повторялось бы вечно. Receiver пишет id из
+  PostgreSQL, то есть всегда в каноническом виде; всё прочее — «узла нет».
+
+- **Старый конверт не «прибивается» к найденному узлу.** В DLQ и paused-топик он уходит байт в байт,
+  без `node_id`. Если за время его жизни в очереди появится одноимённый узел другой команды,
+  следующий проход сочтёт конверт неоднозначным и сбросит. Переписывать конверт ради конечного
+  множества старых сообщений — лишняя ветка на горячем пути; окно ограничено TTL DLQ.
+
+- **`TeamSlug` положен в `domain.Node`, а не в обёртку `PullNode{Node, TeamSlug}` из плана.** Оба
+  читателя — `nodepg` Sender'а и `NodeLister` pull-узлов — выбирают слог тем же запросом (JOIN
+  teams), а обёртка протянулась бы через карты `puller_manager` и конструкторы воркеров, которые
+  101.5 и так переписывает. Репозитории Web поле не заполняют — это записано в godoc.
+
+- **Слог в конверте — на момент приёма, узел в Sender — текущий.** После `NodeUsecase.Move` конверт
+  несёт прежний слог, но исполняет его узел по id со слогом из БД; метки 101.4 берут слог узла.
+  Заголовок `team` в копиях DLQ/paused повторяет конверт — это след «где принято», а не адрес.
+
+- **Отложено из 101.3.** `queueEnvelope.node_id` и сверка web-проекции конверта с каноном — в 101.6,
+  где их использует проверка владельца сообщения. `SendInput.TeamSlug` на стороне gRPC-сервера — в
+  101.4: поле нужно только меткам. Заголовки `node_id`/`team` пока никто не читает: consumer
+  Sender'а берёт узел из тела конверта, заголовки нужны «Очереди» (101.6) и оператору с `kcat`.
 
 - **IDOR во вкладке «Очередь».** `GET …/queue/body` проверял доступ к узлу из адреса, а сообщение
   читал по `(topic, partition, offset)` из запроса без сверки владельца — тело чужого сообщения

@@ -19,8 +19,8 @@ import (
 	"nexus/internal/platform/logging"
 )
 
-// Reader реализует тот же контракт port.NodeReader, что и в Receiver,
-// но идёт сразу в Postgres.
+// Reader реализует usecase.NodeReader Sender'а: узел читается сразу из
+// Postgres, вместе со слогом его команды.
 type Reader struct {
 	pg     *pgxpool.Pool
 	cipher *crypto.Cipher
@@ -31,29 +31,71 @@ func New(pg *pgxpool.Pool, cipher *crypto.Cipher, logger logging.Logger) *Reader
 	return &Reader{pg: pg, cipher: cipher, logger: logger}
 }
 
-const selectByPath = `
+// selectNodes — колонки узла и слог его команды (§101.4). Порядок колонок
+// держит scanNode: расхождение SELECT и Scan видно только в рантайме.
+const selectNodes = `
 SELECT
-	id, path, root_method,
-	url_mode, target_url, url_param_name, url_allowed_hosts,
-	auth_type, auth_credentials,
-	auth_dynamic_source, auth_dynamic_field, auth_dynamic_strip_prefix,
-	incoming_auth_type, incoming_auth_credentials,
-	webhook_signature_header, webhook_signature_prefix,
-	forward_headers, timeout_ms, retry_count, retry_backoff_ms,
-	clickhouse_table, status, team_id,
-	log_request_body, log_response_body, log_headers,
-	logging_enabled, max_body_size_enabled, max_body_size,
-	created_at, updated_at,
-	incoming_method, outgoing_method,
-	dlq_ttl_seconds, dlq_retry_delay_seconds,
-	circuit_breaker_threshold, circuit_breaker_cooldown_sec
-FROM nodes WHERE path = $1`
+	n.id, n.path, n.root_method,
+	n.url_mode, n.target_url, n.url_param_name, n.url_allowed_hosts,
+	n.auth_type, n.auth_credentials,
+	n.auth_dynamic_source, n.auth_dynamic_field, n.auth_dynamic_strip_prefix,
+	n.incoming_auth_type, n.incoming_auth_credentials,
+	n.webhook_signature_header, n.webhook_signature_prefix,
+	n.forward_headers, n.timeout_ms, n.retry_count, n.retry_backoff_ms,
+	n.clickhouse_table, n.status, n.team_id, t.slug,
+	n.log_request_body, n.log_response_body, n.log_headers,
+	n.logging_enabled, n.max_body_size_enabled, n.max_body_size,
+	n.created_at, n.updated_at,
+	n.incoming_method, n.outgoing_method,
+	n.dlq_ttl_seconds, n.dlq_retry_delay_seconds,
+	n.circuit_breaker_threshold, n.circuit_breaker_cooldown_sec
+FROM nodes n
+JOIN teams t ON t.id = n.team_id`
 
-// GetByPath возвращает актуальный конфиг узла. Использует sender'ом
-// перед обработкой каждого Kafka-сообщения, чтобы видеть свежий
-// status (enabled/disabled/paused) и retry-параметры.
-func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, error) {
-	row := r.pg.QueryRow(ctx, selectByPath, path)
+// GetByID возвращает актуальный конфиг узла по id (§101.5). Sender вызывает его
+// перед обработкой каждого Kafka-сообщения, чтобы видеть свежий status
+// (enabled/disabled/paused) и retry-параметры.
+//
+// id обязан быть UUID: проверку делает usecase. Иначе PostgreSQL ответил бы
+// ошибкой синтаксиса, неотличимой от сбоя БД, и сообщение повторялось бы вечно.
+func (r *Reader) GetByID(ctx context.Context, id string) (*domain.Node, error) {
+	n, err := r.scanNode(r.pg.QueryRow(ctx, selectNodes+` WHERE n.id = $1::uuid`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNodeNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get node %s: %w", id, err)
+	}
+	return n, nil
+}
+
+// ListByPath возвращает узлы с путём path во ВСЕХ командах (§101.5): путь
+// уникален лишь внутри команды. Нужен конвертам, записанным до §101, — у них
+// нет node_id. Порядок по слогу команды — чтобы логи были воспроизводимы.
+func (r *Reader) ListByPath(ctx context.Context, path string) ([]*domain.Node, error) {
+	rows, err := r.pg.Query(ctx, selectNodes+` WHERE n.path = $1 ORDER BY t.slug`, path)
+	if err != nil {
+		return nil, fmt.Errorf("list nodes by path %s: %w", path, err)
+	}
+	defer rows.Close()
+
+	var out []*domain.Node
+	for rows.Next() {
+		n, err := r.scanNode(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan node %s: %w", path, err)
+		}
+		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list nodes by path %s: %w", path, err)
+	}
+	return out, nil
+}
+
+// scanNode читает одну строку selectNodes и расшифровывает креды. Ошибку Scan
+// (включая pgx.ErrNoRows) возвращает как есть — контекст добавляет вызывающий.
+func (r *Reader) scanNode(row pgx.Row) (*domain.Node, error) {
 	var n domain.Node
 	var rootMethod, urlMode, authType, authDynSrc, incomingAuth, status string
 	var incomingMethod, outgoingMethod string
@@ -70,20 +112,16 @@ func (r *Reader) GetByPath(ctx context.Context, path string) (*domain.Node, erro
 		&incomingAuth, &encInc,
 		&n.WebhookSignatureHeader, &n.WebhookSignaturePrefix,
 		&n.ForwardHeaders, &n.TimeoutMs, &n.RetryCount, &n.RetryBackoffMs,
-		&n.ClickHouseTable, &status, &n.TeamID,
+		&n.ClickHouseTable, &status, &n.TeamID, &n.TeamSlug,
 		&n.LogRequestBody, &n.LogResponseBody, &n.LogHeaders,
 		&n.LoggingEnabled, &n.MaxBodySizeEnabled, &n.MaxBodySize,
 		&created, &updated,
 		&incomingMethod, &outgoingMethod,
 		&n.DLQTTLSeconds, &n.DLQRetryDelaySeconds,
-		// §81.3: NULL = «глобальная политика», поэтому через указатели.
 		&cbThreshold, &cbCooldown,
 	)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, domain.ErrNodeNotFound
-		}
-		return nil, fmt.Errorf("scan node %s: %w", path, err)
+		return nil, err
 	}
 
 	// §81.3: NULL в БД → 0 в домене → «использовать глобальную политику».

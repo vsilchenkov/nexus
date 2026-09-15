@@ -121,7 +121,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		return nil, err
 	}
 
-	req, err := u.buildSendRequest(node, in, remainder, hop)
+	req, err := u.buildSendRequest(node, in, teamSlug, remainder, hop)
 	if err != nil {
 		return nil, err
 	}
@@ -199,9 +199,11 @@ func checkNodeAcceptsSync(node *domain.Node, in RouteInput) error {
 
 // buildSendRequest собирает gRPC-запрос к Sender: исходящая авторизация,
 // целевой URL с хвостом path-passthrough и query, forward-заголовки.
+// teamSlug — слог команды, в которой узел найден (§101.4).
 func (u *RouteUsecase) buildSendRequest(
 	node *domain.Node,
 	in RouteInput,
+	teamSlug string,
 	remainder string,
 	hop int,
 ) (*senderv1.SendRequest, error) {
@@ -251,6 +253,7 @@ func (u *RouteUsecase) buildSendRequest(
 		Id:                 uuid.NewString(),
 		NodePath:           node.Path,
 		NodeId:             node.ID,
+		TeamSlug:           teamSlug, // §101.4: sync-путь узел в Sender не ищет — слог несёт запрос
 		TargetUrl:          finalURL,
 		Method:             EffectiveOutgoingMethod(node, in.Method),
 		RequestPath:        remainder,
