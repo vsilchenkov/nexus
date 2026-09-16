@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { MemoryRouter } from "react-router-dom";
 
-import { MethodsChart, METHOD_ROWS_DEFAULT, type MethodStat } from "./MethodsChart";
+import { MethodsChart, METHOD_ROWS_DEFAULT, METHOD_ROWS_STEP, type MethodStat } from "./MethodsChart";
 
 // §102: рейтинг «Запросы по методам».
 //
@@ -151,7 +151,7 @@ describe("MethodsChart: строка «Остальные» (§102.3)", () => {
 describe("MethodsChart: «Показать ещё» (§102.5)", () => {
   const many: MethodStat[] = Array.from({ length: 12 }, (_, i) => m(`v1/m${i}`, 100 - i));
 
-  it("до раскрытия видно восемь строк, после — все", () => {
+  it("до раскрытия видно восемь строк, после — ещё восемь (здесь это весь список)", () => {
     const total = many.reduce((s, x) => s + x.total, 0);
     renderChart({ data: many, total, delivered: total });
     expect(screen.getAllByRole("link")).toHaveLength(METHOD_ROWS_DEFAULT);
@@ -170,7 +170,7 @@ describe("MethodsChart: «Показать ещё» (§102.5)", () => {
   });
 
   it("«Свернуть» возвращает рейтинг к восьми строкам и пересчитанной свёртке", () => {
-    // Раскрытие обязано быть обратимым: двадцать строк вытесняют латентность и
+    // Раскрытие обязано быть обратимым: длинный рейтинг вытесняет латентность и
     // ёмкость за край экрана, а другого способа вернуться, кроме перезагрузки
     // страницы, у пользователя нет.
     const total = many.reduce((s, x) => s + x.total, 0);
@@ -191,6 +191,46 @@ describe("MethodsChart: «Показать ещё» (§102.5)", () => {
     renderChart({ data: nine });
     expect(screen.getAllByRole("link")).toHaveLength(nine.length);
     expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("кнопка не уходит, пока есть непоказанные методы: список доводится до конца кликами", () => {
+    // Раскрытие пошаговое, а не «сразу всё»: тридцать методов открываются
+    // 8 → 16 → 24 → 30, и «Показать ещё» исчезает ровно тогда, когда
+    // непоказанных не осталось. Иначе часть методов не увидеть вовсе.
+    const thirty: MethodStat[] = Array.from({ length: 30 }, (_, i) => m(`v1/m${i}`, 100 - i));
+    const total = thirty.reduce((s, x) => s + x.total, 0);
+    renderChart({ data: thirty, total, delivered: total });
+
+    const more = () => screen.queryByRole("button", { name: "metrics.methods.show_more" });
+    const rows = () => screen.getAllByRole("link").length;
+
+    expect(rows()).toBe(METHOD_ROWS_DEFAULT);
+    for (const want of [
+      METHOD_ROWS_DEFAULT + METHOD_ROWS_STEP,
+      METHOD_ROWS_DEFAULT + 2 * METHOD_ROWS_STEP,
+      thirty.length,
+    ]) {
+      const btn = more();
+      expect(btn).toBeTruthy();
+      fireEvent.click(btn!);
+      expect(rows()).toBe(want);
+    }
+    // Непоказанных не осталось — кнопка сменилась на «Свернуть».
+    expect(more()).toBeNull();
+    expect(screen.getByRole("button", { name: "metrics.methods.show_less" })).toBeTruthy();
+    // И свёртки «Остальные» больше нет: остаток ушёл в ноль.
+    expect(screen.queryByText("metrics.methods.others")).toBeNull();
+  });
+
+  it("при усечении на сервере «Остальные» остаётся и после полного раскрытия", () => {
+    // Сервер отдал свой максимум и сказал, что методов больше: раскрытие
+    // доводит до конца ПРИСЛАННОГО списка, а хвост честно остаётся свёрткой.
+    const ten: MethodStat[] = Array.from({ length: 10 }, (_, i) => m(`v1/m${i}`, 10));
+    renderChart({ data: ten, total: 200, delivered: 200, truncated: true });
+    fireEvent.click(screen.getByRole("button", { name: "metrics.methods.show_more" }));
+    expect(screen.getAllByRole("link")).toHaveLength(ten.length);
+    expect(screen.getByText("metrics.methods.others")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "metrics.methods.show_more" })).toBeNull();
   });
 
   it("кнопка стоит ВНЕ строк-ссылок", () => {

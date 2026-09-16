@@ -15,11 +15,13 @@ export type MethodStat = { method: string; total: number; delivered: number };
 const C_OK = "#5b9bf0";
 const C_ERR = "#e85d5c";
 
-// METHOD_ROWS_DEFAULT / METHOD_ROWS_MAX — §102.5: восемь строк помещаются в карточку без
-// прокрутки и покрывают типичный passthrough-узел; «Показать ещё» раскрывает до
-// двадцати — столько отдаёт сервер (MethodsLimit).
+// METHOD_ROWS_DEFAULT / METHOD_ROWS_STEP — §102.5: восемь строк помещаются в карточку
+// без прокрутки и покрывают типичный passthrough-узел; «Показать ещё» добавляет
+// столько же и остаётся на месте, пока есть непоказанные методы, — так до конца
+// списка (сервер отдаёт до usecase.MethodsLimit строк) доходят кнопкой, а не
+// отдельной страницей.
 export const METHOD_ROWS_DEFAULT = 8;
-export const METHOD_ROWS_MAX = 20;
+export const METHOD_ROWS_STEP = 8;
 
 // LABEL_CHARS — бюджет символов на имя метода в строке. Считается посимвольно,
 // а не CSS-обрезкой: у символьного правила есть тест, у раскладки в jsdom его
@@ -70,13 +72,15 @@ export function MethodsChart({
   className?: string;
 }) {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
+  // rowsLimit — сколько строк показано сейчас; растёт шагами по клику и
+  // возвращается к восьми «Свернуть». Хранится числом, а не флагом: раскрытие
+  // теперь не одноразовое, а до конца списка.
+  const [rowsLimit, setRowsLimit] = useState(METHOD_ROWS_DEFAULT);
 
   // §102.2: если свернуть осталось РОВНО один метод, он показывается сам, а не
   // строкой «Остальные · 1 метод»: свёртка одного элемента прячет имя и ничего
   // не экономит. При усечении на сервере это правило не действует — за лишней
   // строкой там стоит неизвестный хвост, а не один метод.
-  const rowsLimit = expanded ? METHOD_ROWS_MAX : METHOD_ROWS_DEFAULT;
   const visibleFor = (limit: number) =>
     data.slice(0, data.length === limit + 1 && !truncated ? data.length : limit);
   const visible = visibleFor(rowsLimit);
@@ -111,11 +115,12 @@ export function MethodsChart({
   }
 
   const max = Math.max(1, ...rows.map((r) => r.total));
-  const canExpand = !expanded && data.length > visible.length;
-  // Свернуть предлагается только если это что-то изменит: при девяти методах
-  // свёрнутый вид показывает все девять (правило «последний метод сам за себя»),
-  // и кнопка «Свернуть» была бы обманом — она ничего бы не убрала.
-  const canCollapse = expanded && visible.length > visibleFor(METHOD_ROWS_DEFAULT).length;
+  // «Показать ещё» стоит ровно до тех пор, пока есть непоказанные методы.
+  const canExpand = data.length > visible.length;
+  // Когда показывать больше нечего, та же кнопка сворачивает — но только если
+  // это что-то изменит: при девяти методах свёрнутый вид показывает все девять
+  // (правило «последний метод сам за себя»), и «Свернуть» ничего бы не убрала.
+  const canCollapse = !canExpand && visible.length > visibleFor(METHOD_ROWS_DEFAULT).length;
 
   return (
     <div className={cn("w-full", className)}>
@@ -133,13 +138,16 @@ export function MethodsChart({
 
       {/* Кнопка стоит ВНЕ строк-ссылок: интерактив не вкладывается в интерактив,
           и адреса у «Показать ещё» нет — это состояние вида, а не переход.
-          Раскрытие обратимо: двадцать строк вытесняют латентность и ёмкость за
-          край экрана, и вернуться к восьми должно быть чем, а не перезагрузкой. */}
+          Раскрытие пошаговое и обратимое: список доводится до конца кликами, а
+          длинный рейтинг вытесняет латентность и ёмкость за край экрана, и
+          вернуться к восьми должно быть чем, а не перезагрузкой. */}
       {(canExpand || canCollapse) && (
         <div className="mt-3 flex justify-end">
           <button
             type="button"
-            onClick={() => setExpanded((v) => !v)}
+            onClick={() =>
+              setRowsLimit((n) => (canExpand ? n + METHOD_ROWS_STEP : METHOD_ROWS_DEFAULT))
+            }
             className="rounded-sm border border-line px-2 py-1 text-xs text-fg-muted hover:border-line-strong hover:text-fg"
           >
             {t(canExpand ? "metrics.methods.show_more" : "metrics.methods.show_less")}

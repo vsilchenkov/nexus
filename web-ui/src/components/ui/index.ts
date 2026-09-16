@@ -17,7 +17,7 @@ export { PeriodPicker } from "./PeriodPicker";
 export { DefaultPeriodButton } from "./DefaultPeriodButton";
 export { DateTimeField } from "./DateTimeField";
 export { LatencyChart, type LatencyPoint } from "./LatencyChart";
-export { MethodsChart, type MethodStat, METHOD_ROWS_DEFAULT, METHOD_ROWS_MAX } from "./MethodsChart";
+export { MethodsChart, type MethodStat, METHOD_ROWS_DEFAULT, METHOD_ROWS_STEP } from "./MethodsChart";
 export { periodParams, periodKey, periodLabel, periodWindow, defaultPeriod, PRESET_RANGES } from "../../lib/period";
 export type { Period, PresetRange } from "../../lib/period";
 export { PickGroup, Toggle, Toggle3 } from "./pickers";
