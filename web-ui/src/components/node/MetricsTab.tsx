@@ -10,6 +10,7 @@ import {
   Kpi,
   KpiRow,
   LabelHint,
+  MethodsChart,
   PeriodPicker,
   Seg,
   TrafficChart,
@@ -22,10 +23,17 @@ import {
   defaultStepFor,
   isStepTooFine,
   normalizeStepForPeriod,
+  periodWindow,
   stepsForPeriod,
   type ChartStep,
 } from "../../lib/period";
-import { parseMetricsView, withMetricsView } from "../../lib/nodeTabUrl";
+import {
+  parseMetricsView,
+  withLogsWindow,
+  withMetricsView,
+  type LogsLinkFilter,
+} from "../../lib/nodeTabUrl";
+import { useNodeTabTo } from "../../lib/nodeTabLink";
 import { nodeLookbackMs } from "../../lib/nodeLookback";
 import { prefKeyNodeMetricsView, useNodeMetricsViewPref, useSetPref } from "../../lib/prefs";
 import {
@@ -42,7 +50,8 @@ import { CapacityCard } from "./CapacityCard";
 
 // MetricsTab — вкладка «Метрики» узла (§21): перцентили + счётчики + график
 // за выбранный период. Источник — ClickHouse (точные quantile). По умолчанию 24h.
-// onOpenLogs (§33.4) — клик по столбцу графика открывает логи за момент.
+// §33.4/§102.6: переход в журнал строит САМА вкладка, а не колбэк родителя —
+// адрес обязан нести применённые здесь фильтры, а о них знает только она.
 //
 // §79.4: те же расширенные фильтры, что в журнале логов — KPI и график считаются
 // под ними. Полей дат в панели нет: окно задаёт выбор периода, два контрола,
@@ -52,10 +61,8 @@ import { CapacityCard } from "./CapacityCard";
 // столбцов по суткам).
 export function MetricsTab({
   node,
-  onOpenLogs,
 }: {
   node: Node;
-  onOpenLogs?: (range: LogsRange) => void;
   // §84.8: переход на вкладку «Очередь» — ёмкость отвечает «помещается ли
   // узел», а «сколько ждёт прямо сейчас» живёт там.
 }) {
@@ -150,7 +157,33 @@ export function MetricsTab({
     [applied, status],
   );
 
-  const m = useNodeMetrics(node.id, period, step, filterParams, viewReady);
+  // Последний аргумент — §102: разбивку по методам просит только эта вкладка
+  // (у «Обзора» тот же эндпоинт, и общий ключ кеша затирал бы карточку).
+  const m = useNodeMetrics(node.id, period, step, filterParams, viewReady, true);
+
+  // §102.6: журнал открывается ПОД теми же фильтрами, под которыми посчитано
+  // то, по чему кликнули. Иначе столбец обещает одно число, а журнал показывает
+  // другое — дыра, существовавшая у клика по столбцу с самого §33.4.
+  const linkFilter: LogsLinkFilter = useMemo(
+    () => ({
+      method: applied.method,
+      q: applied.q,
+      qCase: applied.qCase,
+      qWord: applied.qWord,
+      qRegex: applied.qRegex,
+      clientHost: applied.clientHost,
+    }),
+    [applied],
+  );
+  const links = useNodeTabTo();
+  // Клик по столбцу остаётся переходом-действием (сегменты столбца — не ссылки),
+  // но адрес ему строит вкладка: только она знает свои применённые фильтры.
+  const openLogsAt = useCallback(
+    (r: LogsRange) => {
+      setSearchParams((prev) => withLogsWindow(prev, r, linkFilter, status));
+    },
+    [setSearchParams, linkFilter, status],
+  );
 
   // §84.6: «за всё время» — СТРОГО по клику и без поллинга. Полный
   // max(date_request) без окна читает колонку на всей таблице (боевая внешняя
@@ -168,6 +201,34 @@ export function MetricsTab({
   }, [node.id]);
   const kpi = m.data?.kpi;
   const chartUnavailable = m.data && !m.data.chart_available;
+
+  // §102: карточка «Запросы по методам» показывается ТОЛЬКО когда есть что
+  // ранжировать, иначе её нет вовсе. Раньше каждое «нечего показывать» было
+  // названо подсказкой, но на практике объяснять было нечего: у обычного узла
+  // (метод пуст у всех записей) и у узла с единственным подпутём карточка
+  // висела всегда — пустой блок занимал место ровно там, где у passthrough-узла
+  // стоят данные, и сообщал лишь о самом себе.
+  //
+  // Рейтинга нет, когда: разбивку не отдал источник (внешняя таблица §64 без
+  // колонки method), включён фильтр по методу (рейтинг вырождается в одну
+  // строку со 100 %), или групп меньше двух (сравнивать не с чем).
+  const methods = m.data?.methods ?? [];
+  const methodsShown =
+    !!m.data?.chart_available && !!m.data.methods_available && !applied.method && methods.length > 1;
+  // Окно ссылки считается на рендере: у пресета это «последние N от СЕЙЧАС», и
+  // адрес обязан описывать то же окно, что посчитал сервер (расхождение —
+  // секунды между рендером и запросом, как у ссылки из столбца графика).
+  const methodWindow = periodWindow(period);
+  const methodHref = useCallback(
+    (method: string) =>
+      links.logsMethod(
+        { from: methodWindow.since, to: methodWindow.until },
+        method,
+        linkFilter,
+        status,
+      ).search,
+    [links, methodWindow.since, methodWindow.until, linkFilter, status],
+  );
   const byAttempts = m.data?.chart_unit === "attempts";
   const filtersActive =
     !advFormEqual(applied, emptyAdvForm) || status !== "all";
@@ -294,9 +355,37 @@ export function MetricsTab({
           data={m.data?.series ?? []}
           height={180}
           bucketMs={m.data?.step_seconds ? m.data.step_seconds * 1000 : undefined}
-          onOpenLogs={node.clickhouse_table ? onOpenLogs : undefined}
+          onOpenLogs={node.clickhouse_table ? openLogsAt : undefined}
         />
       </Card>
+
+      {/* §102: рейтинг подпутей — СРАЗУ под графиком «Запросы»: тот же период,
+          те же фильтры, та же единица счёта (запись). Карточки нет вовсе, когда
+          ранжировать нечего, — см. methodsShown. */}
+      {methodsShown && m.data && (
+        <Card>
+          <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
+            {t("metrics.methods.title")}
+            <LabelHint
+              content={<div className="max-w-xs text-left">{t("metrics.methods.hint")}</div>}
+            />
+          </div>
+          {/* §102.3: рейтинг ВСЕГДА по записям, а график выше на большом окне
+              переходит на попытки. Расхождение единиц на одной карточке обязано
+              быть названо — иначе «сумма полос ≠ сумме столбцов» читается как
+              ошибка расчёта. */}
+          {byAttempts && (
+            <div className="mb-2 text-xs text-warn">{t("metrics.methods.unit_mismatch")}</div>
+          )}
+          <MethodsChart
+            data={methods}
+            total={kpi?.total ?? 0}
+            delivered={kpi?.delivered ?? 0}
+            truncated={m.data.methods_truncated}
+            hrefFor={methodHref}
+          />
+        </Card>
+      )}
 
       {/* §84.5: латентность во времени — под графиком трафика и в тех же
           столбцах. Два числа в KPI (p95/p99) не отвечают на вопрос «когда было

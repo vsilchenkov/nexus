@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
@@ -80,6 +81,7 @@ type fakeNodeLogs struct {
 	latencyErr error
 
 	gotKPIQuery   port.LogQuery
+	gotKPIApprox  bool
 	gotChartQuery port.LogQuery
 	gotChart      port.ChartQuery
 	chartCalls    int
@@ -90,14 +92,26 @@ type fakeNodeLogs struct {
 	gotLatencyQuery port.LogQuery
 	gotLatencyStep  int64
 	latencyCalls    int
-	mu              sync.Mutex
+
+	// §102: рейтинг методов. Кроме результата фиксируются запрос, режим
+	// точности и лимит — все три обязаны совпасть с тем, чем считался KPI,
+	// иначе Σ по методам не сойдётся с ним на клиенте.
+	methods       []port.MethodStat
+	methodsCut    bool
+	methodsErr    error
+	gotMethodsQ   port.LogQuery
+	gotMethodsApx bool
+	gotMethodsLim int
+	methodsCalls  int
+
+	mu sync.Mutex
 }
 
 // NodeKPI на рабочем столе зовётся КОНКУРЕНТНО по узлам (nodesOverviewCH), так
 // что запись полей фейка тоже под мьютексом — иначе -race красит тест, а не код.
-func (f *fakeNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, _ bool) (port.NodeKPI, error) {
+func (f *fakeNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, approx bool) (port.NodeKPI, error) {
 	f.mu.Lock()
-	f.gotKPIQuery = q
+	f.gotKPIQuery, f.gotKPIApprox = q, approx
 	f.kpiCalls++
 	f.mu.Unlock()
 	return f.kpi, f.kpiErr
@@ -119,6 +133,15 @@ func (f *fakeNodeLogs) NodeLatencyChart(_ context.Context, q port.LogQuery, step
 	f.latencyCalls++
 	f.mu.Unlock()
 	return f.latency, f.latencyErr
+}
+
+// §102: третья конкурентная горутина той же группы — запись под тем же мьютексом.
+func (f *fakeNodeLogs) NodeMethodStats(_ context.Context, q port.LogQuery, approx bool, limit int) ([]port.MethodStat, bool, error) {
+	f.mu.Lock()
+	f.gotMethodsQ, f.gotMethodsApx, f.gotMethodsLim = q, approx, limit
+	f.methodsCalls++
+	f.mu.Unlock()
+	return f.methods, f.methodsCut, f.methodsErr
 }
 
 // fakeNodeRepo встраивает port.NodeRepo (nil): usecase зовёт Get и List.
@@ -894,5 +917,109 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
 		require.NoError(t, err)
 		require.EqualValues(t, 1786114275000, got.KPI.LastSeenMs)
+	})
+}
+
+// TestMetricsUsecase_NodeMethods — рейтинг методов (§102): по требованию,
+// одним снимком с KPI и без каскада деградации.
+func TestMetricsUsecase_NodeMethods(t *testing.T) {
+	t.Parallel()
+	log := logging.NewNoop()
+	node := func() *domain.Node {
+		return &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}
+	}
+
+	t.Run("без WithMethods разбивка не запрашивается вовсе", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 5}}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
+		require.NoError(t, err)
+		assert.Zero(t, logs.methodsCalls, "вкладка «Обзор» ходит тем же эндпоинтом — лишний запрос к CH на каждом поллинге")
+		assert.False(t, got.MethodsAvailable)
+		assert.Empty(t, got.Methods)
+	})
+
+	t.Run("рейтинг считается ТЕМ ЖЕ запросом и режимом, что KPI", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{
+			kpi:     port.NodeKPI{Total: 30, Delivered: 28},
+			methods: []port.MethodStat{{Method: "a", Total: 20, Delivered: 19}, {Method: "", Total: 7, Delivered: 7}},
+		}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{
+			NodeID: "n1", TeamID: "default", WithMethods: true,
+			Filter: port.LogQuery{Method: "", ClientHost: "h", Status: "err"},
+		})
+		require.NoError(t, err)
+		require.True(t, got.MethodsAvailable)
+		assert.Equal(t, logs.methods, got.Methods)
+		assert.Equal(t, MethodsLimit, logs.gotMethodsLim, "лимит задаёт сервер, а не запрос")
+		// Σ по методам вычитается клиентом из kpi.total, поэтому оба числа
+		// обязаны быть посчитаны одним фильтром и одним режимом точности.
+		assert.Equal(t, logs.gotKPIQuery, logs.gotMethodsQ)
+		assert.Equal(t, logs.gotKPIApprox, logs.gotMethodsApx)
+	})
+
+	t.Run("ошибка рейтинга гасит только его", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{
+			kpi:        port.NodeKPI{Total: 5},
+			latency:    []port.LatencyPoint{{TsMs: 1, Attempts: 2}},
+			methodsErr: errors.New("memory limit exceeded"),
+		}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", WithMethods: true})
+		require.NoError(t, err)
+		assert.False(t, got.MethodsAvailable, "деградация рейтинга не должна выглядеть как пустой рейтинг")
+		assert.True(t, got.ChartAvailable, "вкладка обязана остаться рабочей")
+		assert.True(t, got.LatencyAvailable)
+	})
+
+	t.Run("отсутствие колонки method у внешней таблицы — та же мягкая деградация", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{
+			kpi:        port.NodeKPI{Total: 5},
+			methodsErr: domain.ErrLogsBackendUnavailable,
+		}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", WithMethods: true})
+		require.NoError(t, err)
+		assert.False(t, got.MethodsAvailable)
+		assert.True(t, got.ChartAvailable)
+	})
+
+	t.Run("признак усечения доезжает до ответа", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{
+			kpi:        port.NodeKPI{Total: 100},
+			methods:    []port.MethodStat{{Method: "a", Total: 10}},
+			methodsCut: true,
+		}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", WithMethods: true})
+		require.NoError(t, err)
+		assert.True(t, got.MethodsTruncated)
+	})
+
+	t.Run("ошибка графика гасит и рейтинг: вкладки нет", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{
+			kpi:      port.NodeKPI{Total: 5},
+			chartErr: errors.New("boom"),
+			methods:  []port.MethodStat{{Method: "a", Total: 5}},
+		}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", WithMethods: true})
+		require.NoError(t, err)
+		require.False(t, got.ChartAvailable)
+		assert.False(t, got.MethodsAvailable, "без трафика и KPI показывать рейтинг не из чего — «Остальные» считаются из kpi.total")
+		assert.Empty(t, got.Methods)
 	})
 }

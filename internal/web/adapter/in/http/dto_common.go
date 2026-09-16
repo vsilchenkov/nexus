@@ -316,6 +316,25 @@ type NodeMetricsResponse struct {
 	//   attempts — деградация на больших окнах: запись считается в интервале
 	//              своего прогона, статус — по прогонам интервала.
 	ChartUnit string `json:"chart_unit"`
+
+	// Latency/LatencyAvailable — ряд перцентилей по тем же интервалам (§84.5).
+	// Ответ строится gin.H, поэтому swagger-drift-check расхождение этой
+	// структуры с ним не ловит: поля §84.5 отсутствовали здесь до §102.
+	Latency          []latencyPointDTO `json:"latency"`
+	LatencyAvailable bool              `json:"latency_available"`
+
+	// Methods — рейтинг по колонке method (§102), до usecase.MethodsLimit
+	// строк, по убыванию total. Приезжает только при with_methods=1; единица —
+	// ЗАПИСЬ, как у KPI.Total, поэтому строка «Остальные» получается
+	// вычитанием суммы показанных строк из KPI.Total.
+	Methods []methodStatDTO `json:"methods"`
+
+	// MethodsAvailable — рейтинг посчитан. false при with_methods=1 означает
+	// деградацию именно разбивки (KPI и графики при этом живы).
+	MethodsAvailable bool `json:"methods_available"`
+
+	// MethodsTruncated — методов в окне больше, чем строк в Methods.
+	MethodsTruncated bool `json:"methods_truncated"`
 }
 
 // KafkaTopicsResponse — GET /api/kafka/topics.

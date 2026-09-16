@@ -51,6 +51,22 @@ type LatencyPoint struct {
 	Attempts uint64
 }
 
+// MethodStat — одна строка рейтинга «Запросы по методам» (§102).
+//
+// Method — значение колонки `method`: у passthrough-узла (§39) это хвост пути
+// запроса, у обычного узла оно пусто. Пустое значение — законная группа, а не
+// «нет данных»: выброси её — и Σ по методам перестанет сходиться с
+// NodeKPI.Total, на чём держится расчёт строки «Остальные» (§102.3).
+//
+// Единица — ЗАПИСЬ, как у NodeKPI (§79.5): те же выражения уникальности,
+// разложенные по группам. Поэтому Total/Delivered складываются с полями KPI, а
+// с LatencyPoint.Attempts (попытки) — нет.
+type MethodStat struct {
+	Method    string
+	Total     uint64
+	Delivered uint64
+}
+
 // GlobalTotals — кросс-сервисные счётчики за окно (из Prometheus).
 // Incoming — принято Receiver'ом; Outgoing — доставлено Sender'ом во внешний
 // URL; Errors — внешние ответы с ошибкой (status 0/4xx/5xx) у Sender'а.
@@ -159,6 +175,21 @@ type NodeLogMetrics interface {
 	// stepSec обязан совпадать с ChartQuery.StepSec: два графика стоят друг под
 	// другом и сопоставляются глазом только в одинаковых столбцах.
 	NodeLatencyChart(ctx context.Context, q LogQuery, stepSec int64) ([]LatencyPoint, error)
+
+	// NodeMethodStats — рейтинг значений колонки `method` под теми же фильтрами
+	// (§102). Не более limit строк, по убыванию Total, при равенстве — по Method
+	// (детерминизм: без второго ключа порядок одинаковых счётчиков плавает от
+	// запроса к запросу, и строки на экране переставляются на каждом поллинге).
+	//
+	// truncated сообщает, что методов БОЛЬШЕ, чем вернулось строк. Флаг считает
+	// адаптер (он запрашивает на строку больше и лишнюю отбрасывает), а не
+	// вызывающий по «пришло ровно limit»: при РОВНО limit методах такой признак
+	// объявил бы несуществующий хвост (§102.4).
+	//
+	// approx — та же настройка точности, что у NodeKPI (§44-perf). Вызывающий
+	// обязан передать сюда ТО ЖЕ значение, что и в NodeKPI одного запроса:
+	// разные режимы дают разные оценки, и Σ по методам разъедется с KPI.
+	NodeMethodStats(ctx context.Context, q LogQuery, approx bool, limit int) (stats []MethodStat, truncated bool, err error)
 }
 
 // PromMetrics — глобальные и кросс-сервисные метрики из Prometheus

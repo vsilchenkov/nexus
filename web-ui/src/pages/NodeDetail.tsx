@@ -255,12 +255,9 @@ export default function NodeDetail() {
       )}
       {tab === "logs" && <LogsTab node={node} initialFilter={logsFilter ?? undefined} />}
       {tab === "config" && <ConfigTab node={node} />}
-      {tab === "metrics" && (
-        <MetricsTab
-          node={node}
-          onOpenLogs={openLogsAt}
-        />
-      )}
+      {/* §102.6: «Метрики» строят переход в журнал сами — адрес обязан нести
+          применённые на вкладке фильтры, а о них знает только она. */}
+      {tab === "metrics" && <MetricsTab node={node} />}
       {tab === "queue" && (
         <QueueTab
           node={node}

@@ -3,6 +3,7 @@ package usecase
 import (
 	"cmp"
 	"context"
+	"errors"
 	"slices"
 	"time"
 
@@ -50,6 +51,24 @@ type MetricsUsecase struct {
 // без потолка медленные запросы накладывались бы друг на друга. Превышение —
 // штатная деградация ChartAvailable=false, как и любая другая ошибка CH.
 const metricsTimeout = 10 * time.Second
+
+// methodsTimeout — под-потолок рейтинга методов (§102.7) внутри metricsTimeout.
+//
+// Кардинальность колонки method не ограничена (в подпуть §39 попадают
+// идентификаторы), поэтому разбивка — самый рискованный из трёх запросов
+// вкладки. Съев общий бюджет, она погасила бы график трафика и KPI, без
+// которых вкладка бесполезна, — тогда как сама гасится без потерь.
+const methodsTimeout = 5 * time.Second
+
+// MethodsLimit — сколько строк рейтинга методов отдаётся клиенту (§102.4).
+//
+// Экспортирована, потому что описывает КОНТРАКТ ответа, а не деталь расчёта:
+// клиент показывает первые 8 строк и раскрывает остальные кнопкой «Показать
+// ещё», а всё сверх лимита сворачивает в «Остальные».
+//
+// Размер задаёт сервер, а не запрос: параметром его сделать значило бы дать
+// потребителю со scope metrics:read заказать разбивку произвольного размера.
+const MethodsLimit = 20
 
 // defaultExactChartMaxRecords — порог точной формы графика (§79.5.1). Точная
 // форма держит строку на каждую запись окна (~60–80 байт): на 2 млн это ~150 МБ,
@@ -220,6 +239,21 @@ type NodeMetrics struct {
 	// законен (в окне не было запросов), и отличить его от «запрос латентности
 	// не удался» иначе нечем. Деградация латентности НЕ гасит график трафика.
 	LatencyAvailable bool
+
+	// Methods — рейтинг методов за окно (§102), не более MethodsLimit строк.
+	// Заполняется только при NodeMetricsQuery.WithMethods.
+	Methods []port.MethodStat
+
+	// MethodsTruncated — методов в окне БОЛЬШЕ, чем строк в Methods. Клиент
+	// показывает это знаком «+» в строке «Остальные»: без флага он не отличил
+	// бы полностью показанный список из MethodsLimit методов от усечённого.
+	MethodsTruncated bool
+
+	// MethodsAvailable — рейтинг посчитан. Отдельный флаг по той же причине,
+	// что у латентности: пустой список законен (в окне нет запросов), и от
+	// «запрос не удался» его иначе не отличить. Деградация рейтинга не гасит
+	// ни KPI, ни график трафика.
+	MethodsAvailable bool
 }
 
 // Единицы столбца графика (§79.5).
@@ -241,6 +275,11 @@ type NodeMetricsQuery struct {
 	// Filter — фильтры журнала логов (полнотекст, метод, хост клиента, статус).
 	// Table/NodeID/окно/DateCreateAligned проставляет usecase.
 	Filter port.LogQuery
+
+	// WithMethods — посчитать рейтинг методов (§102). По умолчанию выключен:
+	// разбивка стоит отдельного запроса к ClickHouse на каждом поллинге, а
+	// нужна она только вкладке «Метрики».
+	WithMethods bool
 }
 
 // f2u безопасно округляет неотрицательное float-значение Prometheus в uint64.
@@ -630,7 +669,13 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, in NodeMetricsQuery) (
 	mctx, cancel := context.WithTimeout(ctx, metricsTimeout)
 	defer cancel()
 
-	kpi, err := u.nodeLogs.NodeKPI(mctx, q, u.approxCounts(ctx))
+	// §102: режим точности читается ОДИН раз на запрос. Он приходит из
+	// app_settings, то есть может переключиться между вызовами, а KPI и рейтинг
+	// методов обязаны считаться одним и тем же выражением: иначе Σ по методам
+	// разойдётся с kpi.total, из которого клиент вычитает строку «Остальные».
+	approx := u.approxCounts(ctx)
+
+	kpi, err := u.nodeLogs.NodeKPI(mctx, q, approx)
 	if err != nil {
 		u.logger.Warn("clickhouse node kpi failed", u.logger.Err(err))
 		return res, nil
@@ -650,9 +695,12 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, in NodeMetricsQuery) (
 	// поэтому время ответа вкладки не растёт; нагрузка на ClickHouse на этой
 	// вкладке примерно удваивается — осознанная цена, названная в §84.5.
 	var (
-		series  []port.SeriesPoint
-		latency []port.LatencyPoint
-		latErr  error
+		series     []port.SeriesPoint
+		latency    []port.LatencyPoint
+		latErr     error
+		methods    []port.MethodStat
+		methodsCut bool
+		methodsErr error
 	)
 	g, gctx := errgroup.WithContext(mctx)
 	g.Go(func() error {
@@ -660,7 +708,7 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, in NodeMetricsQuery) (
 		s, err := u.nodeLogs.NodeChart(gctx, q, port.ChartQuery{
 			StepSec:  stepSec,
 			ByRecord: byRecord,
-			Approx:   u.approxCounts(ctx),
+			Approx:   approx,
 		})
 		series = s
 		return err
@@ -681,6 +729,32 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, in NodeMetricsQuery) (
 			u.logger.Any("failed", err != nil))
 		return nil
 	})
+	// §102: рейтинг методов — по требованию (вкладка «Метрики»), а не всегда:
+	// тот же эндпоинт обслуживает вкладку «Обзор» и внешних потребителей
+	// metrics:read, которым разбивка не нужна, а стоит она третьего запроса к
+	// ClickHouse на каждом поллинге.
+	if in.WithMethods {
+		g.Go(func() error {
+			defer safego.Recover(u.logger, "web.metrics.node_methods")
+			// Свой под-таймаут внутри общего: рейтинг группирует колонку
+			// произвольной кардинальности (в подпуть попадают идентификаторы),
+			// и медленный он не вправе съедать бюджет графика трафика — без
+			// трафика и KPI вкладка бесполезна, без рейтинга лишь беднее.
+			mtctx, cancel := context.WithTimeout(gctx, methodsTimeout)
+			defer cancel()
+			t0 := u.clock.Now()
+			stats, cut, err := u.nodeLogs.NodeMethodStats(mtctx, q, approx, MethodsLimit)
+			methods, methodsCut, methodsErr = stats, cut, err
+			u.logger.Debug("node metrics: method stats",
+				u.logger.Str("node", n.Path),
+				u.logger.Int("methods", len(stats)),
+				u.logger.Any("truncated", cut),
+				u.logger.Int("duration_ms", int(u.clock.Now().Sub(t0).Milliseconds())),
+				u.logger.Any("failed", err != nil))
+			// Как и латентность, ошибка рейтинга НЕ валит группу.
+			return nil
+		})
+	}
 	if err := g.Wait(); err != nil {
 		u.logger.Warn("clickhouse node chart failed", u.logger.Err(err))
 		return res, nil
@@ -694,6 +768,23 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, in NodeMetricsQuery) (
 	} else {
 		res.Latency = latency
 		res.LatencyAvailable = true
+	}
+	if in.WithMethods {
+		switch {
+		case methodsErr == nil:
+			res.Methods = methods
+			res.MethodsTruncated = methodsCut
+			res.MethodsAvailable = true
+		case errors.Is(methodsErr, domain.ErrLogsBackendUnavailable):
+			// KPI уже прошёл, значит источник жив: мягкая деградация здесь —
+			// это внешняя таблица §64 без колонки method. Состояние чужой
+			// схемы, а не авария инсталляции, поэтому debug, а не warn каждые
+			// ~12 секунд поллинга (§102.7).
+			u.logger.Debug("node metrics: method stats unavailable",
+				u.logger.Str("node", n.Path), u.logger.Err(methodsErr))
+		default:
+			u.logger.Warn("clickhouse node method stats failed", u.logger.Err(methodsErr))
+		}
 	}
 	return res, nil
 }

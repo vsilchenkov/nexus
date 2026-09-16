@@ -359,7 +359,21 @@ export type NodeMetricsResp = {
   // увидит, а не сломается.
   latency?: LatencyPointResp[];
   latency_available?: boolean;
+  // §102: рейтинг подпутей (колонка method) за то же окно и под теми же
+  // фильтрами. Приезжает только по флагу with_methods=1 — «Обзор» его не
+  // просит. Все три поля опциональны: старый бэкенд их не отдаёт.
+  //   methods           — до MethodsLimit строк, total DESC;
+  //   methods_available — источник ответил (false = деградация карточки);
+  //   methods_truncated — методов больше, чем влезло в лимит.
+  methods?: MethodStatResp[];
+  methods_available?: boolean;
+  methods_truncated?: boolean;
 };
+
+// §102: строка рейтинга «Запросы по методам». Единица — ЗАПИСЬ (уникальный ID),
+// как в kpi: именно поэтому Σ(total) сходится с kpi.total и строку «Остальные»
+// можно вычесть на клиенте, не запрашивая отдельно.
+export type MethodStatResp = { method: string; total: number; delivered: number };
 
 // §19: шаблоны DDL для таблиц логов ClickHouse.
 export type CHColumnOverride = { name: string; codec: string };
