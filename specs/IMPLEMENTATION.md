@@ -6242,6 +6242,10 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §102 | ✅ Phase 102.1 | [sections/102-method-breakdown.md](sections/102-method-breakdown.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| Порт + CH-агрегация `GROUP BY method` | ✅ Phase 102.2 | [metrics_provider.go](../internal/web/usecase/port/metrics_provider.go) (`MethodStat`, `NodeMethodStats`), [log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go) (`methodStatsSQL`, `maxMethodStats`, `LIMIT limit+1`), [log_method_stats_sql_test.go](../internal/web/adapter/out/clickhouse/log_method_stats_sql_test.go) |
+| Usecase: разбивка по требованию, третьей горутиной | ✅ Phase 102.3 | [metrics.go](../internal/web/usecase/metrics.go) (`WithMethods`, `MethodsLimit=20`, `methodsTimeout=5s`, единый `approx`), [metrics_test.go](../internal/web/usecase/metrics_test.go) |
+| API: `with_methods=1`, `methods*` в ответе, swagger | ✅ Phase 102.4 | [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go), [dto_common.go](../internal/web/adapter/in/http/dto_common.go) (+ починен дрейф `latency` от §84.5), [metrics_handler_test.go](../internal/web/adapter/in/http/metrics_handler_test.go) (страж дрейфа DTO ↔ `gin.H`), [docs/web/](../docs/web/) |
+| Integration ClickHouse: инвариант Σ == KPI | ✅ Phase 102.5 | [log_method_stats_test.go](../tests/integration/log_method_stats_test.go) — повторы, пустой `method`, порядок, `truncated`, approx, внешняя таблица §64 |
 
 - **Форма графика выбиралась под вопрос, а не под красоту.** Спрошено «сколько запросов у каждого
   метода» — это рейтинг (сравнение длин), а не временной ряд. Стопка по времени отвечала бы на
@@ -6269,3 +6273,11 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   нужна графику трафика, чтобы привязать запись к интервалу первого прогона; у рейтинга интервалов
   нет. Следствие, которое видно на экране: деградация §79.5.1 (`chart_unit=attempts`) на рейтинг не
   распространяется — соседний график может считать прогоны, рейтинг остаётся по записям.
+
+- **Инвариант Σ == KPI сторожит только integration-тест.** Юнит-тест на SQL сравнивает СТРОКИ
+  запроса — он одинаково зелен и на верном, и на неверном подсчёте записи, спасённой повтором
+  (2 строки, 1 `ID`). Поэтому `tests/integration/log_method_stats_test.go` гоняет обе агрегации на
+  настоящем ClickHouse и сверяет суммы с `NodeKPI`; там же — пустой `method` отдельной группой,
+  порядок `total DESC, method ASC` (тай-брейкер проверяется парой равных по счёту методов) и
+  послабление §64, без которого у узла на чужой таблице карточка была бы вечно пуста при непустом
+  «Всего».
