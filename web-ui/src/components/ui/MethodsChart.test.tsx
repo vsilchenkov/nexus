@@ -122,6 +122,24 @@ describe("MethodsChart: строка «Остальные» (§102.3)", () => {
     expect(screen.getByText("· metrics.methods.others_n_more:4")).toBeTruthy();
   });
 
+  it("последний оставшийся метод показывается сам, а не «Остальные · 1»", () => {
+    // §102.2: свёртка одного элемента прячет имя и ничего не экономит.
+    const nine = Array.from({ length: METHOD_ROWS_DEFAULT + 1 }, (_, i) => m(`v1/m${i}`, 100 - i));
+    const total = nine.reduce((s, x) => s + x.total, 0);
+    renderChart({ data: nine, total, delivered: total });
+    expect(screen.getAllByRole("link")).toHaveLength(nine.length);
+    expect(screen.queryByText("metrics.methods.others")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("но при усечении на сервере девятая строка сворачивается: за ней неизвестный хвост", () => {
+    const nine = Array.from({ length: METHOD_ROWS_DEFAULT + 1 }, (_, i) => m(`v1/m${i}`, 100 - i));
+    const total = nine.reduce((s, x) => s + x.total, 0) + 300;
+    renderChart({ data: nine, total, delivered: total, truncated: true });
+    expect(screen.getAllByRole("link")).toHaveLength(METHOD_ROWS_DEFAULT);
+    expect(screen.getByText("metrics.methods.others")).toBeTruthy();
+  });
+
   it("свёртка в журнал не ведёт", () => {
     const total = many.reduce((s, x) => s + x.total, 0);
     renderChart({ data: many, total, delivered: total });
@@ -148,6 +166,30 @@ describe("MethodsChart: «Показать ещё» (§102.5)", () => {
 
   it("кнопки нет, когда методов не больше восьми", () => {
     renderChart({ data: many.slice(0, METHOD_ROWS_DEFAULT) });
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("«Свернуть» возвращает рейтинг к восьми строкам и пересчитанной свёртке", () => {
+    // Раскрытие обязано быть обратимым: двадцать строк вытесняют латентность и
+    // ёмкость за край экрана, а другого способа вернуться, кроме перезагрузки
+    // страницы, у пользователя нет.
+    const total = many.reduce((s, x) => s + x.total, 0);
+    renderChart({ data: many, total, delivered: total });
+    fireEvent.click(screen.getByRole("button", { name: "metrics.methods.show_more" }));
+    expect(screen.getAllByRole("link")).toHaveLength(many.length);
+
+    fireEvent.click(screen.getByRole("button", { name: "metrics.methods.show_less" }));
+    expect(screen.getAllByRole("link")).toHaveLength(METHOD_ROWS_DEFAULT);
+    expect(screen.getByText("metrics.methods.others")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "metrics.methods.show_more" })).toBeTruthy();
+  });
+
+  it("«Свернуть» не предлагается, когда сворачивать нечего", () => {
+    // Девять методов: свёрнутый вид и так показывает все девять (последний
+    // метод показывается сам), значит раскрывать и сворачивать нечего.
+    const nine = Array.from({ length: METHOD_ROWS_DEFAULT + 1 }, (_, i) => m(`v1/m${i}`, 100 - i));
+    renderChart({ data: nine });
+    expect(screen.getAllByRole("link")).toHaveLength(nine.length);
     expect(screen.queryByRole("button")).toBeNull();
   });
 

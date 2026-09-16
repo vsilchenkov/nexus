@@ -227,6 +227,7 @@
       "tooltip": {
         "share": "{{pct}} % of all"
       },
+      "unit_mismatch": "The window is large: the chart above counts delivery attempts while the ranking counts requests. The sum over methods matches «Total», but not the bar heights.",
       "single": "No breakdown: every request in this period went to a single subpath.",
       "no_subpaths": "The node does not proxy subpaths — the method is empty on every record.",
       "filtered": "The ranking does not apply: a method filter is active. Clear it to see the breakdown.",

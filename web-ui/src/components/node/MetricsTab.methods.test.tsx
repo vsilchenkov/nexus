@@ -135,6 +135,20 @@ describe("MetricsTab: карточка «Запросы по методам» (�
     expect(methodLinks()).toHaveLength(0);
   });
 
+  it("на деградации графика до попыток карточка называет расхождение единиц", async () => {
+    // §102.3: рейтинг остаётся по записям, а столбцы считают прогоны. Молчать
+    // об этом нельзя: «сумма полос ≠ сумме столбцов» читается как ошибка счёта.
+    metrics = { ...BASE, chart_unit: "attempts" };
+    renderTab();
+    await waitFor(() => expect(screen.getByText("metrics.methods.unit_mismatch")).toBeTruthy());
+  });
+
+  it("в режиме записей о расхождении единиц не сообщается", async () => {
+    renderTab();
+    await waitFor(() => expect(methodLinks()).toHaveLength(2));
+    expect(screen.queryByText("metrics.methods.unit_mismatch")).toBeNull();
+  });
+
   it("недоступная разбивка гасит только карточку — KPI и график живы", async () => {
     metrics = { ...BASE, methods: [], methods_available: false };
     renderTab();

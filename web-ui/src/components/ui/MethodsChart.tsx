@@ -72,7 +72,14 @@ export function MethodsChart({
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
-  const visible = data.slice(0, expanded ? METHOD_ROWS_MAX : METHOD_ROWS_DEFAULT);
+  // §102.2: если свернуть осталось РОВНО один метод, он показывается сам, а не
+  // строкой «Остальные · 1 метод»: свёртка одного элемента прячет имя и ничего
+  // не экономит. При усечении на сервере это правило не действует — за лишней
+  // строкой там стоит неизвестный хвост, а не один метод.
+  const rowsLimit = expanded ? METHOD_ROWS_MAX : METHOD_ROWS_DEFAULT;
+  const visibleFor = (limit: number) =>
+    data.slice(0, data.length === limit + 1 && !truncated ? data.length : limit);
+  const visible = visibleFor(rowsLimit);
   const shownSum = visible.reduce((s, m) => s + m.total, 0);
   const shownDelivered = visible.reduce((s, m) => s + m.delivered, 0);
 
@@ -104,7 +111,11 @@ export function MethodsChart({
   }
 
   const max = Math.max(1, ...rows.map((r) => r.total));
-  const canExpand = !expanded && data.length > METHOD_ROWS_DEFAULT;
+  const canExpand = !expanded && data.length > visible.length;
+  // Свернуть предлагается только если это что-то изменит: при девяти методах
+  // свёрнутый вид показывает все девять (правило «последний метод сам за себя»),
+  // и кнопка «Свернуть» была бы обманом — она ничего бы не убрала.
+  const canCollapse = expanded && visible.length > visibleFor(METHOD_ROWS_DEFAULT).length;
 
   return (
     <div className={cn("w-full", className)}>
@@ -121,15 +132,17 @@ export function MethodsChart({
       </div>
 
       {/* Кнопка стоит ВНЕ строк-ссылок: интерактив не вкладывается в интерактив,
-          и адреса у «Показать ещё» нет — это состояние вида, а не переход. */}
-      {canExpand && (
+          и адреса у «Показать ещё» нет — это состояние вида, а не переход.
+          Раскрытие обратимо: двадцать строк вытесняют латентность и ёмкость за
+          край экрана, и вернуться к восьми должно быть чем, а не перезагрузкой. */}
+      {(canExpand || canCollapse) && (
         <div className="mt-3 flex justify-end">
           <button
             type="button"
-            onClick={() => setExpanded(true)}
+            onClick={() => setExpanded((v) => !v)}
             className="rounded-sm border border-line px-2 py-1 text-xs text-fg-muted hover:border-line-strong hover:text-fg"
           >
-            {t("metrics.methods.show_more")}
+            {t(canExpand ? "metrics.methods.show_more" : "metrics.methods.show_less")}
           </button>
         </div>
       )}

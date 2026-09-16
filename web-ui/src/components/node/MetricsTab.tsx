@@ -157,6 +157,8 @@ export function MetricsTab({
     [applied, status],
   );
 
+  // Последний аргумент — §102: разбивку по методам просит только эта вкладка
+  // (у «Обзора» тот же эндпоинт, и общий ключ кеша затирал бы карточку).
   const m = useNodeMetrics(node.id, period, step, filterParams, viewReady, true);
 
   // §102.6: журнал открывается ПОД теми же фильтрами, под которыми посчитано
@@ -374,6 +376,13 @@ export function MetricsTab({
               content={<div className="max-w-xs text-left">{t("metrics.methods.hint")}</div>}
             />
           </div>
+          {/* §102.3: рейтинг ВСЕГДА по записям, а график выше на большом окне
+              переходит на попытки. Расхождение единиц на одной карточке обязано
+              быть названо — иначе «сумма полос ≠ сумме столбцов» читается как
+              ошибка расчёта. */}
+          {!methodsHint && byAttempts && (
+            <div className="mb-2 text-xs text-warn">{t("metrics.methods.unit_mismatch")}</div>
+          )}
           {methodsHint ? (
             <div className="py-2 text-xs text-fg-subtle">{t(methodsHint)}</div>
           ) : (

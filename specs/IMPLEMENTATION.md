@@ -6237,7 +6237,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 ### 4.87 §102 — запросы по методам: почему рейтинг, а не стопка, и откуда берётся строка «Остальные»
 
 Раздел [102-method-breakdown.md](sections/102-method-breakdown.md). Ветка
-`feature/node-method-breakdown`. Статус ✅ — блоки 102.1–102.10 закрыты.
+`feature/node-method-breakdown`. Статус ✅ — блоки 102.1–102.11 закрыты.
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -6247,10 +6247,11 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | API: `with_methods=1`, `methods*` в ответе, swagger | ✅ Phase 102.4 | [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go), [dto_common.go](../internal/web/adapter/in/http/dto_common.go) (+ починен дрейф `latency` от §84.5), [metrics_handler_test.go](../internal/web/adapter/in/http/metrics_handler_test.go) (страж дрейфа DTO ↔ `gin.H`), [docs/web/](../docs/web/) |
 | Integration ClickHouse: инвариант Σ == KPI | ✅ Phase 102.5 | [log_method_stats_test.go](../tests/integration/log_method_stats_test.go) — повторы, пустой `method`, порядок, `truncated`, approx, внешняя таблица §64 |
 | Фронт-фундамент: типы, ключ кеша, сокращение, i18n | ✅ Phase 102.6 | [client.ts](../web-ui/src/api/client.ts) (`MethodStatResp`, `methods*`), [useNodeMetrics.ts](../web-ui/src/components/node/useNodeMetrics.ts) (`withMethods` в queryKey и `useStableData`), [useNodeMetrics.cache.test.tsx](../web-ui/src/components/node/useNodeMetrics.cache.test.tsx), [format.ts](../web-ui/src/lib/format.ts) (`middleEllipsis`) + тест, `metrics.methods.*` в [ru.json](../web-ui/src/locales/ru.json)/[en.json](../web-ui/src/locales/en.json) |
-| Компонент рейтинга | ✅ Phase 102.7 | [MethodsChart.tsx](../web-ui/src/components/ui/MethodsChart.tsx) (строка = `<a href>`, «Остальные» вычитанием, «Показать ещё» вне ссылок), [MethodsChart.test.tsx](../web-ui/src/components/ui/MethodsChart.test.tsx) — 15 тестов, [ChartTooltip.tsx](../web-ui/src/components/ui/ChartTooltip.tsx) (опц. `title` с переносом длинного имени) |
+| Компонент рейтинга | ✅ Phase 102.7 | [MethodsChart.tsx](../web-ui/src/components/ui/MethodsChart.tsx) (строка = `<a href>`, «Остальные» вычитанием, «Показать ещё» вне ссылок), [MethodsChart.test.tsx](../web-ui/src/components/ui/MethodsChart.test.tsx) — 19 тестов, [ChartTooltip.tsx](../web-ui/src/components/ui/ChartTooltip.tsx) (опц. `title` с переносом длинного имени) |
 | Дип-линк «Метрики → Журнал» с фильтрами | ✅ Phase 102.8 | [nodeTabUrl.ts](../web-ui/src/lib/nodeTabUrl.ts) (`LOG_WINDOW_PARAMS` + `method,q,q_case,q_word,q_regex,client_host`, `withLogsMethod`, `applyLogsFilter`), [nodeTabLink.ts](../web-ui/src/lib/nodeTabLink.ts) (`logsWindow`/`logsMethod`), [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) (`LogsInitialFilter`, `initForm`, раскрытие панели), [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) строит переход сам (проп `onOpenLogs` убран), тесты [nodeTabUrl.test.ts](../web-ui/src/lib/nodeTabUrl.test.ts), [LogsTab.deeplink.test.tsx](../web-ui/src/components/node/LogsTab.deeplink.test.tsx) |
-| Карточка на вкладке «Метрики» | ✅ Phase 102.9 | [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) — карточка между «Запросами» и ёмкостью, четыре деградации §102.5, [MetricsTab.methods.test.tsx](../web-ui/src/components/node/MetricsTab.methods.test.tsx) — 8 тестов |
+| Карточка на вкладке «Метрики» | ✅ Phase 102.9 | [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) — карточка между «Запросами» и ёмкостью, четыре деградации §102.5, [MetricsTab.methods.test.tsx](../web-ui/src/components/node/MetricsTab.methods.test.tsx) — 10 тестов |
 | Встроенный бандл SPA + CHANGELOG | ✅ Phase 102.10 | [internal/web/static/](../internal/web/static/) (`make build-ui`), [CHANGELOG.md](../CHANGELOG.md) |
+| Ревизия перед сдачей + стенд | ✅ Phase 102.11 | предупреждение о расхождении единиц (`metrics.methods.unit_mismatch`), правило «последний метод показывается сам», парная кнопка «Показать ещё» / «Свернуть»; [MethodsChart.tsx](../web-ui/src/components/ui/MethodsChart.tsx), [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx), тесты + пересборка бандла |
 
 - **Форма графика выбиралась под вопрос, а не под красоту.** Спрошено «сколько запросов у каждого
   метода» — это рейтинг (сравнение длин), а не временной ряд. Стопка по времени отвечала бы на
@@ -6286,3 +6287,24 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   порядок `total DESC, method ASC` (тай-брейкер проверяется парой равных по счёту методов) и
   послабление §64, без которого у узла на чужой таблице карточка была бы вечно пуста при непустом
   «Всего».
+
+- **Что нашла ревизия перед сдачей (Phase 102.11).** Три расхождения, все — «ТЗ обещает, кода нет»
+  либо «код есть, повода нет»: (1) §102.5 объявлял предупреждение о расхождении единиц при
+  `chart_unit=attempts`, а карточка молчала — молчание читается как ошибка счёта, потому что суммы
+  полос не сходятся с высотами столбцов; (2) §102.2 объявлял правило «если свернуть осталось РОВНО
+  один метод, он показывается сам», а компонент всё равно рисовал «Остальные · 1 метод»; (3) ключ
+  `metrics.methods.show_less` лежал в обеих локалях без единого места использования — раскрытие до
+  двадцати строк было необратимым, вернуться к восьми можно было только перезагрузкой страницы.
+
+- **Стендовый прогон (§102, 2026-09-16) — что увидел браузер и не видели тесты.** Узел
+  `stand/methods` (passthrough, 30 подпутей, 253 записи, 4 имени по 100+ символов, часть запросов
+  принудительно неудачна): рейтинг сходится с KPI на всех состояниях — топ-8 даёт «Остальные · более
+  12 методов» = 71 при «Всего» 253, раскрытие до 20 пересчитывает остаток в 15; клик по строке
+  открывает журнал со счётчиком «Показано 50 из 60» ровно под числом из тултипа, а под
+  полнотекстовым фильтром — «16 из 16» при рейтинге `16 + 11 = 27 = Всего`; средняя кнопка мыши
+  открывает отфильтрованный журнал в новой вкладке (природа `<a href>` подтверждена живьём);
+  `with_methods=1` уходит ТОЛЬКО со вкладки «Метрики» («Обзор» шлёт тот же эндпоинт без флага).
+  Деградация `methods_available=false` проверена на узле `stand/nomethod` — внешняя таблица §64
+  БЕЗ колонки `method`: карточка сообщает «Разбивка по методам недоступна», KPI (253) и график
+  живы, а в лог уходит DBG, не WRN (проверено поднятием уровня до debug на время прогона).
+  Тестовые данные и узлы оставлены в стеке `services` по просьбе пользователя.
