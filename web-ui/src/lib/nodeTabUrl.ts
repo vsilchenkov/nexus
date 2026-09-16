@@ -27,9 +27,27 @@ export type NodeTab = "overview" | "logs" | "config" | "metrics" | "queue";
 export const NODE_TABS: NodeTab[] = ["overview", "logs", "config", "metrics", "queue"];
 
 const TAB_PARAM = "tab";
-// Ключи окна журнала. Живут только на вкладке «Логи»: уход с неё их удаляет,
-// иначе адрес продолжает обещать окно, которого уже нет.
-const LOG_WINDOW_PARAMS = ["from", "to", "status", "done"] as const;
+// Ключи окна и фильтров журнала. Живут только на вкладке «Логи»: уход с неё их
+// удаляет, иначе адрес продолжает обещать окно, которого уже нет.
+//
+// §102.6: к окну добавились фильтры — метод, полнотекстовый запрос с режимами и
+// хост клиента. Раньше переход «Метрики → Журнал» переносил только from/to/
+// status/done, а расширенные фильтры вкладки «Метрики» (§79.4) терялись: тултип
+// обещал число, посчитанное ПОД ними, а журнал открывался без них и показывал
+// другое. Ключи названы так же, как параметры API (logsFilterParams), чтобы
+// адрес читался рядом с сетевым запросом без словаря соответствий.
+const LOG_WINDOW_PARAMS = [
+  "from",
+  "to",
+  "status",
+  "done",
+  "method",
+  "q",
+  "q_case",
+  "q_word",
+  "q_regex",
+  "client_host",
+] as const;
 
 // §84.2: ключи вида вкладки «Метрики» — период и шаг графика.
 //
@@ -72,6 +90,42 @@ export function shareableTabParams(tab: NodeTab): readonly string[] {
   return SHAREABLE_TAB_PARAMS[tab] ?? [];
 }
 
+// LogsLinkFilter — фильтры журнала, переносимые ссылкой вместе с окном (§102.6).
+// Ровно то же множество, что панель расширенных фильтров (§79.4/§48/§67):
+// рейтинг методов и клик по столбцу графика считаются ПОД ними, и ссылка обязана
+// нести их целиком, иначе обещанное число в тултипе расходится с журналом.
+export type LogsLinkFilter = {
+  method?: string;
+  q?: string;
+  qCase?: boolean;
+  qWord?: boolean;
+  qRegex?: boolean;
+  clientHost?: string;
+};
+
+// applyLogsFilter — записать фильтры ссылки, ЯВНО удалив незаданные.
+//
+// Удаление обязательно и не является перестраховкой: ключи живут на вкладке
+// «Логи», и переход, который их не задаёт (клик по столбцу графика §33.4,
+// «Очередь → Логи» §35), унёс бы в пересланном адресе чужой фильтр — журнал
+// показал бы подмножество под видом целого.
+function applyLogsFilter(next: URLSearchParams, f?: LogsLinkFilter): URLSearchParams {
+  const setOrDelete = (key: string, value: string) => {
+    if (value) next.set(key, value);
+    else next.delete(key);
+  };
+  setOrDelete("method", f?.method ?? "");
+  setOrDelete("client_host", f?.clientHost ?? "");
+  // Режимы поиска без самого запроса бессмысленны: «регистрозависимо» без
+  // строки — это фильтр ни по чему, и в адресе он только вводит в заблуждение.
+  const q = f?.q ?? "";
+  setOrDelete("q", q);
+  setOrDelete("q_case", q && f?.qCase ? "1" : "");
+  setOrDelete("q_word", q && f?.qWord ? "1" : "");
+  setOrDelete("q_regex", q && f?.qRegex ? "1" : "");
+  return next;
+}
+
 const DEFAULT_TAB: NodeTab = "overview";
 
 /** parseNodeTab — вкладка из адреса; мусор и пусто → «Обзор». */
@@ -98,11 +152,26 @@ export function parseLogsInitialFilter(params: URLSearchParams): LogsInitialFilt
     !!params.get("from") && !!params.get("to") && Number.isFinite(from) && Number.isFinite(to);
   const status = params.get("status");
   const done = params.get("done");
-  if (!hasWindow && !status && !done) return null;
+  // §102.6: фильтры вкладки «Метрики» переезжают вместе с окном.
+  const method = params.get("method") ?? "";
+  const q = params.get("q") ?? "";
+  const clientHost = params.get("client_host") ?? "";
+  if (!hasWindow && !status && !done && !method && !q && !clientHost) return null;
   return {
     ...(hasWindow ? { from: msToDatetimeLocal(from), to: msToDatetimeLocal(to) } : {}),
     status: status === "err" || status === "ok" ? status : "all",
     ...(done === "no" || done === "yes" ? { done } : {}),
+    ...(method ? { method } : {}),
+    ...(clientHost ? { clientHost } : {}),
+    // Режимы поиска читаются только вместе с запросом — см. applyLogsFilter.
+    ...(q
+      ? {
+          q,
+          qCase: params.get("q_case") === "1",
+          qWord: params.get("q_word") === "1",
+          qRegex: params.get("q_regex") === "1",
+        }
+      : {}),
   };
 }
 
@@ -222,15 +291,50 @@ export function withMetricsView(
 /**
  * withLogsWindow — переход на «Логи» с временным окном столбца графика (§33.4):
  * клик по красному сегменту открывает только ошибки.
+ *
+ * §102.6: filter — фильтры вкладки-источника. Столбец посчитан ПОД ними, и без
+ * переноса журнал открывался шире, чем обещала высота столбца. Не задан —
+ * ключи фильтров явно удаляются (см. applyLogsFilter).
  */
-export function withLogsWindow(prev: URLSearchParams, r: LogsRange): URLSearchParams {
+export function withLogsWindow(
+  prev: URLSearchParams,
+  r: LogsRange,
+  filter?: LogsLinkFilter,
+  status: "all" | "ok" | "err" = "all",
+): URLSearchParams {
   const next = gotoTab(prev, "logs");
   next.set("from", String(Math.round(r.from)));
   next.set("to", String(Math.round(r.to)));
   next.delete("done");
-  if (r.onlyErrors) next.set("status", "err");
-  else next.delete("status");
-  return next;
+  // Клик по красному сегменту всегда значит «только ошибки»; в остальном
+  // действует быстрый фильтр вкладки-источника — под ним столбец и посчитан.
+  const eff = r.onlyErrors ? "err" : status;
+  if (eff === "all") next.delete("status");
+  else next.set("status", eff);
+  return applyLogsFilter(next, filter);
+}
+
+/**
+ * withLogsMethod — переход «Метрики → Логи» по строке рейтинга методов (§102.6).
+ *
+ * Окно берётся из периода метрик, фильтры — из применённых на вкладке, метод
+ * дописывается поверх: тултип строки посчитан ровно под этим набором.
+ * status="all" выражается отсутствием ключа — так же, как у окна столбца.
+ */
+export function withLogsMethod(
+  prev: URLSearchParams,
+  win: { from: number; to: number },
+  method: string,
+  filter?: LogsLinkFilter,
+  status: "all" | "ok" | "err" = "all",
+): URLSearchParams {
+  const next = gotoTab(prev, "logs");
+  next.set("from", String(Math.round(win.from)));
+  next.set("to", String(Math.round(win.to)));
+  next.delete("done");
+  if (status === "all") next.delete("status");
+  else next.set("status", status);
+  return applyLogsFilter(next, { ...filter, method });
 }
 
 /**
@@ -249,5 +353,7 @@ export function withFailedLogs(prev: URLSearchParams, f: LogsInitialFilter): URL
   else next.delete("status");
   if (f.done) next.set("done", f.done);
   else next.delete("done");
-  return next;
+  // «Очередь → Логи» своих фильтров не имеет: ключи §102.6 здесь ОБЯЗАНЫ
+  // очиститься, иначе пересланный адрес утащит в журнал чужой фильтр.
+  return applyLogsFilter(next, f);
 }

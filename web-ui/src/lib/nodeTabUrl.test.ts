@@ -7,6 +7,7 @@ import {
   parseNodeTab,
   shareableTabParams,
   withFailedLogs,
+  withLogsMethod,
   withLogsWindow,
   withMetricsView,
   withNodeTab,
@@ -275,5 +276,113 @@ describe("parseLogsInitialFilter", () => {
 
   it("битое окно не ломает разбор", () => {
     expect(parseLogsInitialFilter(new URLSearchParams("from=abc&to=def"))).toBeNull();
+  });
+});
+
+// §102.6: контракт дип-линка расширен фильтрами журнала. До раздела переход
+// нёс только from/to/status/done, и ссылка из «Метрик» лгала: тултип обещал
+// число, посчитанное под полнотекстовым фильтром вкладки, а журнал открывался
+// без него.
+
+describe("фильтры в ссылке на журнал (§102.6)", () => {
+  const prev = () => new URLSearchParams("tab=metrics&range=24h&team=vika");
+
+  it("withLogsMethod несёт окно, метод и применённые фильтры", () => {
+    const next = withLogsMethod(prev(), { from: 1000, to: 2000 }, "v1/suggest", {
+      q: "inn",
+      qCase: true,
+      qRegex: true,
+      clientHost: "app-01",
+    });
+    expect(next.get("tab")).toBe("logs");
+    expect(next.get("from")).toBe("1000");
+    expect(next.get("to")).toBe("2000");
+    expect(next.get("method")).toBe("v1/suggest");
+    expect(next.get("q")).toBe("inn");
+    expect(next.get("q_case")).toBe("1");
+    expect(next.get("q_regex")).toBe("1");
+    expect(next.get("q_word")).toBeNull();
+    expect(next.get("client_host")).toBe("app-01");
+    // Ключи вкладки-источника ушли, чужие остались (правило §54).
+    expect(next.get("range")).toBeNull();
+    expect(next.get("team")).toBe("vika");
+  });
+
+  it("метод ссылки перекрывает метод из фильтров вкладки", () => {
+    const next = withLogsMethod(prev(), { from: 1, to: 2 }, "v1/b", { method: "v1/a" });
+    expect(next.get("method")).toBe("v1/b");
+  });
+
+  it("status=all выражается отсутствием ключа, ok/err — значением", () => {
+    expect(withLogsMethod(prev(), { from: 1, to: 2 }, "m").get("status")).toBeNull();
+    expect(withLogsMethod(prev(), { from: 1, to: 2 }, "m", undefined, "err").get("status")).toBe("err");
+    expect(withLogsMethod(prev(), { from: 1, to: 2 }, "m", undefined, "ok").get("status")).toBe("ok");
+  });
+
+  it("режимы поиска без самого запроса в адрес не попадают", () => {
+    const next = withLogsMethod(prev(), { from: 1, to: 2 }, "m", { qCase: true, qWord: true });
+    expect(next.get("q")).toBeNull();
+    expect(next.get("q_case")).toBeNull();
+    expect(next.get("q_word")).toBeNull();
+  });
+
+  it("withLogsWindow переносит фильтры столбца и чистит их, когда они не заданы", () => {
+    const withFilter = withLogsWindow(prev(), { from: 10, to: 20, onlyErrors: true }, { q: "x" });
+    expect(withFilter.get("status")).toBe("err");
+    expect(withFilter.get("q")).toBe("x");
+
+    // Тот же переход без фильтров поверх адреса, где они были: ключи ОБЯЗАНЫ
+    // исчезнуть, иначе пересланный адрес утащит чужой фильтр.
+    const dirty = new URLSearchParams("tab=logs&method=v1/a&q=x&q_case=1&client_host=h");
+    const clean = withLogsWindow(dirty, { from: 10, to: 20, onlyErrors: false });
+    for (const k of ["method", "q", "q_case", "client_host"]) expect(clean.get(k)).toBeNull();
+  });
+
+  it("быстрый фильтр вкладки-источника переезжает вместе со столбцом", () => {
+    // Столбец посчитан под status=ok — журнал без него показал бы и ошибки.
+    const next = withLogsWindow(prev(), { from: 1, to: 2, onlyErrors: false }, undefined, "ok");
+    expect(next.get("status")).toBe("ok");
+    // Клик по красному сегменту сильнее: он и означает «только ошибки».
+    const red = withLogsWindow(prev(), { from: 1, to: 2, onlyErrors: true }, undefined, "ok");
+    expect(red.get("status")).toBe("err");
+  });
+
+  it("«Очередь → Логи» своих фильтров не имеет и чистит чужие", () => {
+    const dirty = new URLSearchParams("tab=logs&method=v1/a&q=x&q_word=1&client_host=h");
+    const next = withFailedLogs(dirty, { from: "2026-09-16T10:00", to: "2026-09-16T11:00", done: "no" });
+    expect(next.get("done")).toBe("no");
+    for (const k of ["method", "q", "q_word", "client_host"]) expect(next.get(k)).toBeNull();
+  });
+
+  it("уход с «Логов» уносит и новые ключи фильтров", () => {
+    const prevUrl = new URLSearchParams("tab=logs&from=1&to=2&method=v1/a&q=x&client_host=h&team=vika");
+    const next = withNodeTab(prevUrl, "overview");
+    for (const k of ["from", "to", "method", "q", "client_host"]) expect(next.get(k)).toBeNull();
+    expect(next.get("team")).toBe("vika");
+  });
+});
+
+describe("parseLogsInitialFilter: фильтры из адреса (§102.6)", () => {
+  it("читает метод, запрос с режимами и хост клиента", () => {
+    const f = parseLogsInitialFilter(
+      new URLSearchParams("from=1000&to=2000&method=v1/a&q=inn&q_case=1&q_regex=1&client_host=app-01"),
+    );
+    expect(f?.method).toBe("v1/a");
+    expect(f?.q).toBe("inn");
+    expect(f?.qCase).toBe(true);
+    expect(f?.qWord).toBe(false);
+    expect(f?.qRegex).toBe(true);
+    expect(f?.clientHost).toBe("app-01");
+  });
+
+  it("фильтр без окна — тоже фильтр, а не null", () => {
+    const f = parseLogsInitialFilter(new URLSearchParams("method=v1/a"));
+    expect(f).not.toBeNull();
+    expect(f?.method).toBe("v1/a");
+    expect(f?.from).toBeUndefined();
+  });
+
+  it("режимы без запроса игнорируются", () => {
+    expect(parseLogsInitialFilter(new URLSearchParams("q_case=1&q_word=1"))).toBeNull();
   });
 });

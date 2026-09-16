@@ -2,7 +2,15 @@ import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { type LogsInitialFilter } from "../components/node/LogsTab";
-import { type NodeTab, withFailedLogs, withNodeTab } from "./nodeTabUrl";
+import { type LogsRange } from "../components/ui";
+import {
+  type LogsLinkFilter,
+  type NodeTab,
+  withFailedLogs,
+  withLogsMethod,
+  withLogsWindow,
+  withNodeTab,
+} from "./nodeTabUrl";
 
 // Адреса переходов между вкладками узла — для <Link>, а не для обработчика.
 //
@@ -20,6 +28,20 @@ export type NodeTabLinks = {
   tab: (t: NodeTab) => { search: string };
   // failedLogs — «Очередь → Логи» с окном и фильтром недоставленных (§35).
   failedLogs: (f: LogsInitialFilter) => { search: string };
+  // logsWindow — «Метрики → Логи» за окно столбца графика (§33.4) под теми же
+  // фильтрами, что считали столбец (§102.6).
+  logsWindow: (
+    r: LogsRange,
+    filter?: LogsLinkFilter,
+    status?: "all" | "ok" | "err",
+  ) => { search: string };
+  // logsMethod — «Метрики → Логи» по строке рейтинга методов (§102.6).
+  logsMethod: (
+    win: { from: number; to: number },
+    method: string,
+    filter?: LogsLinkFilter,
+    status?: "all" | "ok" | "err",
+  ) => { search: string };
 };
 
 /**
@@ -40,6 +62,15 @@ export function useNodeTabTo(): NodeTabLinks {
     () => ({
       tab: (t: NodeTab) => ({ search: `?${withNodeTab(params, t)}` }),
       failedLogs: (f: LogsInitialFilter) => ({ search: `?${withFailedLogs(params, f)}` }),
+      logsWindow: (r: LogsRange, filter?: LogsLinkFilter, status?: "all" | "ok" | "err") => ({
+        search: `?${withLogsWindow(params, r, filter, status)}`,
+      }),
+      logsMethod: (
+        win: { from: number; to: number },
+        method: string,
+        filter?: LogsLinkFilter,
+        status?: "all" | "ok" | "err",
+      ) => ({ search: `?${withLogsMethod(params, win, method, filter, status)}` }),
     }),
     [params],
   );

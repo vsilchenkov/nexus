@@ -25,7 +25,12 @@ import {
   stepsForPeriod,
   type ChartStep,
 } from "../../lib/period";
-import { parseMetricsView, withMetricsView } from "../../lib/nodeTabUrl";
+import {
+  parseMetricsView,
+  withLogsWindow,
+  withMetricsView,
+  type LogsLinkFilter,
+} from "../../lib/nodeTabUrl";
 import { nodeLookbackMs } from "../../lib/nodeLookback";
 import { prefKeyNodeMetricsView, useNodeMetricsViewPref, useSetPref } from "../../lib/prefs";
 import {
@@ -42,7 +47,8 @@ import { CapacityCard } from "./CapacityCard";
 
 // MetricsTab — вкладка «Метрики» узла (§21): перцентили + счётчики + график
 // за выбранный период. Источник — ClickHouse (точные quantile). По умолчанию 24h.
-// onOpenLogs (§33.4) — клик по столбцу графика открывает логи за момент.
+// §33.4/§102.6: переход в журнал строит САМА вкладка, а не колбэк родителя —
+// адрес обязан нести применённые здесь фильтры, а о них знает только она.
 //
 // §79.4: те же расширенные фильтры, что в журнале логов — KPI и график считаются
 // под ними. Полей дат в панели нет: окно задаёт выбор периода, два контрола,
@@ -52,10 +58,8 @@ import { CapacityCard } from "./CapacityCard";
 // столбцов по суткам).
 export function MetricsTab({
   node,
-  onOpenLogs,
 }: {
   node: Node;
-  onOpenLogs?: (range: LogsRange) => void;
   // §84.8: переход на вкладку «Очередь» — ёмкость отвечает «помещается ли
   // узел», а «сколько ждёт прямо сейчас» живёт там.
 }) {
@@ -150,7 +154,30 @@ export function MetricsTab({
     [applied, status],
   );
 
-  const m = useNodeMetrics(node.id, period, step, filterParams, viewReady);
+  const m = useNodeMetrics(node.id, period, step, filterParams, viewReady, true);
+
+  // §102.6: журнал открывается ПОД теми же фильтрами, под которыми посчитано
+  // то, по чему кликнули. Иначе столбец обещает одно число, а журнал показывает
+  // другое — дыра, существовавшая у клика по столбцу с самого §33.4.
+  const linkFilter: LogsLinkFilter = useMemo(
+    () => ({
+      method: applied.method,
+      q: applied.q,
+      qCase: applied.qCase,
+      qWord: applied.qWord,
+      qRegex: applied.qRegex,
+      clientHost: applied.clientHost,
+    }),
+    [applied],
+  );
+  // Клик по столбцу остаётся переходом-действием (сегменты столбца — не ссылки),
+  // но адрес ему строит вкладка: только она знает свои применённые фильтры.
+  const openLogsAt = useCallback(
+    (r: LogsRange) => {
+      setSearchParams((prev) => withLogsWindow(prev, r, linkFilter, status));
+    },
+    [setSearchParams, linkFilter, status],
+  );
 
   // §84.6: «за всё время» — СТРОГО по клику и без поллинга. Полный
   // max(date_request) без окна читает колонку на всей таблице (боевая внешняя
@@ -294,7 +321,7 @@ export function MetricsTab({
           data={m.data?.series ?? []}
           height={180}
           bucketMs={m.data?.step_seconds ? m.data.step_seconds * 1000 : undefined}
-          onOpenLogs={node.clickhouse_table ? onOpenLogs : undefined}
+          onOpenLogs={node.clickhouse_table ? openLogsAt : undefined}
         />
       </Card>
 
