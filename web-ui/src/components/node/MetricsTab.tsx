@@ -10,6 +10,7 @@ import {
   Kpi,
   KpiRow,
   LabelHint,
+  MethodsChart,
   PeriodPicker,
   Seg,
   TrafficChart,
@@ -22,6 +23,7 @@ import {
   defaultStepFor,
   isStepTooFine,
   normalizeStepForPeriod,
+  periodWindow,
   stepsForPeriod,
   type ChartStep,
 } from "../../lib/period";
@@ -31,6 +33,7 @@ import {
   withMetricsView,
   type LogsLinkFilter,
 } from "../../lib/nodeTabUrl";
+import { useNodeTabTo } from "../../lib/nodeTabLink";
 import { nodeLookbackMs } from "../../lib/nodeLookback";
 import { prefKeyNodeMetricsView, useNodeMetricsViewPref, useSetPref } from "../../lib/prefs";
 import {
@@ -170,6 +173,7 @@ export function MetricsTab({
     }),
     [applied],
   );
+  const links = useNodeTabTo();
   // Клик по столбцу остаётся переходом-действием (сегменты столбца — не ссылки),
   // но адрес ему строит вкладка: только она знает свои применённые фильтры.
   const openLogsAt = useCallback(
@@ -195,6 +199,40 @@ export function MetricsTab({
   }, [node.id]);
   const kpi = m.data?.kpi;
   const chartUnavailable = m.data && !m.data.chart_available;
+
+  // §102: состояние карточки «Запросы по методам». Каждое «нечего показывать»
+  // названо своей причиной: пустая карточка без объяснения читается как поломка.
+  const methods = m.data?.methods ?? [];
+  const methodsAvailable = m.data?.methods_available ?? false;
+  const methodsHint = !m.data
+    ? null
+    : applied.method
+      ? // Фильтр по методу вырождает рейтинг в одну строку со 100 %.
+        "metrics.methods.filtered"
+      : !methodsAvailable
+        ? "metrics.methods.unavailable"
+        : methods.length === 0
+          ? "metrics.no_data"
+          : methods.length === 1
+            ? methods[0].method
+              ? "metrics.methods.single"
+              : // Единственная группа с пустым method — узел не проксирует подпути.
+                "metrics.methods.no_subpaths"
+            : null;
+  // Окно ссылки считается на рендере: у пресета это «последние N от СЕЙЧАС», и
+  // адрес обязан описывать то же окно, что посчитал сервер (расхождение —
+  // секунды между рендером и запросом, как у ссылки из столбца графика).
+  const methodWindow = periodWindow(period);
+  const methodHref = useCallback(
+    (method: string) =>
+      links.logsMethod(
+        { from: methodWindow.since, to: methodWindow.until },
+        method,
+        linkFilter,
+        status,
+      ).search,
+    [links, methodWindow.since, methodWindow.until, linkFilter, status],
+  );
   const byAttempts = m.data?.chart_unit === "attempts";
   const filtersActive =
     !advFormEqual(applied, emptyAdvForm) || status !== "all";
@@ -324,6 +362,31 @@ export function MetricsTab({
           onOpenLogs={node.clickhouse_table ? openLogsAt : undefined}
         />
       </Card>
+
+      {/* §102: рейтинг подпутей — СРАЗУ под графиком «Запросы»: тот же период,
+          те же фильтры, та же единица счёта (запись). Карточки нет вовсе, когда
+          у узла нет таблицы логов — сверху уже висит общая подсказка. */}
+      {m.data?.chart_available && (
+        <Card>
+          <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
+            {t("metrics.methods.title")}
+            <LabelHint
+              content={<div className="max-w-xs text-left">{t("metrics.methods.hint")}</div>}
+            />
+          </div>
+          {methodsHint ? (
+            <div className="py-2 text-xs text-fg-subtle">{t(methodsHint)}</div>
+          ) : (
+            <MethodsChart
+              data={methods}
+              total={kpi?.total ?? 0}
+              delivered={kpi?.delivered ?? 0}
+              truncated={m.data.methods_truncated}
+              hrefFor={methodHref}
+            />
+          )}
+        </Card>
+      )}
 
       {/* §84.5: латентность во времени — под графиком трафика и в тех же
           столбцах. Два числа в KPI (p95/p99) не отвечают на вопрос «когда было
