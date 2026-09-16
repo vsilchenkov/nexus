@@ -81,19 +81,18 @@ func (c *Client) instantScalarAt(ctx context.Context, query string, at time.Time
 	return float64(vec[0].Value), nil
 }
 
-// promLabel экранирует значение метки для PromQL-селектора (двойные кавычки):
-// path узла может содержать спецсимволы, требующие экранирования.
+// promLabel экранирует значение метки для PromQL-селектора (двойные кавычки).
 func promLabel(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(s)
 }
 
-// nonNegU64 округляет неотрицательное float-значение в uint64 (отрицательные
-// и NaN → 0). Дубль usecase.f2u, чтобы не тащить зависимость на usecase.
-func nonNegU64(v float64) uint64 {
-	if math.IsNaN(v) || v <= 0 {
-		return 0
+// teamMatcher — дополнительный матчер метки team внутри селектора (§101.9):
+// пустой слог фильтра не добавляет.
+func teamMatcher(team string) string {
+	if team == "" {
+		return ""
 	}
-	return uint64(v + 0.5)
+	return fmt.Sprintf(`,team="%s"`, promLabel(team))
 }
 
 // quantileMs нормализует результат histogram_quantile (секунды) в мс:
@@ -105,10 +104,8 @@ func quantileMs(v float64) float64 {
 	return v * 1000
 }
 
-// instantByLabel выполняет instant-query вида `sum by (<label>)(...)` на момент
-// at и собирает результат в map по значению метки label. Сэмплы без метки
-// пропускаются (агрегат без группировки не имеет отношения к ключу).
-func (c *Client) instantByLabel(ctx context.Context, query, label string, at time.Time) (map[string]float64, error) {
+// instantVector выполняет instant-query на момент at и ждёт вектор.
+func (c *Client) instantVector(ctx context.Context, query string, at time.Time) (model.Vector, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	val, _, err := c.api.Query(ctx, query, at)
@@ -118,6 +115,17 @@ func (c *Client) instantByLabel(ctx context.Context, query, label string, at tim
 	vec, ok := val.(model.Vector)
 	if !ok {
 		return nil, fmt.Errorf("prometheus query %q: unexpected result type %T", query, val)
+	}
+	return vec, nil
+}
+
+// instantByLabel выполняет instant-query вида `sum by (<label>)(...)` на момент
+// at и собирает результат в map по значению метки label. Сэмплы без метки
+// пропускаются (агрегат без группировки не имеет отношения к ключу).
+func (c *Client) instantByLabel(ctx context.Context, query, label string, at time.Time) (map[string]float64, error) {
+	vec, err := c.instantVector(ctx, query, at)
+	if err != nil {
+		return nil, err
 	}
 	out := make(map[string]float64, len(vec))
 	for _, s := range vec {
@@ -130,26 +138,49 @@ func (c *Client) instantByLabel(ctx context.Context, query, label string, at tim
 	return out, nil
 }
 
-// instantByNode — instantByLabel по метке node (path узла).
-func (c *Client) instantByNode(ctx context.Context, query string, at time.Time) (map[string]float64, error) {
-	return c.instantByLabel(ctx, query, "node", at)
+// nodeKeyOf — ключ узла по меткам ряда (§101.9). Ряд без метки node — выход
+// до резолва узла (400/405/413/429, §101.3): к узлу он отношения не имеет.
+func nodeKeyOf(m model.Metric) (port.NodeKey, bool) {
+	path := string(m["node"])
+	if path == "" {
+		return port.NodeKey{}, false
+	}
+	return port.NodeKey{Team: string(m["team"]), Path: path}, true
+}
+
+// instantByNodeKey выполняет instant-query вида `… by (team, node)(…)` на
+// момент at и собирает результат по паре меток.
+func (c *Client) instantByNodeKey(ctx context.Context, query string, at time.Time) (map[port.NodeKey]float64, error) {
+	vec, err := c.instantVector(ctx, query, at)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[port.NodeKey]float64, len(vec))
+	for _, s := range vec {
+		if key, ok := nodeKeyOf(s.Metric); ok {
+			out[key] += float64(s.Value)
+		}
+	}
+	return out, nil
 }
 
 // GlobalTotals — incoming (receiver) / outgoing (sender) / errors (sender 0|4xx|5xx).
-func (c *Client) GlobalTotals(ctx context.Context, window time.Duration) (port.GlobalTotals, error) {
+// Непустой team сужает суммы до рядов команды (§101.9).
+func (c *Client) GlobalTotals(ctx context.Context, window time.Duration, team string) (port.GlobalTotals, error) {
 	w := promRange(window)
+	tm := teamMatcher(team)
 	var t port.GlobalTotals
 	var err error
 	if t.Incoming, err = c.instantScalar(ctx,
-		fmt.Sprintf(`sum(increase(nexus_requests_total{service="receiver"}[%s]))`, w)); err != nil {
+		fmt.Sprintf(`sum(increase(nexus_requests_total{service="receiver"%s}[%s]))`, tm, w)); err != nil {
 		return t, err
 	}
 	if t.Outgoing, err = c.instantScalar(ctx,
-		fmt.Sprintf(`sum(increase(nexus_requests_total{service="sender"}[%s]))`, w)); err != nil {
+		fmt.Sprintf(`sum(increase(nexus_requests_total{service="sender"%s}[%s]))`, tm, w)); err != nil {
 		return t, err
 	}
 	if t.Errors, err = c.instantScalar(ctx,
-		fmt.Sprintf(`sum(increase(nexus_requests_total{service="sender",status=~"0|[45].."}[%s]))`, w)); err != nil {
+		fmt.Sprintf(`sum(increase(nexus_requests_total{service="sender",status=~"0|[45].."%s}[%s]))`, tm, w)); err != nil {
 		return t, err
 	}
 	return t, nil
@@ -162,46 +193,46 @@ func (c *Client) KafkaQueue(ctx context.Context) (float64, error) {
 
 // NodeErrors — per-node число «незавершённых» вызовов (done=0) за окно
 // из nexus_request_incomplete_total (§22, Telegram-алерты).
-func (c *Client) NodeErrors(ctx context.Context, window time.Duration) (map[string]float64, error) {
-	return c.instantByNode(ctx,
-		fmt.Sprintf(`sum by (node)(increase(nexus_request_incomplete_total{service="sender"}[%s]))`,
+func (c *Client) NodeErrors(ctx context.Context, window time.Duration) (map[port.NodeKey]float64, error) {
+	return c.instantByNodeKey(ctx,
+		fmt.Sprintf(`sum by (team, node)(increase(nexus_request_incomplete_total{service="sender"}[%s]))`,
 			promRange(window)), time.Now())
 }
 
 // NodeThroughput — per-node in/out/errors за период (since, until] (ключ —
-// метка node = path). Окно = until-since, запрос вычисляется на момент until
-// (поддержка произвольного календарного периода, §28 Пункт 4).
-func (c *Client) NodeThroughput(ctx context.Context, since, until time.Time) (map[string]port.NodeThroughput, error) {
+// пара меток team и node, §101.9). Окно = until-since, запрос вычисляется на
+// момент until (поддержка произвольного календарного периода, §28 Пункт 4).
+func (c *Client) NodeThroughput(ctx context.Context, since, until time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
 	w := promRange(until.Sub(since))
-	in, err := c.instantByNode(ctx,
-		fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="receiver"}[%s]))`, w), until)
+	in, err := c.instantByNodeKey(ctx,
+		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="receiver"}[%s]))`, w), until)
 	if err != nil {
 		return nil, err
 	}
-	out, err := c.instantByNode(ctx,
-		fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="sender"}[%s]))`, w), until)
+	out, err := c.instantByNodeKey(ctx,
+		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="sender"}[%s]))`, w), until)
 	if err != nil {
 		return nil, err
 	}
-	errs, err := c.instantByNode(ctx,
-		fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="sender",status=~"0|[45].."}[%s]))`, w), until)
+	errs, err := c.instantByNodeKey(ctx,
+		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="sender",status=~"0|[45].."}[%s]))`, w), until)
 	if err != nil {
 		return nil, err
 	}
 	// p95 длительности исходящих (Sender) по узлам — гистограмма уже пишется
 	// и sync, и async (§22, новой метрики не нужно). Значение в секундах → мс.
-	p95, err := c.instantByNode(ctx,
-		fmt.Sprintf(`histogram_quantile(0.95, sum by (node, le)(rate(nexus_request_duration_seconds_bucket{service="sender"}[%s])))`, w), until)
+	p95, err := c.instantByNodeKey(ctx,
+		fmt.Sprintf(`histogram_quantile(0.95, sum by (team, node, le)(rate(nexus_request_duration_seconds_bucket{service="sender"}[%s])))`, w), until)
 	if err != nil {
 		return nil, err
 	}
 
-	res := make(map[string]port.NodeThroughput, len(out))
-	merge := func(m map[string]float64, set func(*port.NodeThroughput, float64)) {
-		for node, v := range m {
-			t := res[node]
+	res := make(map[port.NodeKey]port.NodeThroughput, len(out))
+	merge := func(m map[port.NodeKey]float64, set func(*port.NodeThroughput, float64)) {
+		for key, v := range m {
+			t := res[key]
 			set(&t, v)
-			res[node] = t
+			res[key] = t
 		}
 	}
 	merge(in, func(t *port.NodeThroughput, v float64) { t.In = v })
@@ -216,17 +247,17 @@ func (c *Client) NodeThroughput(ctx context.Context, since, until time.Time) (ma
 }
 
 // NodeLastErrors — per-node исход последнего исходящего вызова (§41, «Down»):
-// instant gauge nexus_node_last_request_error на момент at. max by(node) — при
-// нескольких репликах Sender узел «Down», если у любой последний вызов был
+// instant gauge nexus_node_last_request_error на момент at. max by (team, node) —
+// при нескольких репликах Sender узел «Down», если у любой последний вызов был
 // ошибкой. Окно не используется (gauge мгновенный).
-func (c *Client) NodeLastErrors(ctx context.Context, at time.Time) (map[string]float64, error) {
-	return c.instantByNode(ctx,
-		`max by (node)(nexus_node_last_request_error{service="sender"})`, at)
+func (c *Client) NodeLastErrors(ctx context.Context, at time.Time) (map[port.NodeKey]float64, error) {
+	return c.instantByNodeKey(ctx,
+		`max by (team, node)(nexus_node_last_request_error{service="sender"})`, at)
 }
 
 // NodeSeries — спарклайн входящего трафика per-node одним range-запросом
 // (§22). Возвращает по buckets точек на узел; недостающие — нули.
-func (c *Client) NodeSeries(ctx context.Context, since, until time.Time, buckets int) (map[string][]float64, error) {
+func (c *Client) NodeSeries(ctx context.Context, since, until time.Time, buckets int) (map[port.NodeKey][]float64, error) {
 	if buckets <= 0 {
 		buckets = 12
 	}
@@ -240,7 +271,7 @@ func (c *Client) NodeSeries(ctx context.Context, since, until time.Time, buckets
 
 	start := since
 	end := until
-	query := fmt.Sprintf(`sum by (node)(increase(nexus_requests_total{service="receiver"}[%s]))`, promRange(step))
+	query := fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="receiver"}[%s]))`, promRange(step))
 	val, _, err := c.api.QueryRange(ctx, query, promv1.Range{Start: start, End: end, Step: step})
 	if err != nil {
 		return nil, fmt.Errorf("prometheus query_range %q: %w", query, err)
@@ -249,115 +280,19 @@ func (c *Client) NodeSeries(ctx context.Context, since, until time.Time, buckets
 	if !ok {
 		return nil, fmt.Errorf("prometheus query_range %q: unexpected result type %T", query, val)
 	}
-	res := make(map[string][]float64, len(matrix))
+	res := make(map[port.NodeKey][]float64, len(matrix))
 	for _, stream := range matrix {
-		node := string(stream.Metric["node"])
-		if node == "" {
+		key, ok := nodeKeyOf(stream.Metric)
+		if !ok {
 			continue
 		}
 		pts := make([]float64, 0, len(stream.Values))
 		for _, sp := range stream.Values {
 			pts = append(pts, float64(sp.Value))
 		}
-		res[node] = pts
+		res[key] = pts
 	}
 	return res, nil
-}
-
-// NodeKPI — сводка одного узла (§21) за период (since, until] из per-node
-// счётчиков Sender'а. total/errors — increase() по nexus_requests_total /
-// nexus_request_incomplete_total; delivered = total-errors; p95/p99 — через
-// histogram_quantile по бакетам длительности. Запрос на момент until.
-func (c *Client) NodeKPI(ctx context.Context, node string, since, until time.Time) (port.NodeKPI, error) {
-	w := promRange(until.Sub(since))
-	lbl := promLabel(node)
-	sel := fmt.Sprintf(`{service="sender",node="%s"}`, lbl)
-
-	total, err := c.instantScalarAt(ctx,
-		fmt.Sprintf(`sum(increase(nexus_requests_total%s[%s]))`, sel, w), until)
-	if err != nil {
-		return port.NodeKPI{}, err
-	}
-	errs, err := c.instantScalarAt(ctx,
-		fmt.Sprintf(`sum(increase(nexus_request_incomplete_total%s[%s]))`, sel, w), until)
-	if err != nil {
-		return port.NodeKPI{}, err
-	}
-	p95, err := c.instantScalarAt(ctx,
-		fmt.Sprintf(`histogram_quantile(0.95, sum by (le)(rate(nexus_request_duration_seconds_bucket%s[%s])))`, sel, w), until)
-	if err != nil {
-		return port.NodeKPI{}, err
-	}
-	p99, err := c.instantScalarAt(ctx,
-		fmt.Sprintf(`histogram_quantile(0.99, sum by (le)(rate(nexus_request_duration_seconds_bucket%s[%s])))`, sel, w), until)
-	if err != nil {
-		return port.NodeKPI{}, err
-	}
-
-	tot := nonNegU64(total)
-	er := nonNegU64(errs)
-	delivered := uint64(0)
-	if tot > er {
-		delivered = tot - er
-	}
-	return port.NodeKPI{
-		Total:     tot,
-		Delivered: delivered,
-		Errors:    er,
-		P95ms:     quantileMs(p95),
-		P99ms:     quantileMs(p99),
-	}, nil
-}
-
-// NodeChart — ряд графика одного узла за период (since, until], buckets точек
-// (ASC, недостающие — нули). Count — все исходящие вызовы, Errors —
-// «незавершённые» (non-2xx). Два range-запроса (count/errors) с шагом step;
-// значения раскладываются по бакетам позиционно.
-func (c *Client) NodeChart(ctx context.Context, node string, since, until time.Time, buckets int) ([]port.SeriesPoint, error) {
-	if buckets <= 0 {
-		buckets = 48
-	}
-	if !until.After(since) {
-		return nil, fmt.Errorf("invalid window: until <= since")
-	}
-	step := until.Sub(since) / time.Duration(buckets)
-	if step <= 0 {
-		step = time.Minute
-	}
-	lbl := promLabel(node)
-	sel := fmt.Sprintf(`{service="sender",node="%s"}`, lbl)
-	stepSel := promRange(step)
-
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	// Start = since+step → первая точка покрывает (since, since+step], последняя
-	// (until-step, until]; ровно buckets интервалов в окне, как в прежнем CH-ряде.
-	rng := promv1.Range{Start: since.Add(step), End: until, Step: step}
-	counts, err := c.rangeSeriesValues(ctx,
-		fmt.Sprintf(`sum(increase(nexus_requests_total%s[%s]))`, sel, stepSel), rng)
-	if err != nil {
-		return nil, err
-	}
-	errsSeries, err := c.rangeSeriesValues(ctx,
-		fmt.Sprintf(`sum(increase(nexus_request_incomplete_total%s[%s]))`, sel, stepSel), rng)
-	if err != nil {
-		return nil, err
-	}
-
-	bucketMs := step.Milliseconds()
-	sinceMs := since.UnixMilli()
-	out := make([]port.SeriesPoint, buckets)
-	for i := range out {
-		out[i] = port.SeriesPoint{TsMs: sinceMs + int64(i)*bucketMs}
-		if i < len(counts) {
-			out[i].Count = nonNegU64(counts[i])
-		}
-		if i < len(errsSeries) {
-			out[i].Errors = nonNegU64(errsSeries[i])
-		}
-	}
-	return out, nil
 }
 
 // KafkaOverview — сводка Kafka-трафика за окно (since, until] (§4.1 spec).
@@ -500,26 +435,4 @@ func (c *Client) rangeSeriesPoints(ctx context.Context, query string, rng promv1
 		pts = append(pts, port.KafkaPoint{TsMs: int64(sp.Timestamp), V: v})
 	}
 	return pts, nil
-}
-
-// rangeSeriesValues выполняет range-query со скалярным агрегатом (sum(...) →
-// одна серия) и возвращает её значения в порядке возрастания времени. Пустой
-// результат (нет данных за окно) → nil без ошибки.
-func (c *Client) rangeSeriesValues(ctx context.Context, query string, rng promv1.Range) ([]float64, error) {
-	val, _, err := c.api.QueryRange(ctx, query, rng)
-	if err != nil {
-		return nil, fmt.Errorf("prometheus query_range %q: %w", query, err)
-	}
-	matrix, ok := val.(model.Matrix)
-	if !ok {
-		return nil, fmt.Errorf("prometheus query_range %q: unexpected result type %T", query, val)
-	}
-	if len(matrix) == 0 {
-		return nil, nil
-	}
-	vals := make([]float64, 0, len(matrix[0].Values))
-	for _, sp := range matrix[0].Values {
-		vals = append(vals, float64(sp.Value))
-	}
-	return vals, nil
 }

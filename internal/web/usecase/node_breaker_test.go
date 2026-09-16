@@ -14,35 +14,35 @@ import (
 	"nexus/internal/web/usecase/port"
 )
 
-// stubBreakerPort — управляемый port.NodeBreaker; фиксирует, по какому пути
-// узла его звали (ключ breaker'а — именно node.Path, а не id).
+// stubBreakerPort — управляемый port.NodeBreaker; фиксирует, по какому узлу его
+// звали (§101.6: ключ breaker'а — id узла, путь делят одноимённые узлы).
 type stubBreakerPort struct {
 	state     port.BreakerState
 	stateErr  error
 	resetErr  error
-	gotPaths  []string
+	gotIDs    []string
 	resetCall int
 }
 
-func (s *stubBreakerPort) State(_ context.Context, nodePath string) (port.BreakerState, error) {
-	s.gotPaths = append(s.gotPaths, nodePath)
+func (s *stubBreakerPort) State(_ context.Context, nodeID string) (port.BreakerState, error) {
+	s.gotIDs = append(s.gotIDs, nodeID)
 	return s.state, s.stateErr
 }
 
-func (s *stubBreakerPort) Reset(_ context.Context, nodePath string) (port.BreakerState, error) {
-	s.gotPaths = append(s.gotPaths, nodePath)
+func (s *stubBreakerPort) Reset(_ context.Context, nodeID string) (port.BreakerState, error) {
+	s.gotIDs = append(s.gotIDs, nodeID)
 	s.resetCall++
 	return s.state, s.resetErr
 }
 
 // stubStatusResetter — снятие бейджа «Down»; умеет отказывать.
 type stubStatusResetter struct {
-	err      error
-	gotPaths []string
+	err    error
+	gotIDs []string
 }
 
-func (s *stubStatusResetter) ClearLastOutcome(_ context.Context, nodePath string) error {
-	s.gotPaths = append(s.gotPaths, nodePath)
+func (s *stubStatusResetter) ClearLastOutcome(_ context.Context, nodeID string) error {
+	s.gotIDs = append(s.gotIDs, nodeID)
 	return s.err
 }
 
@@ -76,7 +76,7 @@ func TestBreakerUC_State_OpenNode(t *testing.T) {
 	assert.Equal(t, 5, got.Failures)
 	assert.Equal(t, 5, got.Threshold)
 	assert.Equal(t, 20*time.Second, got.RetryAfter)
-	assert.Equal(t, []string{"partner/echo"}, br.gotPaths, "ключ breaker'а — путь узла")
+	assert.Equal(t, []string{"n1"}, br.gotIDs, "§101.6: ключ breaker'а — id узла")
 }
 
 // Узел, по которому breaker ни разу не срабатывал: карточка обязана показать
@@ -142,7 +142,7 @@ func TestBreakerUC_Reset_OpenNode(t *testing.T) {
 	assert.Equal(t, domain.BreakerStateOpen, res.PreviousState, "в ответе состояние ДО сброса")
 	assert.Equal(t, 5, res.PreviousFailures)
 	assert.True(t, res.NodeStatusCleared)
-	assert.Equal(t, []string{"partner/echo"}, st.gotPaths, "бейдж «Down» снят тем же путём")
+	assert.Equal(t, []string{"n1"}, st.gotIDs, "бейдж «Down» снят по id узла")
 
 	require.Len(t, audit.entries, 1)
 	e := audit.entries[0]

@@ -77,8 +77,10 @@ Invoke-RestMethod -Uri "$base/api/metrics/overview" -Headers $h -TimeoutSec 25
      Prometheus-regex ошибок `0|[45]..` их не считает.
    - `Prometheus < ClickHouse` по входящим — `increase()` занижает (экстраполяция + сброс счётчиков
      при рестартах) против точного `countDistinct`.
-5. **Узлы только в Prometheus** (в `diagnostics.nodes` без CH-значений) — orphan/удалённые узлы или
-   трафик к несконфигурированным путям; в таблицу (только сконфигурированные узлы) не попадают.
+5. **Узлы только в Prometheus** (в `diagnostics.nodes` без CH-значений) — переименованные и удалённые
+   узлы **текущей команды** токена; в таблицу (только сконфигурированные узлы) не попадают. С §101.9
+   diagnostics не отдаёт ряды других команд, `node=""` и `<unresolved>`, а Prometheus-итоги считает
+   по слогу этой команды — сравнивать их можно только с ClickHouse той же команды.
 
 ## 5. Гипотезы проблем со счётчиками (что проверять)
 
@@ -89,6 +91,13 @@ Invoke-RestMethod -Uri "$base/api/metrics/overview" -Headers $h -TimeoutSec 25
   из Prometheus.
 - «Пусто/нули везде» → проверь `prometheus_available`/`clickhouse_available`; нестабильный
   react-query queryKey; недоступность CH (file-fallback).
+- «В diagnostics Prometheus-блок пустой, `prometheus_available=false`, хотя Prometheus жив» → у
+  сессии токена нет текущей команды, и слог неизвестен (§101.9). Проверь `current_team_id` в
+  `/api/auth/me`.
+- «Prometheus-числа узла за окно, захватившее выкат §101, ниже ClickHouse» → ряды, собранные до
+  обновления (`team=""`), приписываются узлу только при пути, однозначном во всём инстансе, и только
+  счётчиками. У одноимённых узлов часть окна до выката не учитывается — это ожидаемо и уходит вместе с
+  окном.
 
 ## 6. Безопасность
 

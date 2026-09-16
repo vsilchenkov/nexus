@@ -10,6 +10,8 @@ import (
 	kafka "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"nexus/internal/web/usecase/port"
 )
 
 func mkMsg(t *testing.T, key string, env queueEnvelope, partition int, offset int64) kafka.Message {
@@ -23,13 +25,14 @@ func TestDecodeQueueMeta(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC().Truncate(time.Second)
 	env := queueEnvelope{
-		ID: "id-1", NodePath: "partner/echo", Method: "POST",
+		ID: "id-1", NodePath: "partner/echo", NodeID: "node-own", Method: "POST",
 		TargetURL: "https://api.example.com/x", Body: []byte(`{"k":"v"}`), ReceivedAt: now,
 	}
+	owner := port.QueueOwner{Path: "partner/echo", NodeID: "node-own"}
 
 	t.Run("matching key", func(t *testing.T) {
 		t.Parallel()
-		meta, ok := decodeQueueMeta(mkMsg(t, "partner/echo", env, 2, 42), "partner/echo", "nexus.async")
+		meta, ok := decodeQueueMeta(mkMsg(t, "partner/echo", env, 2, 42), owner, "nexus.async")
 		require.True(t, ok)
 		assert.Equal(t, "id-1", meta.ID)
 		assert.Equal(t, 2, meta.Partition)
@@ -43,14 +46,39 @@ func TestDecodeQueueMeta(t *testing.T) {
 
 	t.Run("non-matching key skipped", func(t *testing.T) {
 		t.Parallel()
-		_, ok := decodeQueueMeta(mkMsg(t, "other/node", env, 0, 1), "partner/echo", "nexus.async")
+		_, ok := decodeQueueMeta(mkMsg(t, "other/node", env, 0, 1), owner, "nexus.async")
 		assert.False(t, ok, "сообщение другого узла не подходит")
+	})
+
+	// §101.8: одноимённый узел другой команды пишет с тем же ключом — отличает
+	// его только node_id конверта.
+	t.Run("same key, another node_id skipped", func(t *testing.T) {
+		t.Parallel()
+		foreign := env
+		foreign.NodeID = "node-foreign"
+		_, ok := decodeQueueMeta(mkMsg(t, "partner/echo", foreign, 0, 1), owner, "nexus.async")
+		assert.False(t, ok, "сообщение одноимённого узла другой команды не подходит")
+	})
+
+	t.Run("legacy envelope only for unambiguous path", func(t *testing.T) {
+		t.Parallel()
+		legacy := env
+		legacy.NodeID = ""
+		msg := mkMsg(t, "partner/echo", legacy, 0, 1)
+
+		_, ok := decodeQueueMeta(msg, owner, "nexus.async")
+		assert.False(t, ok, "без AcceptLegacy старый конверт мог быть чужим")
+
+		unambiguous := owner
+		unambiguous.AcceptLegacy = true
+		_, ok = decodeQueueMeta(msg, unambiguous, "nexus.async")
+		assert.True(t, ok, "путь однозначен — старый конверт свой")
 	})
 
 	t.Run("broken json skipped", func(t *testing.T) {
 		t.Parallel()
 		msg := kafka.Message{Key: []byte("partner/echo"), Value: []byte("not-json")}
-		_, ok := decodeQueueMeta(msg, "partner/echo", "nexus.async")
+		_, ok := decodeQueueMeta(msg, owner, "nexus.async")
 		assert.False(t, ok, "битый JSON пропускается, не валит скан")
 	})
 }
@@ -99,6 +127,8 @@ func TestQueueEnvelopeTagsMatchCanon(t *testing.T) {
 	canon := map[string]string{
 		"id":           "string",
 		"node_path":    "string",
+		"node_id":      "string",
+		"team":         "string",
 		"method":       "string",
 		"target_url":   "string",
 		"headers":      "map[string]string",

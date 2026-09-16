@@ -32,16 +32,32 @@
         "type": "datasource"
       },
       {
+        "allValue": ".*",
         "current": { "selected": false, "text": "All", "value": "$__all" },
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "definition": "label_values(nexus_requests_total{method=\"requestAsync\"}, node)",
+        "definition": "label_values(nexus_requests_total{method=\"requestAsync\"}, team)",
+        "description": "Команда узла (§101): путь узла уникален лишь внутри команды. «All» — регэксп .*, он пропускает и ряды без команды, собранные до обновления.",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Team",
+        "multi": true,
+        "name": "team",
+        "options": [],
+        "query": { "qryType": 1, "query": "label_values(nexus_requests_total{method=\"requestAsync\"}, team)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "definition": "label_values(nexus_requests_total{method=\"requestAsync\",team=~\"$team\"}, node)",
         "hide": 0,
         "includeAll": true,
         "label": "Node",
         "multi": true,
         "name": "node",
         "options": [],
-        "query": { "qryType": 1, "query": "label_values(nexus_requests_total{method=\"requestAsync\"}, node)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "query": { "qryType": 1, "query": "label_values(nexus_requests_total{method=\"requestAsync\",team=~\"$team\"}, node)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
         "refresh": 2,
         "type": "query"
       }
@@ -167,8 +183,8 @@
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "targets": [
         {
-          "expr": "topk(10, sum by (node) (rate(nexus_request_incomplete_total{service=\"sender\",method=\"requestAsync\",node=~\"$node\"}[5m])))",
-          "legendFormat": "{{node}}",
+          "expr": "topk(10, sum by (team, node) (rate(nexus_request_incomplete_total{service=\"sender\",method=\"requestAsync\",team=~\"$team\",node=~\"$node\"}[5m])))",
+          "legendFormat": "{{team}}/{{node}}",
           "refId": "A"
         }
       ]
@@ -183,8 +199,8 @@
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "targets": [
         {
-          "expr": "sum by (node) (increase(nexus_requests_total{status=\"cancelled\",node=~\"$node\"}[5m]))",
-          "legendFormat": "{{node}}",
+          "expr": "sum by (team, node) (increase(nexus_requests_total{status=\"cancelled\",team=~\"$team\",node=~\"$node\"}[5m]))",
+          "legendFormat": "{{team}}/{{node}}",
           "refId": "A"
         }
       ]

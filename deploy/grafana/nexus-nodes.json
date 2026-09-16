@@ -32,16 +32,32 @@
         "type": "datasource"
       },
       {
+        "allValue": ".*",
         "current": { "selected": false, "text": "All", "value": "$__all" },
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "definition": "label_values(nexus_requests_total{service=\"sender\"}, node)",
+        "definition": "label_values(nexus_requests_total{service=\"sender\"}, team)",
+        "description": "Команда узла (§101): путь узла уникален лишь внутри команды. «All» — регэксп .*, он пропускает и ряды без команды, собранные до обновления.",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Team",
+        "multi": true,
+        "name": "team",
+        "options": [],
+        "query": { "qryType": 1, "query": "label_values(nexus_requests_total{service=\"sender\"}, team)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "refresh": 2,
+        "type": "query"
+      },
+      {
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "definition": "label_values(nexus_requests_total{service=\"sender\",team=~\"$team\"}, node)",
         "hide": 0,
         "includeAll": true,
         "label": "Node",
         "multi": true,
         "name": "node",
         "options": [],
-        "query": { "qryType": 1, "query": "label_values(nexus_requests_total{service=\"sender\"}, node)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
+        "query": { "qryType": 1, "query": "label_values(nexus_requests_total{service=\"sender\",team=~\"$team\"}, node)", "refId": "PrometheusVariableQueryEditor-VariableQuery" },
         "refresh": 2,
         "type": "query"
       }
@@ -62,7 +78,7 @@
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
-      "description": "Число узлов, чей последний исходящий запрос завершился transport-ошибкой или 5xx (gauge=2).",
+      "description": "Число узлов, чей последний исходящий запрос завершился transport-ошибкой или 5xx (gauge=2). Узел — пара команда/путь: одноимённые узлы разных команд считаются по отдельности (§101).",
       "options": {
         "colorMode": "background",
         "graphMode": "none",
@@ -87,7 +103,7 @@
       },
       "targets": [
         {
-          "expr": "count(max by (node) (nexus_node_last_request_error) == 2) or vector(0)",
+          "expr": "count(max by (team, node) (nexus_node_last_request_error{team=~\"$team\"}) == 2) or vector(0)",
           "instant": true,
           "legendFormat": "down",
           "refId": "A"
@@ -125,7 +141,7 @@
       },
       "targets": [
         {
-          "expr": "count(max by (node) (nexus_node_last_request_error) == 1) or vector(0)",
+          "expr": "count(max by (team, node) (nexus_node_last_request_error{team=~\"$team\"}) == 1) or vector(0)",
           "instant": true,
           "legendFormat": "degraded",
           "refId": "A"
@@ -156,7 +172,7 @@
       },
       "targets": [
         {
-          "expr": "count(max by (node) (nexus_node_last_request_error) == 0) or vector(0)",
+          "expr": "count(max by (team, node) (nexus_node_last_request_error{team=~\"$team\"}) == 0) or vector(0)",
           "instant": true,
           "legendFormat": "ok",
           "refId": "A"
@@ -197,7 +213,7 @@
       },
       "targets": [
         {
-          "expr": "sort_desc(max by (node) (nexus_node_last_request_error) > 0)",
+          "expr": "sort_desc(max by (team, node) (nexus_node_last_request_error{team=~\"$team\"}) > 0)",
           "instant": true,
           "format": "table",
           "refId": "A"
@@ -208,6 +224,7 @@
           "id": "organize",
           "options": {
             "excludeByName": { "Time": true },
+            "indexByName": { "team": 0, "node": 1, "Value": 2 },
             "renameByName": { "Value": "Status" }
           }
         }
@@ -219,7 +236,7 @@
       "type": "table",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 5 },
-      "description": "Сводка по всем узлам за выбранный период: отправлено запросов, ошибок, % ошибок, p95 латентности, текущий статус. Столбцы ошибок подсвечиваются.",
+      "description": "Сводка по всем узлам за выбранный период: отправлено запросов, ошибок, % ошибок, p95 латентности, текущий статус. Столбцы ошибок подсвечиваются. Строка — пара команда/путь (§101): запросы склеиваются трансформацией Merge по обеим меткам.",
       "options": {
         "showHeader": true,
         "sortBy": [{ "displayName": "Errors", "desc": true }]
@@ -313,31 +330,31 @@
       },
       "targets": [
         {
-          "expr": "sum by (node) (increase(nexus_requests_total{service=\"sender\",node=~\"$node\"}[$__range]))",
+          "expr": "sum by (team, node) (increase(nexus_requests_total{service=\"sender\",team=~\"$team\",node=~\"$node\"}[$__range]))",
           "instant": true,
           "format": "table",
           "refId": "A"
         },
         {
-          "expr": "sum by (node) (increase(nexus_request_incomplete_total{service=\"sender\",node=~\"$node\"}[$__range]))",
+          "expr": "sum by (team, node) (increase(nexus_request_incomplete_total{service=\"sender\",team=~\"$team\",node=~\"$node\"}[$__range]))",
           "instant": true,
           "format": "table",
           "refId": "B"
         },
         {
-          "expr": "sum by (node) (increase(nexus_request_incomplete_total{service=\"sender\",node=~\"$node\"}[$__range])) / sum by (node) (increase(nexus_requests_total{service=\"sender\",node=~\"$node\"}[$__range]))",
+          "expr": "sum by (team, node) (increase(nexus_request_incomplete_total{service=\"sender\",team=~\"$team\",node=~\"$node\"}[$__range])) / sum by (team, node) (increase(nexus_requests_total{service=\"sender\",team=~\"$team\",node=~\"$node\"}[$__range]))",
           "instant": true,
           "format": "table",
           "refId": "C"
         },
         {
-          "expr": "histogram_quantile(0.95, sum by (node, le) (rate(nexus_request_duration_seconds_bucket{service=\"sender\",node=~\"$node\"}[$__range])))",
+          "expr": "histogram_quantile(0.95, sum by (team, node, le) (rate(nexus_request_duration_seconds_bucket{service=\"sender\",team=~\"$team\",node=~\"$node\"}[$__range])))",
           "instant": true,
           "format": "table",
           "refId": "D"
         },
         {
-          "expr": "max by (node) (nexus_node_last_request_error{node=~\"$node\"})",
+          "expr": "max by (team, node) (nexus_node_last_request_error{team=~\"$team\",node=~\"$node\"})",
           "instant": true,
           "format": "table",
           "refId": "E"
@@ -345,14 +362,15 @@
       ],
       "transformations": [
         {
-          "id": "joinByField",
-          "options": { "byField": "node", "mode": "outer" }
+          "id": "merge",
+          "options": {}
         },
         {
           "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true
+            "excludeByName": { "Time": true },
+            "indexByName": {
+              "team": 0, "node": 1, "Value #A": 2, "Value #B": 3, "Value #C": 4, "Value #D": 5, "Value #E": 6
             },
             "renameByName": {
               "Value #A": "Requests",
@@ -374,8 +392,8 @@
       "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
       "targets": [
         {
-          "expr": "sum by (node) (rate(nexus_requests_total{service=\"sender\",node=~\"$node\"}[5m]))",
-          "legendFormat": "{{node}}",
+          "expr": "sum by (team, node) (rate(nexus_requests_total{service=\"sender\",team=~\"$team\",node=~\"$node\"}[5m]))",
+          "legendFormat": "{{team}}/{{node}}",
           "refId": "A"
         }
       ]
@@ -394,8 +412,8 @@
       "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
       "targets": [
         {
-          "expr": "topk(15, sum by (node) (rate(nexus_request_incomplete_total{service=\"sender\",node=~\"$node\"}[5m])))",
-          "legendFormat": "{{node}}",
+          "expr": "topk(15, sum by (team, node) (rate(nexus_request_incomplete_total{service=\"sender\",team=~\"$team\",node=~\"$node\"}[5m])))",
+          "legendFormat": "{{team}}/{{node}}",
           "refId": "A"
         }
       ]
@@ -409,8 +427,8 @@
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (node, le) (rate(nexus_request_duration_seconds_bucket{service=\"sender\",node=~\"$node\"}[5m])))",
-          "legendFormat": "{{node}}",
+          "expr": "histogram_quantile(0.95, sum by (team, node, le) (rate(nexus_request_duration_seconds_bucket{service=\"sender\",team=~\"$team\",node=~\"$node\"}[5m])))",
+          "legendFormat": "{{team}}/{{node}}",
           "refId": "A"
         }
       ]
@@ -451,8 +469,8 @@
       },
       "targets": [
         {
-          "expr": "max by (node) (nexus_node_last_request_error{node=~\"$node\"})",
-          "legendFormat": "{{node}}",
+          "expr": "max by (team, node) (nexus_node_last_request_error{team=~\"$team\",node=~\"$node\"})",
+          "legendFormat": "{{team}}/{{node}}",
           "refId": "A"
         }
       ]
@@ -493,8 +511,8 @@
       },
       "targets": [
         {
-          "expr": "max by (node) (nexus_rmq_connection_state{node=~\"$node\"})",
-          "legendFormat": "{{node}}",
+          "expr": "max by (team, node) (nexus_rmq_connection_state{team=~\"$team\",node=~\"$node\"})",
+          "legendFormat": "{{team}}/{{node}}",
           "refId": "A"
         }
       ]
@@ -508,13 +526,13 @@
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "targets": [
         {
-          "expr": "max by (node) (nexus_rmq_queue_depth{node=~\"$node\"})",
-          "legendFormat": "{{node}} depth",
+          "expr": "max by (team, node) (nexus_rmq_queue_depth{team=~\"$team\",node=~\"$node\"})",
+          "legendFormat": "{{team}}/{{node}} depth",
           "refId": "A"
         },
         {
-          "expr": "max by (node) (nexus_rmq_consumer_count{node=~\"$node\"})",
-          "legendFormat": "{{node}} consumers",
+          "expr": "max by (team, node) (nexus_rmq_consumer_count{team=~\"$team\",node=~\"$node\"})",
+          "legendFormat": "{{team}}/{{node}} consumers",
           "refId": "B"
         }
       ]
@@ -538,8 +556,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (node, status) (rate(nexus_rmq_messages_pulled_total{node=~\"$node\"}[5m]))",
-          "legendFormat": "{{node}} {{status}}",
+          "expr": "sum by (team, node, status) (rate(nexus_rmq_messages_pulled_total{team=~\"$team\",node=~\"$node\"}[5m]))",
+          "legendFormat": "{{team}}/{{node}} {{status}}",
           "refId": "A"
         }
       ]
@@ -563,7 +581,7 @@
       },
       "targets": [
         {
-          "expr": "max by (node, reason) (nexus_node_degraded{node=~\"$node\"}) == 1",
+          "expr": "max by (team, node, reason) (nexus_node_degraded{team=~\"$team\",node=~\"$node\"}) == 1",
           "instant": true,
           "format": "table",
           "refId": "A"
@@ -574,6 +592,7 @@
           "id": "organize",
           "options": {
             "excludeByName": { "Time": true, "Value": true },
+            "indexByName": { "team": 0, "node": 1, "reason": 2 },
             "renameByName": {}
           }
         }

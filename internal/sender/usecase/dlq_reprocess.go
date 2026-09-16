@@ -3,7 +3,6 @@ package usecase
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -105,24 +104,14 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 	if err := json.Unmarshal(raw, &env); err != nil {
 		// Битое сообщение — повторять бессмысленно, дропаем.
 		r.logger.ErrorWithOp("dlq envelope unmarshal failed", err, "dlq.reprocess")
-		r.record("", reprocessDropped)
+		r.record(metrics.NodeLabels{}, reprocessDropped)
 		return ReprocessCommit
 	}
 
-	// §36.3 шаг1: резолв узла.
-	node, err := r.nodes.GetByPath(ctx, env.NodePath)
-	if err != nil {
-		if errors.Is(err, domain.ErrNodeNotFound) {
-			r.logger.Info("dlq drop: unknown node",
-				r.logger.Str("node_path", env.NodePath),
-				r.logger.Str("id", env.ID))
-			r.record(env.NodePath, reprocessDropped)
-			return ReprocessCommit
-		}
-		// Транзиентная ошибка чтения — не коммитим, попробуем в другой раз.
-		r.logger.ErrorWithOp("dlq node read failed", err, "dlq.reprocess",
-			r.logger.Str("node_path", env.NodePath))
-		return ReprocessRetry
+	// §36.3 шаг1: резолв узла (§101.5: по node_id конверта).
+	node, res, ok := r.nodeForEnvelope(ctx, env)
+	if !ok {
+		return res
 	}
 
 	// §36.3 шаг2: tombstone (оператор отменил сообщение через UI, §34.4).
@@ -136,7 +125,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 			r.logger.Info("dlq drop: cancelled by operator",
 				r.logger.Str("node_path", env.NodePath),
 				r.logger.Str("id", env.ID))
-			r.record(env.NodePath, reprocessDropped)
+			r.record(nodeLabels(node), reprocessDropped)
 			return ReprocessCommit
 		}
 	}
@@ -151,7 +140,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 			r.logger.Str("node_path", env.NodePath),
 			r.logger.Str("id", env.ID),
 			r.logger.Int("ttl_seconds", int(node.DLQTTLSeconds)))
-		r.record(env.NodePath, reprocessTTLDropped)
+		r.record(nodeLabels(node), reprocessTTLDropped)
 		return ReprocessCommit
 	}
 
@@ -165,7 +154,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 			r.logger.Str("node_path", env.NodePath),
 			r.logger.Str("id", env.ID),
 			r.logger.Str("reason", reason))
-		return r.republish(ctx, raw, env, headers, republishParams{
+		return r.republish(ctx, raw, env, node, headers, republishParams{
 			// skipped, а не failed: приёмник не виноват и не вызывался.
 			reason: reason, result: reprocessSkipped, incAttempts: true,
 		})
@@ -177,11 +166,11 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 		r.logger.Info("dlq drop: node disabled",
 			r.logger.Str("node_path", env.NodePath),
 			r.logger.Str("id", env.ID))
-		r.record(env.NodePath, reprocessDropped)
+		r.record(nodeLabels(node), reprocessDropped)
 		return ReprocessCommit
 	case domain.NodeStatusPaused:
 		// Узел на паузе — вернёмся, когда снова активен. Republish без попытки.
-		return r.republish(ctx, raw, env, headers, republishParams{
+		return r.republish(ctx, raw, env, node, headers, republishParams{
 			reason: "node_paused", result: reprocessSkipped, incAttempts: true,
 		})
 	}
@@ -191,7 +180,7 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 	// момента доставку не пытаемся — republish, сохраняя next_attempt_at и не
 	// инкрементируя attempts (реальной попытки не было).
 	if next := parseNextAttemptAt(headers); !next.IsZero() && r.clock.Now().Before(next) {
-		return r.republish(ctx, raw, env, headers, republishParams{
+		return r.republish(ctx, raw, env, node, headers, republishParams{
 			reason: "retry_backoff", result: reprocessSkipped, nextAttemptAt: next,
 		})
 	}
@@ -200,12 +189,12 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 	// иначе fast-fail-churn. Republish в хвост, backoff = интервал прохода.
 	// Ошибка проверки → fail-open: пытаемся доставить.
 	if r.breaker != nil {
-		open, err := r.breaker.IsOpen(ctx, env.NodePath)
+		open, err := r.breaker.IsOpen(ctx, breakerKey(node.ID, node.Path))
 		if err != nil {
 			r.logger.Warn("dlq breaker check failed; attempting delivery",
 				r.logger.Str("node_path", env.NodePath), r.logger.Err(err))
 		} else if open {
-			return r.republish(ctx, raw, env, headers, republishParams{
+			return r.republish(ctx, raw, env, node, headers, republishParams{
 				reason: domain.ReasonCircuitBreakerOpen, result: reprocessSkipped, incAttempts: true,
 			})
 		}
@@ -223,14 +212,14 @@ func (r *DLQReprocessor) ProcessMessage(ctx context.Context, raw []byte, headers
 			r.logger.Str("node_path", env.NodePath),
 			r.logger.Str("id", env.ID),
 			r.logger.Int("status", int(out.StatusCode)))
-		r.record(env.NodePath, reprocessSucceeded)
+		r.record(nodeLabels(node), reprocessSucceeded)
 		return ReprocessCommit
 	}
 	// §36.4: неудачная доставка — откладываем следующую попытку на
 	// dlq_retry_delay_seconds (минимальный per-message backoff).
 	reason := fmt.Sprintf("status=%d attempts=%d err=%s", out.StatusCode, out.Attempts, out.Error)
 	delay := time.Duration(node.DLQRetryDelaySeconds) * time.Second
-	return r.republish(ctx, raw, env, headers, republishParams{
+	return r.republish(ctx, raw, env, node, headers, republishParams{
 		reason: reason, result: reprocessFailed, incAttempts: true,
 		nextAttemptAt: r.clock.Now().Add(delay),
 	})
@@ -247,19 +236,19 @@ type republishParams struct {
 // republish переотправляет сообщение в хвост DLQ с обновлёнными заголовками
 // (last_attempt_at, attempts, опц. next_attempt_at). На ошибке produce —
 // ReprocessRetry (не коммитим, не теряем сообщение).
-func (r *DLQReprocessor) republish(ctx context.Context, raw []byte, env Envelope, inHeaders map[string]string, p republishParams) ReprocessResult {
+func (r *DLQReprocessor) republish(ctx context.Context, raw []byte, env Envelope, node *domain.Node, inHeaders map[string]string, p republishParams) ReprocessResult {
 	attempts := parseAttempts(inHeaders)
 	if p.incAttempts {
 		attempts++
 	}
-	hdrs := map[string]string{
+	hdrs := withNodeIdentity(map[string]string{
 		"id":              env.ID,
 		"node_path":       env.NodePath,
 		"orig_topic":      headerOr(inHeaders, "orig_topic", "nexus.async"),
 		"reason":          p.reason,
 		"last_attempt_at": r.clock.Now().UTC().Format(time.RFC3339Nano),
 		"attempts":        strconv.Itoa(attempts),
-	}
+	}, env)
 	if !p.nextAttemptAt.IsZero() {
 		hdrs["next_attempt_at"] = p.nextAttemptAt.UTC().Format(time.RFC3339Nano)
 	}
@@ -268,7 +257,7 @@ func (r *DLQReprocessor) republish(ctx context.Context, raw []byte, env Envelope
 			r.logger.Str("node_path", env.NodePath), r.logger.Str("id", env.ID))
 		return ReprocessRetry
 	}
-	r.record(env.NodePath, p.result)
+	r.record(nodeLabels(node), p.result)
 	return ReprocessCommit
 }
 
@@ -302,9 +291,9 @@ func (r *DLQReprocessor) logTTLExpired(ctx context.Context, node *domain.Node, e
 	r.logw.Write(ctx, node.ClickHouseTable, rec)
 }
 
-func (r *DLQReprocessor) record(node, result string) {
+func (r *DLQReprocessor) record(n metrics.NodeLabels, result string) {
 	if r.metrics != nil {
-		r.metrics.DLQReprocessTotal.WithLabelValues(node, result).Inc()
+		r.metrics.IncDLQReprocess(n, result)
 	}
 }
 

@@ -1736,6 +1736,8 @@ definitions:
         type: string
       rate:
         type: number
+      team:
+        type: string
     type: object
   internal_web_adapter_in_http.kafkaHealthDTO:
     properties:
@@ -1787,6 +1789,8 @@ definitions:
         type: integer
       share:
         type: number
+      team:
+        type: string
     type: object
   internal_web_adapter_in_http.kafkaSummaryDTO:
     properties:
@@ -5006,10 +5010,12 @@ paths:
       - auth
   /api/metrics/diagnostics:
     get:
-      description: Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse
+      description: 'Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse
         — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы
         (ретраи → outgoing>incoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих;
-        занижение increase). Деградирует при недоступном источнике.
+        занижение increase). Prometheus-сторона — только ряды текущей команды (§101.9):
+        итоги по её слогу, «узлы только в Prometheus» — её переименованные и удалённые
+        узлы; без текущей команды сторона пуста. Деградирует при недоступном источнике.'
       parameters:
       - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
         in: query

@@ -33,6 +33,12 @@ type Envelope struct {
 	// (internal/receiver/usecase/envelope.go).
 	RequestPath string `json:"request_path,omitempty"`
 
+	// NodeID и Team — §101.4: какой узел принял сообщение; исполняет его узел с
+	// этим id (resolveEnvelopeNode), а слог берётся текущий, из БД. Пусты у
+	// конвертов до §101. Держать синхронным с Receiver-копией Envelope.
+	NodeID string `json:"node_id,omitempty"`
+	Team   string `json:"team,omitempty"`
+
 	// IngressMethod — §83.7: root_method узла в момент приёма. Отличает
 	// сообщение async-приёма от сообщения sync-узла, попавшего в очередь по
 	// §3.6 (пауза). Пусто у конвертов до §83 и у pull-узлов §27 — они

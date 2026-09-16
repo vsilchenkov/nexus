@@ -50,6 +50,8 @@ const NODES = [
 
 type Rank = { node_id: string; in: number; out: number; errors: number; last_outcome: string };
 
+// nodeList — список узлов «бэкенда»; тест одноимённых узлов его подменяет.
+let nodeList = NODES;
 // slice — текущий срез «бэкенда»; тесты его подменяют между обновлениями.
 let slice: Rank[] | undefined;
 let totalsCalls = 0;
@@ -89,7 +91,7 @@ function mockServer() {
       // Фильтруем по РЕАЛЬНОМУ параметру запроса, а не по переменной теста:
       // иначе легко проверить сценарий, которого на клиенте не происходило.
       const q = String((params as Record<string, unknown>)?.search ?? "");
-      return Promise.resolve({ items: q ? NODES.filter((n) => n.path.includes(q)) : NODES });
+      return Promise.resolve({ items: q ? nodeList.filter((n) => n.path.includes(q)) : nodeList });
     }
     if (url === "/api/metrics/overview") {
       return Promise.resolve({
@@ -165,12 +167,34 @@ describe("Overview: срез и порядок в сквозном режиме 
     apiPut.mockReset();
     localStorage.clear();
     sessionStorage.clear();
+    nodeList = NODES;
     slice = [okRow("n1", 10), okRow("n2", 20), okRow("n3", 30)];
     mockServer();
     setTeamScopeAll(true);
   });
 
   afterEach(() => setTeamScopeAll(false));
+
+  // §101.9: сервер ключует исход node_id, и клиентское правило §86.8 («у
+  // одноимённых узлов разных команд бейдж неизвестен») снято. На прежнем коде
+  // оба узла стояли серыми, хотя исход каждого был известен.
+  it("одноимённые узлы разных команд получают каждый свой бейдж", async () => {
+    nodeList = [
+      { id: "tg-a", path: "telegram", team_id: TEAM_A, root_method: "request", status: "active" },
+      { id: "tg-b", path: "telegram", team_id: TEAM_B, root_method: "request", status: "active" },
+    ];
+    slice = [downRow("tg-a", 10), okRow("tg-b", 20)];
+    renderOverview(newClient());
+
+    // Оба условия в одном waitFor — по той же причине, что в соседнем тесте:
+    // до прихода среза все бейджи серые, а пустой список «серых» не содержит.
+    await waitFor(() => {
+      const p = statusPills();
+      expect(p).toHaveLength(2);
+      expect(p).not.toContain("overview.status.unknown");
+    });
+    expect(statusPills().sort()).toEqual(["overview.status.down", "overview.status.ok"]);
+  });
 
   // Базовый слой. На прежнем коде статус выводился только из порционных пачек, а
   // они без прокрутки пусты — весь список стоял серым «неизвестно».

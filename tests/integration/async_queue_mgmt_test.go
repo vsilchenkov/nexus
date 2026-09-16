@@ -109,7 +109,7 @@ func TestAsyncQueueMgmt_E2E(t *testing.T) {
 
 	peeker := kafkaadmin.New(brokers, 5*time.Second, 0, logger)
 	cancelSet := queuecancel.New(redisClient)
-	aqUC := webuc.NewAsyncQueueUsecase(peeker, cancelSet, nil, nodeRepo, auditUC,
+	aqUC := webuc.NewAsyncQueueUsecase(peeker, cancelSet, nil, nodeRepo, nodeRepo, auditUC,
 		cfg.Kafka.ConsumerGroup, cfg.Kafka.AsyncTopic,
 		cfg.Kafka.PausedGroup(), cfg.Kafka.PausedTopic,
 		time.Hour, 1000, logger)

@@ -38,10 +38,21 @@ per-node timeseries (RPS, ошибки top-15, p95), история статус
 ответ upstream'а; receiver-сторона `requestAsync` отражает лишь enqueue, не доставку.
 Gauge `nexus_node_last_request_error`: `0=OK / 1=DEGRADED / 2=DOWN`.
 
+**Узел — пара команда/путь (§101).** Путь уникален лишь внутри команды, поэтому все выражения
+группируют `by (team, node)`, легенды — `{{team}}/{{node}}`. Стат-панели DOWN / DEGRADED / OK
+считают пары: одноимённые узлы двух команд — два узла. Сводная таблица склеивает пять запросов
+трансформацией **Merge** по обеим меткам: прежний `joinByField` склеивал по одному полю `node` и
+сложил бы строки одноимённых узлов в одну.
+
 Параметры:
 
 - `DS_PROMETHEUS` — datasource Prometheus.
-- `node` — мульти-селектор узлов, `label_values(nexus_requests_total{service="sender"}, node)`.
+- `team` — мульти-селектор команд, `label_values(nexus_requests_total{service="sender"}, team)`.
+  «All» подставляет регэксп `.*` (`allValue`), а не перечисление значений: перечисление спрятало
+  бы ряды с `team=""`, собранные до обновления на §101.
+- `node` — мульти-селектор узлов выбранных команд,
+  `label_values(nexus_requests_total{service="sender",team=~"$team"}, node)`. Стат-панели и
+  «Problem nodes (now)» фильтруются только по команде: они про все узлы, как и раньше.
 
 ## nexus-kafka.json
 
@@ -55,7 +66,11 @@ ClickHouse-панели сюда **намеренно не дублируютс�
 Параметры:
 
 - `DS_PROMETHEUS` — datasource Prometheus.
-- `node` — мульти-селектор async-узлов, `label_values(nexus_requests_total{method="requestAsync"}, node)`.
+- `team` — мульти-селектор команд, `label_values(nexus_requests_total{method="requestAsync"}, team)`,
+  «All» = `.*` — по той же причине, что в `nexus-nodes.json`.
+- `node` — мульти-селектор async-узлов выбранных команд,
+  `label_values(nexus_requests_total{method="requestAsync",team=~"$team"}, node)`. Панели по узлам
+  группируют `by (team, node)`.
 
 ### Импорт через UI
 
@@ -96,3 +111,12 @@ providers:
   деградация async + потеря логов.
 - `l2_cache_hits_total{kind="stale"} > 0` — Redis+PG лежат, Receiver
   обслуживает горячий кеш из памяти (§9.4 крайний случай).
+- группа `nexus.nodes` — здоровье узла (DOWN / DEGRADED / error rate), pull-узлы RabbitMQ, DLQ.
+  Агрегация `by (team, node…)`, в summary — `команда/путь` (§101): одноимённые узлы разных команд
+  дают отдельные алерты и не маскируют друг друга (`max by (node)` прятал DEGRADED одной команды
+  за DOWN другой).
+
+Проверка — `make check-alerts`: `promtool check rules` и юнит-тесты
+[../prometheus.alerts.test.yml](../prometheus.alerts.test.yml) в образе Prometheus той же версии,
+что в docker-compose. В CI — job `alerts-check`. Меняете правило — поправьте и тест: он сверяет
+метки и тексты алертов целиком.

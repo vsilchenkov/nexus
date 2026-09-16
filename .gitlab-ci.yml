@@ -9,7 +9,7 @@
 # PostgreSQL/ClickHouse/Redis/Kafka через смонтированный docker.sock раннера).
 #
 # Триггеры:
-#   - push в любую ветку             → test, lint, build, swagger-drift, ui
+#   - push в любую ветку             → test, lint, build, swagger-drift, alerts-check, ui
 #   - merge_request                  → то же + integration (по labels)
 #   - schedule (weekly)              → security (govulncheck + gosec + trivy)
 #   - tag v*                         → test/lint/build (валидация тега; деплой —
@@ -251,6 +251,32 @@ swagger-drift:
         exit 1
       fi
     - 'echo "===== swagger-drift done ====="'
+
+# §101.11: правила алертов — синтаксис и юнит-тесты, те же команды, что у
+# `make check-alerts`. Без этого job'а опечатка в выражении обнаруживается только
+# после выката: Prometheus с битым rule-файлом не стартует, а с неверной
+# агрегацией стартует и молча шлёт не те алерты.
+alerts-check:
+  stage: lint
+  needs: []
+  image:
+    # Та же версия, что у prometheus в docker-compose и PROMETHEUS_IMAGE в Makefile.
+    name: prom/prometheus:v2.55.0
+    # ENTRYPOINT образа — сам prometheus; script запускается через shell образа.
+    entrypoint: [""]
+    pull_policy: [always, if-not-present]
+  rules:
+    - *skip-if-profiled-rule
+    - when: on_success
+  script:
+    - 'echo "===== promtool version ====="'
+    - promtool --version
+    - cd deploy
+    - 'echo "===== promtool check rules ====="'
+    - promtool check rules prometheus.alerts.yml prometheus.alerts.ha.yml
+    - 'echo "===== promtool test rules ====="'
+    - promtool test rules prometheus.alerts.test.yml
+    - 'echo "===== alerts-check done ====="'
 
 # ----------- BUILD stage ----------------------------------------------------
 

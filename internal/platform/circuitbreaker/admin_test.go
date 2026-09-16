@@ -41,6 +41,20 @@ func TestKey_MatchesWhatBreakerWrites(t *testing.T) {
 	assert.True(t, srv.Exists(circuitbreaker.Key("node/a")), "Breaker пишет ровно в Key()")
 }
 
+// TestNodeKey_ByNodeID (§101.6) — breaker узла живёт по id: одноимённые узлы
+// разных команд не делят состояние.
+func TestNodeKey_ByNodeID(t *testing.T) {
+	t.Parallel()
+
+	b, adm, srv := newAdmin(t, 1, time.Minute)
+	require.NoError(t, b.RecordFailure(context.Background(), circuitbreaker.NodeKey("id-a"), domain.BreakerPolicy{}))
+
+	assert.True(t, srv.Exists("circuit:id:id-a"))
+	snap, err := adm.Snapshot(context.Background(), circuitbreaker.NodeKey("id-b"))
+	require.NoError(t, err)
+	assert.False(t, snap.Exists, "breaker одноимённого узла другой команды не тронут")
+}
+
 func TestSnapshot_UnknownKey(t *testing.T) {
 	t.Parallel()
 

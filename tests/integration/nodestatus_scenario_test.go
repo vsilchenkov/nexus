@@ -47,8 +47,12 @@ func (scenarioLogWriter) Flush(context.Context) error                      { ret
 // scenarioNodeReader — фиксированный узел.
 type scenarioNodeReader struct{ node *domain.Node }
 
-func (r *scenarioNodeReader) GetByPath(context.Context, string) (*domain.Node, error) {
+func (r *scenarioNodeReader) GetByID(context.Context, string) (*domain.Node, error) {
 	return r.node, nil
+}
+
+func (r *scenarioNodeReader) ListByPath(context.Context, string) ([]*domain.Node, error) {
+	return []*domain.Node{r.node}, nil
 }
 
 // scenarioDLQ — no-op DLQProducer (не-2xx уходят в DLQ, здесь это не предмет проверки).
@@ -80,6 +84,7 @@ func TestNodeStatus_DegradedLifecycle_Redis(t *testing.T) {
 
 	const nodePath = "site/push"
 	node := &domain.Node{
+		ID:              "5c6d7e8f-0000-4000-8000-000000000052",
 		Path:            nodePath,
 		Status:          domain.NodeStatusEnabled,
 		TimeoutMs:       1000,
@@ -107,9 +112,9 @@ func TestNodeStatus_DegradedLifecycle_Redis(t *testing.T) {
 
 	outcome := func() domain.NodeOutcome {
 		t.Helper()
-		got, err := reader.GetLastOutcomes(ctx, []string{nodePath})
+		got, err := reader.GetLastOutcomes(ctx, []string{node.ID})
 		require.NoError(t, err)
-		v, ok := got[nodePath]
+		v, ok := got[node.ID]
 		require.True(t, ok, "после доставки исход должен быть в Redis")
 		return v
 	}

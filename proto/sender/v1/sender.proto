@@ -77,6 +77,11 @@ message SendRequest {
   // политике, как до §81.
   int32 circuit_breaker_threshold    = 31;
   int32 circuit_breaker_cooldown_sec = 32;
+
+  // §101.4: слог команды узла. Путь уникален лишь внутри команды, поэтому метке
+  // team (§101.3) нужен слог, а sync-путь узел из БД не читает. Пусто у
+  // Receiver'а до §101 — старый Sender поле проигнорирует.
+  string team_slug = 33;
 }
 
 message SendResponse {

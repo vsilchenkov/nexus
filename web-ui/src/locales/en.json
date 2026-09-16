@@ -326,7 +326,10 @@
       "share": "Share",
       "empty": "No data for the period"
     },
-    "node_unresolved": "No node with this path right now: it was renamed, deleted, or the path is used by nodes of several teams. Prometheus keeps the old path, so the row stays in the top list.",
+    "node_unresolved": "The team has no node with this path right now: it was renamed, deleted or moved to another team — or the row could not be matched to a node at the moment. Prometheus keeps the old labels, so the row stays in the top list until they leave the period.",
+    "node_legacy": "These series were recorded before metrics told teams apart, and they can't be matched to one node: the path belongs to nodes of several teams, no node has this path, or the node list is unavailable right now. The row disappears once the old series leave the period.",
+    "node_placeholder": "Requests to addresses with no matching node (404 response). The path from such an address is not written to metrics: it may carry tokens and random URLs.",
+    "no_team": "no team",
     "top_failures": {
       "title": "Top failures",
       "node": "Node",

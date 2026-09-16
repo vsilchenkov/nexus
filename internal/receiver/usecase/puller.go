@@ -222,8 +222,7 @@ func (w *PullerWorker) pullOnce(ctx context.Context) {
 	}
 
 	if w.metrics != nil && len(msgs) > 0 {
-		w.metrics.RMQPullDuration.WithLabelValues(w.node.Path).
-			Observe(time.Since(start).Seconds())
+		w.metrics.ObserveRMQPull(w.labels(), time.Since(start).Seconds())
 	}
 }
 
@@ -251,6 +250,8 @@ func (w *PullerWorker) handleDelivery(ctx context.Context, msg RMQDelivery) {
 	headers := map[string]string{
 		"id":        w.msgID(msg),
 		"node_path": w.node.Path,
+		"node_id":   w.node.ID, // §101.7
+		"team":      w.node.TeamSlug,
 		"attempt":   "0",
 	}
 	produceCtx, finish := otelpf.StartKafkaProducerSpan(ctx, w.asyncTopic)
@@ -313,6 +314,8 @@ func (w *PullerWorker) buildPayload(msg RMQDelivery) ([]byte, error) {
 	env := &Envelope{
 		ID:         w.msgID(msg),
 		NodePath:   w.node.Path,
+		NodeID:     w.node.ID, // §101.7: одноимённые pull-узлы различают только id и слог
+		Team:       w.node.TeamSlug,
 		Method:     outMethod,
 		TargetURL:  targetURL,
 		AuthHeader: authHeader,
@@ -351,9 +354,15 @@ func (w *PullerWorker) reject(tag uint64) {
 	w.incPulled("reject")
 }
 
+// labels — метки узла в метриках pull-воркера (§101.3): слог приходит из
+// NodeLister вместе с узлом.
+func (w *PullerWorker) labels() metrics.NodeLabels {
+	return metrics.NodeLabels{Team: w.node.TeamSlug, Node: w.node.Path}
+}
+
 func (w *PullerWorker) incPulled(status string) {
 	if w.metrics != nil {
-		w.metrics.RMQMessagesPulledTotal.WithLabelValues(w.node.Path, status).Inc()
+		w.metrics.IncRMQPulled(w.labels(), status)
 	}
 }
 
@@ -366,8 +375,7 @@ func (w *PullerWorker) updateQueueStats(ctx context.Context) {
 		return
 	}
 	if w.metrics != nil {
-		w.metrics.RMQQueueDepth.WithLabelValues(w.node.Path).Set(float64(msgs))
-		w.metrics.RMQConsumerCount.WithLabelValues(w.node.Path).Set(float64(consumers))
+		w.metrics.SetRMQQueueStats(w.labels(), float64(msgs), float64(consumers))
 	}
 	w.publishHealth(ctx, int64(msgs), int64(consumers))
 }
@@ -391,7 +399,7 @@ func (w *PullerWorker) setState(ctx context.Context, s domain.RMQConnState, reas
 		case domain.RMQConnUp:
 			v = 2
 		}
-		w.metrics.RMQConnectionState.WithLabelValues(w.node.Path).Set(v)
+		w.metrics.SetRMQConnectionState(w.labels(), v)
 	}
 	w.publishHealth(ctx, -1, -1)
 	_ = reason
@@ -404,7 +412,7 @@ func (w *PullerWorker) markDegraded(ctx context.Context, reason string) {
 			w.logger.Str("node", w.node.Path))
 	}
 	if w.metrics != nil {
-		w.metrics.NodeDegraded.WithLabelValues(w.node.Path, reason).Set(1)
+		w.metrics.SetNodeDegraded(w.labels(), reason, true)
 	}
 	w.degradedReason = reason
 	w.publishHealth(ctx, -1, -1)
@@ -414,7 +422,7 @@ func (w *PullerWorker) clearDegraded(ctx context.Context) {
 	if w.degraded {
 		w.degraded = false
 		if w.metrics != nil {
-			w.metrics.NodeDegraded.WithLabelValues(w.node.Path, w.degradedReason).Set(0)
+			w.metrics.SetNodeDegraded(w.labels(), w.degradedReason, false)
 		}
 		w.degradedReason = ""
 		w.publishHealth(ctx, -1, -1)
@@ -434,6 +442,7 @@ func (w *PullerWorker) publishHealth(ctx context.Context, qd, cc int64) {
 		w.lastConsumers = cc
 	}
 	h := domain.RMQHealth{
+		NodeID:        w.node.ID,
 		NodePath:      w.node.Path,
 		ConnState:     w.state,
 		Degraded:      w.degraded,

@@ -127,7 +127,7 @@ run-web: ## Локальный запуск Web с config_debug.yml
 
 # ----- test -----------------------------------------------------------------
 
-.PHONY: test test-coverage lint
+.PHONY: test test-coverage lint check-alerts
 
 test: ## Unit-тесты
 	$(GOTEST) -race -short $(PKG)
@@ -138,6 +138,21 @@ test-coverage: ## Покрытие в ./coverage.html
 
 lint: ## golangci-lint run
 	golangci-lint run $(PKG)
+
+# Правила алертов (§101.11): синтаксис и юнит-тесты promtool'ом из образа
+# Prometheus. Версия образа — та же, что у prometheus в docker-compose: promtool
+# другой версии мог бы принять выражение, которое боевой Prometheus отвергнет.
+#
+# MSYS_NO_PATHCONV=1 — для Git Bash на Windows: без него MSYS переписывает
+# аргумент вида /rules в C:/Program Files/Git/rules, и том монтируется не туда.
+# На Linux переменная ни на что не влияет. Файлы внутри контейнера заданы
+# относительно -w, поэтому других путей для конвертации нет.
+PROMETHEUS_IMAGE ?= prom/prometheus:v2.55.0
+PROMTOOL = MSYS_NO_PATHCONV=1 docker run --rm -v "$(CURDIR)/deploy:/rules:ro" -w /rules --entrypoint promtool $(PROMETHEUS_IMAGE)
+
+check-alerts: ## Правила алертов: promtool check rules + test rules (нужен Docker)
+	$(PROMTOOL) check rules prometheus.alerts.yml prometheus.alerts.ha.yml
+	$(PROMTOOL) test rules prometheus.alerts.test.yml
 
 # ----- migrations -----------------------------------------------------------
 

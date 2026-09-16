@@ -85,12 +85,10 @@ type Throughput = {
   // Ошибки по тем же бакетам (§52-доп). Пустой ряд = разбивки нет: столбцы
   // рисуются одноцветными, а не «без ошибок».
   sparkErr: number[];
-  // §52: исход последнего вызова узла (ok/degraded/down).
-  // §86.8: "unknown" — исход неизвестен, потому что он ключуется ПУТЁМ
-  // (nexus:node:last_error:<path> в Redis, метка node в Prometheus), а путь
-  // уникален лишь внутри команды: у двух одноимённых узлов разных команд
-  // значение общее и как минимум одному из них не принадлежит.
-  lastOutcome: "ok" | "degraded" | "down" | "unknown";
+  // §52: исход последнего вызова узла (ok/degraded/down). С §101.9 сервер
+  // ключует его node_id, поэтому одноимённые узлы разных команд значения не
+  // делят, и клиентская подмена на «неизвестно» (§86.8) снята.
+  lastOutcome: "ok" | "degraded" | "down";
 };
 
 // TOTALS_REFETCH_FACTOR — во сколько раз реже строк обновляется KPI-шапка
@@ -102,7 +100,7 @@ const TOTALS_REFETCH_FACTOR = 4;
 // p95=0 и пустой спарклайн — это «ещё не загружено», а не «ноль»: карточка на
 // нуле рисует «—» (fmtMs), пустой ряд даёт ту же заглушку, что у узла без
 // метрик. Оба поля приезжают только с порционной пачкой и ложатся поверх.
-function rankThroughput(r: NodeRank, path: string, ambiguous: Set<string> | null): Throughput {
+function rankThroughput(r: NodeRank): Throughput {
   return {
     in: r.in,
     out: r.out,
@@ -110,8 +108,7 @@ function rankThroughput(r: NodeRank, path: string, ambiguous: Set<string> | null
     p95: 0,
     spark: [],
     sparkErr: [],
-    // §86.8: исход ключуется путём, а путь уникален лишь внутри команды.
-    lastOutcome: ambiguous?.has(path) ? "unknown" : r.last_outcome,
+    lastOutcome: r.last_outcome,
   };
 }
 
@@ -396,18 +393,6 @@ export default function Overview() {
 
   // Ключ карты — id узла, а НЕ путь (§86.7): путь уникален лишь внутри команды,
   // и в сквозном списке два узла разных команд могут иметь одинаковый.
-  // §86.8: пути, встречающиеся в скоупе больше одного раза. Внутри команды путь
-  // уникален (UNIQUE(team_id, path)), поэтому набор непуст только в сквозном
-  // режиме — и только там бейдж исхода может принадлежать чужому узлу.
-  const ambiguousPaths = useMemo(() => {
-    if (!allTeams) return null;
-    const seen = new Map<string, number>();
-    for (const n of nodesQ.data?.items ?? []) seen.set(n.path, (seen.get(n.path) ?? 0) + 1);
-    const dup = new Set<string>();
-    for (const [path, count] of seen) if (count > 1) dup.add(path);
-    return dup;
-  }, [allTeams, nodesQ.data]);
-
   const throughput = useMemo(() => {
     const m = new Map<string, Throughput>();
     // §86.10: в сквозном режиме БАЗОВЫЙ слой — срез из шапки, он есть на ВСЕ
@@ -424,10 +409,7 @@ export default function Overview() {
     // заглушку, что и у узла без метрик. Показанного не портим, недостающее не
     // выдумываем.
     if (allTeams) {
-      const pathById = new Map((nodesQ.data?.items ?? []).map((n) => [n.id, n.path]));
-      for (const r of totalsQ.data?.nodes ?? []) {
-        m.set(r.node_id, rankThroughput(r, pathById.get(r.node_id) ?? "", ambiguousPaths));
-      }
+      for (const r of totalsQ.data?.nodes ?? []) m.set(r.node_id, rankThroughput(r));
     }
     const src = allTeams ? Array.from(visible.items.values()) : (thrData?.items ?? []);
     for (const it of src) {
@@ -439,13 +421,11 @@ export default function Overview() {
         p95: it.p95_ms,
         spark: it.spark ?? [],
         sparkErr: it.spark_err ?? [],
-        // Числа и спарклайн приходят из ClickHouse с фильтром по node_id и
-        // коллизией путей не задеты — подменяется только исход (§86.8).
-        lastOutcome: ambiguousPaths?.has(it.node) ? "unknown" : it.last_outcome,
+        lastOutcome: it.last_outcome,
       });
     }
     return m;
-  }, [thrData, allTeams, visible.items, ambiguousPaths, totalsQ.data, nodesQ.data]);
+  }, [thrData, allTeams, visible.items, totalsQ.data]);
 
   // Сортировка: проблемные первыми (err → degraded → warn → paused → ok →
   // disabled), внутри статуса — по убыванию входящего трафика (§22, ui_cards.html).
@@ -515,8 +495,8 @@ export default function Overview() {
     const rest: Node[] = [];
     for (const n of items) (rowByID.has(n.id) ? ranked : rest).push(n);
     ranked.sort((a, b) => {
-      const ma = rankThroughput(rowByID.get(a.id)!, a.path, ambiguousPaths);
-      const mb = rankThroughput(rowByID.get(b.id)!, b.path, ambiguousPaths);
+      const ma = rankThroughput(rowByID.get(a.id)!);
+      const mb = rankThroughput(rowByID.get(b.id)!);
       const va = nodeVariant(a, ma, true);
       const vb = nodeVariant(b, mb, true);
       if (sortRank[va] !== sortRank[vb]) return sortRank[va] - sortRank[vb];
@@ -533,7 +513,7 @@ export default function Overview() {
     [...ranked, ...rest].forEach((n, i) => order.set(n.id, i));
     frozenRank.current = { key: rankKey, order };
     return order;
-  }, [allTeams, totalsQ.data, nodesQ.data, rankKey, teamNames, ambiguousPaths, sortRank]);
+  }, [allTeams, totalsQ.data, nodesQ.data, rankKey, teamNames, sortRank]);
 
   const nodes = useMemo(() => {
     let items = nodesQ.data?.items ?? [];
@@ -1009,9 +989,6 @@ function nodeVariant(n: Node, m: Throughput | undefined, ready: boolean): Varian
   if (n.root_method === "requestAsync" && m.in - m.out > Math.max(50, m.in * 0.1)) {
     return "warn";
   }
-  // §86.8/§84.7: неизвестный исход не красится в «ok» — соврать оператору
-  // «всё в порядке» хуже, чем не сказать ничего.
-  if (m.lastOutcome === "unknown") return "unknown";
   return "ok";
 }
 

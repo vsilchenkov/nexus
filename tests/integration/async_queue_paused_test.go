@@ -48,7 +48,7 @@ func TestAsyncQueue_PausedBacklog_E2E(t *testing.T) {
 
 	aqUC := webuc.NewAsyncQueueUsecase(
 		kafkaadmin.New(stack.cfg.Kafka.Brokers, 5*time.Second, 0, logger),
-		queuecancel.New(redisClient), nil, nodeRepo,
+		queuecancel.New(redisClient), nil, nodeRepo, nodeRepo,
 		webuc.NewAuditUsecase(pgrepo.NewAuditRepoPg(pool, logger), logger),
 		stack.cfg.Kafka.ConsumerGroup, stack.cfg.Kafka.AsyncTopic,
 		stack.cfg.Kafka.PausedGroup(), stack.cfg.Kafka.PausedTopic,

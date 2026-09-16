@@ -56,7 +56,7 @@ func (aqAuditRepo) DeleteOlderThan(_ context.Context, _ time.Time) (int, error) 
 // async-queue роутами. peeker/cancel = nil → деградация/unavailable.
 func aqEngine(node *domain.Node, nodeErr error) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	uc := usecase.NewAsyncQueueUsecase(nil, nil, nil, &aqNodeRepo{node: node, err: nodeErr},
+	uc := usecase.NewAsyncQueueUsecase(nil, nil, nil, &aqNodeRepo{node: node, err: nodeErr}, nil,
 		usecase.NewAuditUsecase(aqAuditRepo{}, logging.NewNoop()),
 		"nexus-sender", "nexus.async",
 		"nexus-sender-paused", "nexus.async.paused",
@@ -99,6 +99,11 @@ func TestAQHandler_QueueErrorMapping(t *testing.T) {
 			http.StatusConflict,
 		},
 		{"узел не найден", domain.ErrNodeNotFound, http.StatusNotFound},
+		{
+			"чужое сообщение очереди — 404 (§101.8)",
+			fmt.Errorf("async queue body: %w", port.ErrQueueMessageNotOwned),
+			http.StatusNotFound,
+		},
 		{"очередь недоступна", usecase.ErrAsyncQueueUnavailable, http.StatusServiceUnavailable},
 		{"прочее остаётся 500", errors.New("boom"), http.StatusInternalServerError},
 	}

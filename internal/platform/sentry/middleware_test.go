@@ -118,6 +118,10 @@ func TestRootMethod(t *testing.T) {
 	r.GET("/api/v1/request/*path", func(c *gin.Context) {
 		c.Set(metrics.RootMethodLabelKey, "request")
 		c.Set(metrics.NodeLabelKey, "demo")
+		c.Set(metrics.TeamLabelKey, "partner")
+		if got := teamFromGin(c); got != "partner" {
+			t.Errorf("/api/v1/request team: got %q, want слог команды узла (§101.3)", got)
+		}
 		if got := rootMethod(c); got != "request" {
 			t.Errorf("/api/v1/request: got %q", got)
 		}
@@ -131,9 +135,13 @@ func TestRootMethod(t *testing.T) {
 		if got := rootMethod(c); got != "requestAsync" {
 			t.Errorf("/api/v1/requestAsync: got %q", got)
 		}
-		// Без метки в контексте — фолбэк на сырой параметр (прежнее поведение).
-		if got := nodePathFromGin(c); got != "x" {
-			t.Errorf("/api/v1/requestAsync node fallback: got %q", got)
+		// §101.3: без метки в контексте тег пуст — сырой параметр адреса в тег не
+		// попадает (у passthrough-узла там секреты).
+		if got := nodePathFromGin(c); got != "" {
+			t.Errorf("/api/v1/requestAsync node without label: got %q, want empty", got)
+		}
+		if got := teamFromGin(c); got != "" {
+			t.Errorf("/api/v1/requestAsync team without label: got %q, want empty", got)
 		}
 		c.Status(200)
 	})

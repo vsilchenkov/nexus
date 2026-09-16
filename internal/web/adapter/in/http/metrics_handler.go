@@ -318,7 +318,7 @@ type diagnosticsDTO struct {
 
 // Diagnostics godoc
 // @Summary  Сверка счётчиков Prometheus↔ClickHouse за окно (§44.E).
-// @Description  Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы (ретраи → outgoing>incoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих; занижение increase). Деградирует при недоступном источнике.
+// @Description  Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы (ретраи → outgoing>incoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих; занижение increase). Prometheus-сторона — только ряды текущей команды (§101.9): итоги по её слогу, «узлы только в Prometheus» — её переименованные и удалённые узлы; без текущей команды сторона пуста. Деградирует при недоступном источнике.
 // @Tags     metrics
 // @Produce  json
 // @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"

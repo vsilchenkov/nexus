@@ -17,14 +17,15 @@ type KafkaMonitorUsecase struct {
 	prom  port.PromMetrics // может быть nil
 	admin port.KafkaAdmin  // может быть nil
 	cache port.KafkaCache  // может быть nil
-	// §98.2: путь узла → id, чтобы строки top-узлов вели на журнал узла.
+	// §98.2/§101.9: узлы по путям со слогом команды — строки top-узлов ведут на
+	// журнал узла, а ряды до §101 приписываются узлу при однозначном пути.
 	// Может быть nil — тогда строки остаются текстом, как до §98.
-	nodes  port.NodePathResolver
+	nodes  port.NodeKeyResolver
 	th     KafkaThresholds
 	logger logging.Logger
 }
 
-func NewKafkaMonitorUsecase(prom port.PromMetrics, admin port.KafkaAdmin, cache port.KafkaCache, nodes port.NodePathResolver, th KafkaThresholds, logger logging.Logger) *KafkaMonitorUsecase {
+func NewKafkaMonitorUsecase(prom port.PromMetrics, admin port.KafkaAdmin, cache port.KafkaCache, nodes port.NodeKeyResolver, th KafkaThresholds, logger logging.Logger) *KafkaMonitorUsecase {
 	return &KafkaMonitorUsecase{prom: prom, admin: admin, cache: cache, nodes: nodes, th: th, logger: logger}
 }
 

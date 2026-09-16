@@ -2,8 +2,8 @@
 
 Каждый сервис экспонирует `/metrics` для Prometheus. Метрики (минимум):
 
-- `nexus_requests_total{service, method, node, status}` — счётчик
-- `nexus_request_duration_seconds{service, method, node}` — гистограмма
+- `nexus_requests_total{service, method, team, node, status}` — счётчик
+- `nexus_request_duration_seconds{service, method, team, node}` — гистограмма
 - `nexus_kafka_lag{topic}` — гейдж
 - `nexus_clickhouse_buffer_size` — гейдж
 - `nexus_clickhouse_errors_total` — счётчик
@@ -23,7 +23,9 @@ p95/p99, временной ряд) — считаются **исключите�
   (errors = «незавершённые», non-2xx); delivered = total − errors.
 - p95/p99 — `histogram_quantile()` по `nexus_request_duration_seconds_bucket`. Бакеты гистограммы
   расширены до 300с (под `timeout_ms` узла), перцентили — приблизительные (по бакетам).
-- Метка `node` = `domain.Node.Path`. Счётчики Sender'а пишутся **независимо от `logging_enabled`
+- Метка `node` = `domain.Node.Path`, метка `team` = слог команды узла: путь уникален лишь внутри
+  команды, поэтому узел идентифицирует только ПАРА (§101.3). Обе ставятся из резолвнутого узла,
+  никогда из адреса. Счётчики Sender'а пишутся **независимо от `logging_enabled`
   узла**, поэтому метрики узла видны даже при выключенном логировании в ClickHouse.
 
 Деградация: при пустом `prometheus.url` или ошибке запроса панель не падает — отдаёт нули с

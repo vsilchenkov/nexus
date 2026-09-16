@@ -101,7 +101,7 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 	effOutcome := outcome
 	if s.nodeStatus != nil && !out.ParentGone {
 		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
-		effOutcome = s.nodeStatus.SetLastOutcome(statusCtx, req.GetNodePath(), outcome)
+		effOutcome = s.nodeStatus.SetLastOutcome(statusCtx, req.GetNodeId(), outcome)
 		cancel()
 	} else if out.ParentGone {
 		// §51.9: тихий пропуск — иначе «почему узел не покраснел» не разобрать.
@@ -111,19 +111,27 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 	}
 
 	if s.metrics != nil {
-		s.metrics.RequestsTotal.
-			WithLabelValues("request", req.GetNodePath(), strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
-		s.metrics.RequestDuration.
-			WithLabelValues("request", req.GetNodePath()).Observe(float64(out.DurationMs) / 1000.0)
+		// §101.3: слог команды несёт запрос — sync-путь узел из БД не читает.
+		// Receiver до §101 слога не пришлёт, и ряд получит team="".
+		labels := metrics.NodeLabels{Team: req.GetTeamSlug(), Node: req.GetNodePath()}
+		s.metrics.IncRequest("request", labels, strconv.FormatInt(int64(out.StatusCode), 10))
+		s.metrics.ObserveRequestDuration("request", labels, float64(out.DurationMs)/1000.0)
 		if outcome.IsError() {
-			s.metrics.RequestsIncompleteTotal.WithLabelValues("request", req.GetNodePath()).Inc()
+			s.metrics.IncRequestIncomplete("request", labels)
 		}
 		// §41/§52: исход последнего вызова узла (in-memory гаудж) — по
 		// ЭФФЕКТИВНОМУ значению, см. выше.
 		// §81.2: обрыв вызывающей стороной исходом узла НЕ считается — он о
 		// здоровье приёмника не говорит ничего.
-		if !out.ParentGone {
-			s.metrics.SetNodeLastRequestOutcome(req.GetNodePath(), effOutcome)
+		// §101.9: без слога гаудж не пишется. Запрос без слога шлёт Receiver до
+		// §101; после его обновления ряд team="" больше не обновился бы и держал
+		// последний исход — DOWN и алерт NexusNodeDown — до рестарта Sender'а.
+		if !out.ParentGone && labels.Team != "" {
+			s.metrics.SetNodeLastRequestOutcome(labels, effOutcome)
+		} else if !out.ParentGone {
+			s.logger.Debug("send: request without team slug, node outcome gauge skipped",
+				s.logger.Str("id", req.GetId()),
+				s.logger.Str("node", req.GetNodePath()))
 		}
 	}
 

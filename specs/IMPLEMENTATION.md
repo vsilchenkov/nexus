@@ -3190,6 +3190,7 @@ make build-ui                                  # SPA → internal/web/static/
 make test                                      # unit (-race -short)
 make test-coverage                             # покрытие в coverage.html
 make test-integration                          # testcontainers (нужен Docker)
+make check-alerts                              # §101.11: promtool check + test rules (нужен Docker)
 make test-int-logs-scale LOG_SCALE_ROWS=50000000  # §77.5: замер прокрутки логов (вручную)
 make loadtest TARGET_RPS=500 DURATION=10m NODES=50 ADMIN_PASSWORD=…
 
@@ -5897,3 +5898,338 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   «Открыть в логах» это сместило момент вычисления окна с клика на рендер — href остаётся свежим за
   счёт 15-секундного поллинга вкладки «Очередь», и это записано в коде: уберут поллинг — окно
   замрёт.
+
+### 4.86 §101 — команда в идентичности узла: почему `node_id`, а не «слог + путь»
+
+Раздел [101-team-node-identity.md](sections/101-team-node-identity.md). Ветка
+`feature/team-node-identity`. Статус ✅ — блоки 101.1–101.10 реализованы, ревизия перед сдачей —
+101.11; слияние в `dev` — после сдачи.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §101, правки контрактов §6/§78/§86.8/§94.8/§98.2 | ✅ Phase 101.1 | [sections/101-team-node-identity.md](sections/101-team-node-identity.md) |
+| Receiver: метки после резолва (утечка токенов) | ✅ Phase 101.2 | [resolver.go](../internal/receiver/usecase/resolver.go) (слог найденного узла), [route.go](../internal/receiver/usecase/route.go) `RouteInput.OnNodeResolved`, [handler.go](../internal/receiver/adapter/in/http/handler.go) `nodeLabelSetter`/`nodeForLog`, [metrics/gin.go](../internal/platform/metrics/gin.go) `TeamLabelKey`, [sentry/middleware.go](../internal/platform/sentry/middleware.go); тест [handler_labels_test.go](../internal/receiver/adapter/in/http/handler_labels_test.go) |
+| Контракт доставки `node_id`/`team`, Sender ищет узел по id | ✅ Phase 101.3 | [sender.proto](../proto/sender/v1/sender.proto) `team_slug = 33`; конверт `node_id`/`team` — [envelope.go](../internal/receiver/usecase/envelope.go), [async_envelope.go](../internal/sender/usecase/async_envelope.go); заголовки Kafka — [route_async.go](../internal/receiver/usecase/route_async.go), [puller.go](../internal/receiver/usecase/puller.go), `withNodeIdentity`; слог pull-узла — [nodelister.go](../internal/receiver/adapter/out/rabbitmq/nodelister.go); выбор узла — [envelope_node.go](../internal/sender/usecase/envelope_node.go) `resolveEnvelopeNode`/`ErrNodeAmbiguous`, [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `GetByID`/`ListByPath`; тесты [envelope_node_test.go](../internal/sender/usecase/envelope_node_test.go), [route_identity_test.go](../internal/receiver/usecase/route_identity_test.go), [node_identity_test.go](../tests/integration/node_identity_test.go), [tests/contract/envelope_test.go](../tests/contract/envelope_test.go) |
+| Метка `team` во всех per-node метриках | ✅ Phase 101.4 | [node_labels.go](../internal/platform/metrics/node_labels.go) `NodeLabels` и типизированные методы, [metrics.go](../internal/platform/metrics/metrics.go) (14 векторов), [gin.go](../internal/platform/metrics/gin.go) `NodeLabelsFromGin`; запись — [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) (слог из `team_slug`), [envelope_node.go](../internal/sender/usecase/envelope_node.go) `nodeLabels`/`envelopeLabels`, [async.go](../internal/sender/usecase/async.go), [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go), [puller.go](../internal/receiver/usecase/puller.go), [handler.go](../internal/receiver/adapter/in/http/handler.go), [replay.go](../internal/web/usecase/replay.go) `nodeTeamSlug`; guard-тесты [node_labels_test.go](../internal/platform/metrics/node_labels_test.go) |
+| Рантайм-ключи Redis и pull-воркеры по `node_id` | ✅ Phase 101.5 | ключи — [nodestatus/redis.go](../internal/platform/nodestatus/redis.go) `Key`/`StreakKey`/`LegacyKey`, [circuitbreaker/redis.go](../internal/platform/circuitbreaker/redis.go) `NodeKey`; перенос — [nodestatus/migrate.go](../internal/platform/nodestatus/migrate.go) `LegacyMigrator`, [node_status_migration.go](../internal/web/usecase/node_status_migration.go), запуск в [web/app.go](../internal/web/app.go); Sender — [breaker_vote.go](../internal/sender/usecase/breaker_vote.go) `breakerKey`, [send.go](../internal/sender/usecase/send.go), [dlq_reprocess.go](../internal/sender/usecase/dlq_reprocess.go), [async.go](../internal/sender/usecase/async.go), [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go); Receiver — [puller_manager.go](../internal/receiver/usecase/puller_manager.go), [healthsink.go](../internal/receiver/adapter/out/rabbitmq/healthsink.go); Web — [last_outcome.go](../internal/web/usecase/last_outcome.go) `NodeRef`, [node_breaker.go](../internal/web/usecase/node_breaker.go), адаптеры [redis/](../internal/web/adapter/out/redis/); контракт писателей и читателя — [runtime_keys_test.go](../tests/contract/runtime_keys_test.go) |
+| «Очередь»: принадлежность сообщения, чтение тела | ✅ Phase 101.6 | владелец — [port/async_queue.go](../internal/web/usecase/port/async_queue.go) `QueueOwner`/`Owns`/`ErrQueueMessageNotOwned`; отбор и сверка тела — [kafkaadmin/async_queue.go](../internal/web/adapter/out/kafkaadmin/async_queue.go) `decodeQueueMeta`/`PeekBody`; однозначность пути — [async_queue.go](../internal/web/usecase/async_queue.go) `queueOwner`; тесты [port/async_queue_test.go](../internal/web/usecase/port/async_queue_test.go), [async_queue_owner_test.go](../tests/integration/async_queue_owner_test.go), сверка проекции конверта — [envelope_test.go](../tests/contract/envelope_test.go) `TestQueueEnvelopeProjectionSubsetOfCanon` |
+| Web: чтение Prometheus по (team, node) | ✅ Phase 101.7 | порт — [port/metrics_provider.go](../internal/web/usecase/port/metrics_provider.go) `NodeKey`, [port/node_repo.go](../internal/web/usecase/port/node_repo.go) `NodeKeyResolver`; запросы — [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) `instantByNodeKey`/`teamMatcher`; узлы по путям — [postgres/node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) `RefsByPaths`; ряды до §101 — [nodekeys.go](../internal/web/usecase/nodekeys.go) `withLegacy`/`resolveLegacyOwners`; потребители — [metrics.go](../internal/web/usecase/metrics.go) `nodesOverviewProm`/`diagPrometheus`, [last_outcome.go](../internal/web/usecase/last_outcome.go), [notification.go](../internal/web/usecase/notification.go) `listTeamNodes`, [kafka_bynode.go](../internal/web/usecase/kafka_bynode.go) `foldLegacyRows`, [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go) поле `team`; тесты [nodekeys_test.go](../internal/web/usecase/nodekeys_test.go), [node_ids_by_paths_test.go](../tests/integration/node_ids_by_paths_test.go) `TestNodeRepoRefsByPaths_E2E` |
+| UI: команда в топах Kafka, снятие правила §86.8 | ✅ Phase 101.8 | [TopNodes.tsx](../web-ui/src/components/kafka/TopNodes.tsx) `NodeCell`/`TeamChip`/`unlinkedReason`/`rowKey`, [client.ts](../web-ui/src/api/client.ts) `KafkaByNode.team`, [Overview.tsx](../web-ui/src/pages/Overview.tsx) (снят `ambiguousPaths`), локали `kafka.node_legacy`/`node_placeholder`/`no_team`; тесты [TopNodes.test.tsx](../web-ui/src/components/kafka/TopNodes.test.tsx), [Overview.rank.test.tsx](../web-ui/src/pages/Overview.rank.test.tsx) |
+| Grafana, алерты, `make check-alerts` | ✅ Phase 101.9 | дашборды [nexus-nodes.json](../deploy/grafana/nexus-nodes.json), [nexus-kafka.json](../deploy/grafana/nexus-kafka.json) (переменная `team`, `by (team, node)`, Merge), [README](../deploy/grafana/README.md); правила [prometheus.alerts.yml](../deploy/prometheus.alerts.yml), тесты [prometheus.alerts.test.yml](../deploy/prometheus.alerts.test.yml); [Makefile](../Makefile) `check-alerts`, [.gitlab-ci.yml](../.gitlab-ci.yml) job `alerts-check` |
+| DEPLOYMENT, CHANGELOG | ✅ Phase 101.10 | [DEPLOYMENT.md](../DEPLOYMENT.md) §9.1.4 (порядок выката, матрица версий, Prometheus, дашборды, ряды с токенами, `exported_team`) и чек-лист раскатки; [CHANGELOG.md](../CHANGELOG.md) `[Unreleased]`; [nexus-prod SKILL](../.claude/skills/nexus-prod/SKILL.md) — diagnostics по команде |
+| Ревизия перед сдачей | ✅ Phase 101.11 | метка найденного узла при 404 — [handler.go](../internal/receiver/adapter/in/http/handler.go) `markRejected`, путь в error-строке — `nodeForErrorLog`; гаудж без слога — [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go); креды одного узла — [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `ListByPath`; отменённый неоднозначный конверт — [envelope_node.go](../internal/sender/usecase/envelope_node.go) `cancelledAmbiguous`; итоги diagnostics — [metrics.go](../internal/web/usecase/metrics.go) `foldLegacyTotals`; тег Sentry `team` — [sentry/middleware.go](../internal/platform/sentry/middleware.go) `teamFromGin`; тесты [handler_labels_test.go](../internal/receiver/adapter/in/http/handler_labels_test.go), [sender_service_test.go](../internal/sender/adapter/in/grpc/sender_service_test.go), [envelope_node_test.go](../internal/sender/usecase/envelope_node_test.go), [metrics_test.go](../internal/web/usecase/metrics_test.go), [node_identity_test.go](../tests/integration/node_identity_test.go) |
+
+- **Повод выглядел как косметика, а оказался дефектом доставки.** Жалоба «в топе Kafka нет ссылки
+  на `telegram`» объяснялась одноимёнными узлами двух команд. Но тот же приём «узел = путь» стоит в
+  Sender'е (`nodepg/reader.go`: `WHERE path = $1` без команды и без `ORDER BY`) — async-сообщение
+  одноимённого узла исполнялось конфигом случайной из команд. Пока на бою одноимённые узлы были
+  только sync, дефект не проявлялся.
+
+- **Рантайм ключуется `node_id`, а не парой «слог + путь».** Пара выглядит естественно (её же несут
+  метки), но `NodeUsecase.Move` переносит узел в другую команду с тем же путём: сообщения в полёте
+  и в DLQ несли бы слог прежней команды и отбрасывались бы как «узла нет» — сегодня они
+  доставляются. `node_id` переживает и перенос, и переименование, а Web'у не нужен резолв слога.
+
+- **Смешение старых и новых ключей Redis опасно без префикса.** Ключ `<slug>/<path>` совпал бы со
+  старым ключом узла default-команды с путём `<slug>/<path>`. Отсюда `id:` — двоеточие запрещено и
+  в пути, и в слоге.
+
+- **Метку нельзя поставить, передвинув резолв в начало handler'а.** 404 на непрочитанном теле рвёт
+  соединение (`drainCap`), за прокси это 502. Поэтому usecase сообщает найденный узел наблюдателю
+  `RouteInput.OnNodeResolved` — одна точка вместо обёртки десятка ошибочных `return`.
+
+- **Слог для метки — тот, где узел НАЙДЕН, а не из адреса (101.2).** `/api/v1/request/a/b` при узле
+  `a/b` в default-команде резолвится по интерпретации B: первый сегмент адреса оказался частью пути.
+  До §101 метка была `node="b"` — ряд отрывался от узла. `resolveNode` теперь возвращает слог
+  (A — слог адреса или default, B — default), `NodeRootMethod` зовёт тот же наблюдатель. Наблюдатель
+  срабатывает ДО проверки статуса: у выключенного узла метка — его путь (`ErrNodeDisabled` не
+  `ErrNodeNotFound`, `<unresolved>` ему не ставится), у paused-sync — дважды с одинаковыми значениями.
+
+- **Запасное значение из `c.Param("path")` удалено из `metrics.GinMiddleware` и Sentry-тега `node`.**
+  Выходы до резолва (400/405/413/429/508, rate-limit в middleware группы) теперь несут `node=""`.
+  Побочно у прокси Web `/api/v1/*path` метка тоже пуста — раньше там оседали сырые пути.
+
+- **Граница 101.2: логи до резолва по-прежнему несут путь из адреса.** `nodeForLog` берёт путь
+  найденного узла, если резолв состоялся; иначе — путь адреса (он нужен для разбора «почему 404»).
+  Сюда же попадает инфра-ошибка PostgreSQL посреди резолва — это `ErrorWithOp`, то есть Sentry.
+  Warn петли §32 тоже пишется до резолва. Фильтр `diagnostics` Web по команде перенесён из 101.2 в
+  101.7 (без метки `team` в рядах фильтровать было нечем) и там закрыт.
+
+- **Утечка токенов найдена по дороге.** Receiver ставил `node` из хвоста адреса ДО резолва;
+  у passthrough-узла `telegram` это `telegram/bot<id>:<токен>/getUpdates`. На бою
+  `/api/metrics/diagnostics` под токеном одной команды вернул 393 пути всех команд и 31 ряд с
+  токенами. Уже собранные ряды код не удаляет — процедура в DEPLOYMENT.
+
+- **Sender берёт узел из `node_id` конверта, путь — только у старых конвертов (101.3).** Старый
+  конверт ищется `ListByPath` по всем командам: ни одного узла — отброс, один — доставка, несколько —
+  основной consumer шлёт его в DLQ с `reason=node_ambiguous`, репроцессор сбрасывает с
+  `result="dropped"`. Сразу сбрасывать нельзя: DLQ оставляет сообщение видимым оператору, а сброс
+  репроцессором попадает в алерт потерь. Ошибка чтения PostgreSQL не маскируется под «узла нет» —
+  сообщение повторяется.
+
+- **`node_id` проверяется строго: 36 символов и `uuid.Parse`.** Одного `uuid.Parse` мало: он
+  принимает `urn:uuid:…`, `{…}` и запись без дефисов, а PostgreSQL на `urn:uuid:` отвечает ошибкой
+  синтаксиса — её не отличить от сбоя БД, и сообщение повторялось бы вечно. Receiver пишет id из
+  PostgreSQL, то есть всегда в каноническом виде; всё прочее — «узла нет».
+
+- **Старый конверт не «прибивается» к найденному узлу.** В DLQ и paused-топик он уходит байт в байт,
+  без `node_id`. Если за время его жизни в очереди появится одноимённый узел другой команды,
+  следующий проход сочтёт конверт неоднозначным и сбросит. Переписывать конверт ради конечного
+  множества старых сообщений — лишняя ветка на горячем пути; окно ограничено TTL DLQ.
+
+- **`TeamSlug` положен в `domain.Node`, а не в обёртку `PullNode{Node, TeamSlug}` из плана.** Оба
+  читателя — `nodepg` Sender'а и `NodeLister` pull-узлов — выбирают слог тем же запросом (JOIN
+  teams), а обёртка протянулась бы через карты `puller_manager` и конструкторы воркеров, которые
+  101.5 и так переписывает. Репозитории Web поле не заполняют — это записано в godoc.
+
+- **Слог в конверте — на момент приёма, узел в Sender — текущий.** После `NodeUsecase.Move` конверт
+  несёт прежний слог, но исполняет его узел по id со слогом из БД; метки 101.4 берут слог узла.
+  Заголовок `team` в копиях DLQ/paused повторяет конверт — это след «где принято», а не адрес.
+
+- **Отложено из 101.3.** `queueEnvelope.node_id` и сверка web-проекции конверта с каноном — в 101.6,
+  где их использует проверка владельца сообщения. `SendInput.TeamSlug` на стороне gRPC-сервера — в
+  101.4: поле нужно только меткам. Заголовки `node_id`/`team` пока никто не читает: consumer
+  Sender'а берёт узел из тела конверта, заголовки нужны «Очереди» (101.6) и оператору с `kcat`.
+
+- **Per-node векторы пишутся только типизированными методами, и это держит тест, а не
+  договорённость (101.4).** `TestPerNodeMetrics_WrittenOnlyThroughTypedMethods` ищет в `internal/`
+  (вне пакета `metrics`, без `_test.go`) обращения `.<вектор>.WithLabelValues(`: на коде до 101.4 он
+  находит 16 таких мест. `TestPerNodeMetrics_CarryTeamLabel` рефлексией проверяет, что у каждого
+  вектора с `node` есть `team`, и сверяет список рядов с эталоном — рефлексия, не нашедшая ничего,
+  выглядела бы зелёной. Причина строгости: неверное число значений в позиционном
+  `WithLabelValues` паникует только в рантайме (на бою — первым запросом к узлу), а перепутанный
+  порядок молча пишет путь в метку команды.
+
+- **Слог в метках Sender'а — из узла, а не из конверта.** Узел по id несёт текущие слог и путь из
+  БД (`nodeLabels`); конверт мог быть принят до `NodeUsecase.Move`. Слог конверта (`envelopeLabels`)
+  идёт в метку, только когда исполнять некому: узел удалён или неоднозначен. У старых конвертов это
+  `team=""`.
+
+- **Sync-метки берут слог из `SendRequest.team_slug`; `SendInput.TeamSlug` не понадобился.** Метрики
+  sync пишет gRPC-адаптер прямо из запроса, usecase слог не использует. Receiver до §101 поле не
+  пришлёт — до его обновления ряды получат `team=""` (порядок выката Sender → Receiver, §101.12).
+
+- **Replay резолвит слог до выбора тела.** `nodeTeamSlug` нужен и метке источника тела, и адресу
+  реинъекции; раньше команда читалась только перед отправкой. Отказ резолва, как и прежде, —
+  пустой слог и debug-строка.
+
+- **Между 101.4 и 101.7 чтение метрик Web не знало о `team`.** Выражения `sum by (node)` работали и
+  дальше, складывая команды; разнесение по `(team, node)` сделано в 101.7, дашборды и алерты — 101.9.
+  Сопоставления векторов (`on`, `group_left`) в клиенте Prometheus Web нет, лишняя метка его не
+  ломает.
+
+- **Перенос `last_error` отмечается ключом, а старые ключи не удаляются (101.5).** Если повторять
+  перенос на каждом рестарте Web, он воскрешал бы исход, снятый ручным сбросом защиты (§81.4.2:
+  `ClearLastOutcome` удаляет ключ по id), и отдавал бы исход удалённого узла новому узлу с тем же
+  путём. Удалять старые ключи после переноса тоже нельзя: после отката их читает прежний Web
+  (§101.12). Поэтому отметка `nexus:node:status_migration:101` живёт 30 суток — столько же, сколько
+  сами старые ключи. Проверка «ключ по id уже есть» и запись идут одним Lua-скриптом: между ними
+  Sender пишет свежий исход, а вторая реплика Web выполняет тот же перенос. В конвейере скрипт
+  отправляется через `EVAL`, а не `EVALSHA`: на пустом кеше скриптов `NOSCRIPT` вернулся бы уже из
+  `Exec`, где повторить некому.
+
+- **Порт `UniqueByPaths` из плана не понадобился (101.5).** Переносу нужна карта «однозначный путь →
+  id», и её уже отдаёт `IDsByPaths` (§98.2, `HAVING count(*) = 1`). Слог команды переносу не нужен;
+  JOIN teams понадобился экрану Kafka в 101.7 (`RefsByPaths`). Перенос проверен на настоящем Redis
+  (`TestNodeStatus_LegacyMigration_Redis`): сроки ключей miniredis воспроизводит не во всём.
+
+- **Пустой `node_id` в 101.5.** Breaker работает по ключу пути (`breakerKey`), исход не пишется
+  (`RedisWriter` оставляет debug). Sync-запрос несёт `node_id` от Receiver'а давно (§37), async и DLQ
+  берут id узла из БД — ветка страхует выкат и в рабочем режиме не срабатывает.
+
+- **Бейдж рабочего стола сшивается по `NodeThroughputRow.NodeID` (101.5).** `LastOutcomeResolver`
+  принимает `NodeRef`: Redis спрашивается по id. Prometheus-гаудж до 101.7 читался по пути, и
+  одноимённые узлы без записи в Redis получали общий fallback; с 101.7 — по паре (`NodeRef.TeamID`).
+  Строка без id, как и раньше при «неизвестно», получает ok.
+
+- **Карта pull-воркеров — по id (101.5).** `desired[n.Path]` оставлял один из одноимённых узлов без
+  воркера — его очередь не читал никто, хотя lease уже был по id. Переименование узла по-прежнему
+  перезапускает воркер: у узла меняется `updated_at`. Снимок здоровья без id `HealthSink` не пишет —
+  воркер получает ошибку и пишет warn.
+
+- **Совпадение формата ключей у двух процессов проверяет отдельный тест.**
+  [runtime_keys_test.go](../tests/contract/runtime_keys_test.go) на одном miniredis сводит писателей
+  (Sender, Receiver) и читателя (Web); тест каждого сервиса видит только свою половину. Red-проверка
+  101.5: откат каждой из 9 правок к поведению до §101 (ключи по пути в Sender, Receiver и Web, ключ
+  без `id:`, перенос без отметки) делает тест красным.
+
+- **IDOR во вкладке «Очередь» (закрыт в 101.6).** `GET …/async-queue/messages/body` проверял доступ
+  к узлу из адреса, а сообщение читал по `(topic, partition, offset)` из запроса без сверки
+  владельца — тело чужого сообщения отдавалось любому участнику команды с async-узлом. Теперь
+  `PeekBody` сверяет ключ и `node_id` конверта. Чужое сообщение даёт `port.ErrQueueMessageNotOwned`,
+  а он оборачивает `domain.ErrNotFound` — handler отвечает 404 без новой ветки в `queueError`.
+
+- **Старые конверты «Очереди» — fail-closed (101.6).** Конверт без `node_id` считается своим, только
+  если `IDsByPaths` отдал для пути id этого узла. Ошибка PostgreSQL такие конверты скрывает (warn):
+  показанный чужой конверт попал бы и в «Очистить все ожидающие». Резолвер путей — отдельный
+  параметр `NewAsyncQueueUsecase` (`port.NodePathResolver`), а не метод `NodeRepo`: расширение
+  `NodeRepo` сломало бы все его заглушки. Очистке неудачных (`PurgeFailed`) владелец не нужен, и в
+  integration-тестах §98.4 резолвер — `nil`.
+
+- **Проекция конверта Web сверяется разбором исходника (101.6).** `queueEnvelope` неэкспортируемый,
+  контрактный тест живёт в `tests/contract`, и reflect ему недоступен; экспортировать тип ради теста
+  не стали. `TestQueueEnvelopeProjectionSubsetOfCanon` читает теги через `go/parser` и сверяет их с
+  каноном Receiver'а. Ручная карта канона в `kafkaadmin/async_queue_test.go` остаётся: она держит
+  ещё и типы полей.
+
+- **Удаление одного сообщения по id владельца не проверяет (граница §101.13).** Tombstone пишется в
+  Redis без чтения Kafka; проверка стоила бы скана обоих топиков и ложно отказывала бы сообщениям
+  глубже потолка скана. Поиск оригиналов для повтора (§96, `originals.go`) по-прежнему фильтрует по
+  ключу и набору id из журнала узла: id уникальны, одноимённый узел их не подменит.
+
+- **Red-проверка 101.6.** Откат каждой из 7 правок к поведению до §101 делает тест красным: `Owns`
+  без `node_id`, список без сверки владельца, старые конверты «свои всегда», проекция без `node_id`,
+  чужое сообщение не 404, `Body` без владельца в usecase и `PeekBody` без сверки `node_id` (последнее
+  ловит только integration-тест на живом Kafka).
+
+- **Резолвер узлов для метрик отдаёт все узлы с путём, а не id по паре (101.7).** План предлагал
+  `RefsByKeys`, но потребителям нужны два ответа из одних данных: id по точной паре `(слог, путь)` для
+  ссылки и «путь один во всём инстансе» для рядов до §101. `NodeKeyResolver.RefsByPaths` (JOIN teams,
+  `path = ANY($1)`, синтаксис PostgreSQL 12) отдаёт полный список, однозначность считает
+  `uniquePathOwners`. `IDsByPaths` остался «Очереди» и переносу ключей Redis.
+
+- **Ряды до §101 (`team=""`) приписываются только счётчикам и только однозначному пути (101.7).**
+  `withLegacy` прибавляет ряд без команды, если единственный во всём инстансе узел с этим путём —
+  именно этот ключ. p95 и гаудж не складываются, спарклайн тоже: `NodeSeries` отдаёт точки без меток
+  времени, а ряд до §101 обрывается на выкате, и сложение сдвинуло бы точки. Fail-closed: нет
+  резолвера, упал PostgreSQL, список узлов уведомлений неполон — ряд не приписывается никому. К
+  PostgreSQL обращаются, только когда такие ряды есть в окне, то есть в окнах, захватывающих выкат.
+
+- **Узел без известного слога получает нули (101.7).** Слог — `teams.List` по `team_id`. Ключ с
+  пустым слогом не читается вовсе: это ряд до §101, и без проверки однозначности он мог принадлежать
+  любому из одноимённых узлов. Сбой справочника команд — warn и нули, а не прежняя склейка.
+
+- **Топы Kafka сворачивают ряды до §101 до отбора top-N (101.7).** Свёртка меняет числа и порядок.
+  Ряд неоднозначного пути остаётся строкой с пустым `team` и без ссылки — строка «без команды» из
+  эскиза §101.10. `foldLegacyRows` меняет карту Prometheus на месте: адаптер создаёт её на каждый
+  запрос. Поле `team` добавлено в `kafkaProducerDTO`/`kafkaFailureDTO` в той же позиции, что в
+  usecase-структурах: DTO получается приведением типа, и порядок полей обязан совпадать.
+
+- **Диагностика: Prometheus-сторона — по слогу команды сессии (101.7).** `GlobalTotals(ctx, window,
+  team)` добавляет матчер `team="<слог>"`; per-node — только ключи со слогом команды; «сироты» — её
+  переименованные и удалённые узлы, по порядку пути. Без известного слога (сессия без текущей
+  команды) сторона не заполняется и `prometheus_available=false`: сравнивать ClickHouse одной команды
+  не с чем, а ряды всех команд вернули бы утечку путей.
+
+- **`LastOutcomeResolver` получил справочник команд (101.7).** Ключ гауджа — пара, а у узла есть
+  только `team_id`. Список команд читается, лишь когда Prometheus вернул гауджи, — на рабочем столе
+  это один лёгкий запрос на опрос; кеш с инвалидацией при создании команды стоил бы дороже.
+
+- **Удалены `NodeKPI`/`NodeChart` Prometheus-клиента (101.7).** Вызовов не было с §44; вместе с ними
+  ушли `rangeSeriesValues` и `nonNegU64`. Тип `port.NodeKPI` остался — его отдаёт ClickHouse.
+
+- **Red-проверка 101.7.** Откат каждой из 17 правок к поведению до §101 делает тест красным: в
+  клиенте — ключ без `team`, `NodeErrors` `by (node)`, итоги без матчера команды; в свёртке — ряд до
+  §101 прибавляется всегда, читается ключ без слога, путь двух команд считается однозначным; слог не
+  своей команды на рабочем столе и в бейдже; уведомления со слогом первой команды и однозначностью
+  по неполному списку; диагностика с «сиротами» всех команд, итогами без слога и без пропуска
+  неизвестного слога; топы Kafka с id по пути, без свёртки и с запросом строк без команды;
+  `RefsByPaths`, отдающий только однозначные пути (ловит integration-тест на живом PostgreSQL).
+
+- **Топы Kafka: у строки без ссылки три причины, и подсказка называет одну (101.8).** До §101 одна
+  подсказка «переименован, удалён либо путь занят несколькими командами» покрывала всё. После
+  разделения рядов по командам её вторая половина стала неправдой для строк с командой, а для
+  заглушки `<unresolved>` неправдой была с самого начала. `unlinkedReason` проверяет по порядку:
+  заглушка → строка без команды (ряды до §101) → пара без узла. У заглушки чипа нет: чип «без
+  команды» рядом с ней выглядел бы как ещё одна строка до §101.
+
+- **Доступное имя ссылки включает слог (101.8).** Между путём и чипом стоит текстовый пробел: без него
+  имя склеивается в «telegrammessengers». Чип — `inline-flex`, то есть атомарный инлайн-элемент:
+  подчёркивание ссылки при наведении на него не распространяется, а цвет у чипа свой. Ссылка по-прежнему
+  без `?team=` — команду переключает `useEnsureNodeTeam` (§58), тест это закрепляет.
+
+- **Снятие §86.8 в «Узлах» (101.8).** `ambiguousPaths` удалён вместе с вариантом `lastOutcome:
+  "unknown"`: других источников «неизвестно» у исхода нет (сервер отдаёт `ok`/`degraded`/`down`),
+  серый бейдж остался только для «метрики ещё не пришли» (`nodeVariant`, `!ready || !m`). Своих
+  тестов у правила не было. Регресс-тест добавлен в `Overview.rank.test.tsx`: на старом коде оба
+  одноимённых узла стоят серыми.
+
+- **Red-проверка 101.8.** Откат `TopNodes.tsx` и `Overview.tsx` к HEAD делает красными 5 тестов: две
+  ссылки одного пути, уникальные ключи строк, строку «без команды», пару без узла и бейджи
+  одноимённых узлов. Тест «у заглушки нет чипа» на старом коде зелёный (чипов там не было вовсе) и
+  проверен мутациями, как и подсказка заглушки и адрес без `?team=`: 3 из 3 красные.
+
+- **Grafana: «All» у `team` — регэксп `.*`, сводная таблица — Merge (101.9).** По умолчанию «All»
+  подставляет перечисление найденных значений `(a|b)`. Ряды с `team=""`, собранные до обновления,
+  в него не попадают и пропали бы с панелей. `joinByField` склеивает по одному полю, и строки
+  одноимённых узлов двух команд слились бы. Merge склеивает по всем общим полям (`Time`, `team`,
+  `node`); порядок столбцов задаёт `indexByName` по исходным именам (`Value #A`…), переименование
+  идёт после. Стат-панели и «Problem nodes» фильтруются только по `$team` — по узлу они не
+  фильтровались и раньше. Отрисовку дашборда тестом не проверить, это делается на стенде во
+  временной Grafana.
+
+- **Юнит-тест алертов нашёл маскировку, а не только склейку (101.9).** Ожидаемый дефект `by (node)` —
+  один алерт без команды на два лежащих узла. Тест показал ещё два: `max by (node)` у DOWN одной
+  команды поглощал DEGRADED другой, и `NexusNodeDegraded` не срабатывал вовсе; долю ошибок одной
+  команды размывал трафик соседа (1/11 ≈ 9% при пороге 20%). Red-проверка: на старых правилах
+  красные все 8 проверок.
+
+- **`make check-alerts` на Windows и в CI (101.9).** `MSYS_NO_PATHCONV=1`: без него Git Bash
+  переписывает `/rules` в `C:/Program Files/Git/rules`. Файлы внутри контейнера заданы относительно
+  `-w`. Образ `prom/prometheus:v2.55.0` взят из docker-compose: promtool другой версии мог бы
+  принять выражение, которое отвергнет боевой Prometheus. В CI job `alerts-check` задан
+  `entrypoint: [""]` (ENTRYPOINT образа — сам prometheus). Пользователь образа — nobody, но job
+  файлы только читает.
+
+- **Выкат §101 — сборка и перекат по одному сервису (101.10).** Обычная команда
+  `up -d --build web receiver sender` пересоздаёт все три сервиса разом, и порядок Sender → Receiver →
+  Web не соблюдается. Отдельные `build` и `up -d` — ещё и урок малой памяти: сборка трёх образов
+  одной командой уводила сервер в своп. HA-стеку ничего делать не нужно: `rolling.sh` по умолчанию
+  катит `sender receiver web`.
+- **Sender первым — ценой потери неоднозначных async-сообщений в окне выката.** Пока Receiver старый,
+  конверты идут без `node_id`, и новый Sender отправляет путь нескольких команд в DLQ со сбросом.
+  Обратный порядок это окно не убирает, а меняет потерю на прежнюю доставку узлу чужой команды (старый
+  Sender берёт первый узел по пути, с его адресом и кредами) — тот же выбор fail-closed, что для старых
+  сообщений §101.5. Проверка матрицы по коду: `node_id` в sync-запросе Receiver передаёт с §37, поэтому
+  breaker нового Sender'а при старом Receiver ведётся по id, а не по пути (первая редакция §101.12
+  ошибалась). DEPLOYMENT даёт SQL затронутых путей и требует собрать образы до `up -d`.
+
+- **`docker compose restart prometheus`, а не `up -d` (101.10).** Файл правил смонтирован как файл,
+  и Prometheus перечитывает его только при старте или по SIGHUP. `up -d` контейнер не пересоздаёт:
+  его спецификация не менялась. На приёмке 1.22.0 так не заработал новый scrape job.
+
+- **Ряды с токенами удаляются вручную (101.10).** Admin API Prometheus по умолчанию выключен, и
+  держать его включённым ради разовой операции — значит отдать удаление данных любому, кто дотянется
+  до порта. Поэтому процедура такая: временный override с `--web.enable-admin-api`, сначала
+  `/api/v1/series` (что будет удалено), затем `delete_series` и `clean_tombstones`, затем возврат
+  без флага. `command` в override заменяет список целиком, поэтому флаги базового compose повторяются;
+  у профиля малой памяти retention свой (`15d`), и в override надо брать его значение.
+
+- **`exported_team` (101.10).** Если внешний Prometheus вешает на цель собственную метку `team`, то
+  при `honor_labels: false` (по умолчанию) метка метрики переименовывается в `exported_team`, а `team`
+  получает значение цели. Дашборды и алерты §101.11 тогда группируют по метке цели, а не по команде
+  узла, и одноимённые узлы снова слипаются. Решение на стороне внешнего Prometheus — переименовать
+  метку цели.
+
+- **Ревизия перед сдачей (101.11).** Все находки лежат на ветках, которых нет в обычном трафике
+  стенда и в юнит-тестах меток:
+  - `markRejected` подменял метку на `<unresolved>` по любому `ErrNodeNotFound`, не глядя, был ли
+    резолв. Тем же `ErrNodeNotFound` отвечают узел не того типа (`/request` к async-узлу) и pull-узел
+    по короткому адресу — ряд найденного узла уходил в заглушку вопреки §101.3. Подмена теперь только
+    без меток наблюдателя. Старый юнит-тест клал метки в контекст до вызова (так Receiver делал до
+    §101) и закреплял именно дефект — переписан на два случая.
+  - Error-строка при сбое резолва (502) несла путь из адреса целиком, с хвостом passthrough, а error
+    уходит в Sentry. Метки и теги §101.3 это закрыли, строку лога — нет. Теперь в ней первый сегмент
+    пути узла и `/…`.
+  - Sender писал гаудж исхода с `team=""` для sync-запросов старого Receiver'а. После обновления
+    Receiver'а ряд не обновлялся бы до рестарта Sender'а, и DOWN держал бы `NexusNodeDown` на
+    здоровом узле. Без слога гаудж не пишется, счётчики пишутся.
+  - `ListByPath` расшифровывал креды всех одноимённых узлов: испорченные креды узла другой команды
+    давали ошибку чтения, и неоднозначный конверт вместо DLQ уходил в бесконечный повтор, вставала
+    партиция. Креды расшифровываются, только если узел один.
+  - Неоднозначный конверт шёл в DLQ до проверки отмены (§34.4). Очередь paused-узла, очищенная до
+    обновления (отмена тогда шла по пути), дошла бы до сброса и подняла `NexusDLQMessagesLost`.
+    Отменённое подтверждается; сбой Redis — fail-open в DLQ, как в `Handle`. Репроцессор не менялся:
+    отменённое в DLQ он и раньше учитывал как `dropped`.
+  - Шапка diagnostics читала итоги Prometheus строго по слогу, а строки узлов складывали ряды до
+    §101: в окне выката шапка была меньше суммы строк. `foldLegacyTotals` прибавляет те же ряды.
+  - Тег Sentry `team` рядом с `node`: без него события одноимённых узлов неразличимы — та же
+    склейка, что была в метриках.
+
+  Red-проверка: новые тесты прогнаны в отдельном worktree на коммите до ревизии — красные все шесть
+  (C7 — integration на живом PostgreSQL); тест тега Sentry на старом коде не компилируется.
+
+- **Поля `<path>` в `rmq:health` остаются мусором (101.11, не исправлялось).** Срок хранения у хеша
+  общий и продлевается каждой записью, поэтому поля по пути, записанные до §101, живут, пока пишет
+  хоть один pull-узел. Web читает поля по `node_id` и их не видит; число полей ограничено числом
+  прежних pull-узлов. Поля удалённых узлов так же оставались и до §101.

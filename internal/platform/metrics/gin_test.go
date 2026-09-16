@@ -33,51 +33,29 @@ func TestRootMethodFromPath(t *testing.T) {
 	}
 }
 
-func TestNodePathFromGin(t *testing.T) {
+// TestGinMiddleware_NodeLabelNeverFromURL (§101.3): без метки обработчика node
+// пуст — сырой путь адреса в метку не попадает. У passthrough-узла хвост адреса
+// несёт токены ботов, а на выходах до резолва (здесь — 429 rate-limit) путь
+// задаёт клиент.
+func TestGinMiddleware_NodeLabelNeverFromURL(t *testing.T) {
 	t.Parallel()
 	gin.SetMode(gin.TestMode)
+	m := New("receiver")
+	r := gin.New()
+	r.Use(GinMiddleware(m))
+	r.POST("/api/v1/*path", func(c *gin.Context) { c.Status(http.StatusTooManyRequests) })
 
-	cases := []struct {
-		name  string
-		param string
-		want  string
-	}{
-		{"with leading slash", "/demo/path", "demo/path"},
-		{"no leading slash", "demo", "demo"},
-		{"empty", "", ""},
-		{"single slash", "/", ""},
-		{"nested deep", "/a/b/c", "a/b/c"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-			ctx.Params = gin.Params{{Key: "path", Value: c.param}}
-			if got := nodePathFromGin(ctx); got != c.want {
-				t.Errorf("nodePathFromGin(%q) = %q, want %q", c.param, got, c.want)
-			}
-		})
-	}
-}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("POST",
+		"/api/v1/request/messengers/telegram/bot123456:AAAA/sendMessage", nil))
+	require.Equal(t, http.StatusTooManyRequests, w.Code)
 
-func TestNodeLabel_PrefersContext(t *testing.T) {
-	t.Parallel()
-	gin.SetMode(gin.TestMode)
-
-	t.Run("context value wins over raw param", func(t *testing.T) {
-		t.Parallel()
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Params = gin.Params{{Key: "path", Value: "/default/stand/req"}}
-		ctx.Set(NodeLabelKey, "stand/req")
-		assert.Equal(t, "stand/req", nodeLabel(ctx))
-	})
-
-	t.Run("falls back to raw param when unset", func(t *testing.T) {
-		t.Parallel()
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Params = gin.Params{{Key: "path", Value: "/demo/path"}}
-		assert.Equal(t, "demo/path", nodeLabel(ctx))
-	})
+	body := scrape(t, m)
+	assert.Contains(t, body, `node=""`)
+	assert.Contains(t, body, `team=""`)
+	assert.NotContains(t, body, "bot123456", "хвост адреса не должен попадать в метки")
+	assert.NotContains(t, body, "messengers", "слог из адреса метку team не задаёт")
+	assert.NotContains(t, body, "telegram")
 }
 
 // TestGinMiddleware_NodeLabelFromContext: Receiver кладёт чистый путь узла в
@@ -91,6 +69,7 @@ func TestGinMiddleware_NodeLabelFromContext(t *testing.T) {
 	r.Use(GinMiddleware(m))
 	r.POST("/api/v1/request/*path", func(c *gin.Context) {
 		c.Set(NodeLabelKey, "stand/req-noauth-post") // как делает Receiver-handler
+		c.Set(TeamLabelKey, "default")
 		c.Status(http.StatusOK)
 	})
 
@@ -101,6 +80,7 @@ func TestGinMiddleware_NodeLabelFromContext(t *testing.T) {
 	body := scrape(t, m)
 	assert.Contains(t, body, `node="stand/req-noauth-post"`)
 	assert.NotContains(t, body, `node="default/stand/req-noauth-post"`)
+	assert.Contains(t, body, `team="default"`)
 }
 
 func TestGinMiddleware_V1Request(t *testing.T) {
@@ -117,9 +97,10 @@ func TestGinMiddleware_V1Request(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/v1/request/demo/sub?q=1", nil))
 	require.Equal(t, http.StatusOK, w.Code)
 
+	// Обработчик метку узла не положил — node пуст (§101.3: из адреса не выводится).
 	body := scrape(t, m)
-	assert.Contains(t, body, `nexus_requests_total{method="request",node="demo/sub",service="receiver",status="200"} 1`)
-	assert.Contains(t, body, `nexus_request_duration_seconds_count{method="request",node="demo/sub",service="receiver"} 1`)
+	assert.Contains(t, body, `nexus_requests_total{method="request",node="",service="receiver",status="200",team=""} 1`)
+	assert.Contains(t, body, `nexus_request_duration_seconds_count{method="request",node="",service="receiver",team=""} 1`)
 }
 
 func TestGinMiddleware_V1RequestAsync(t *testing.T) {
