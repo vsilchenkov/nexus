@@ -213,6 +213,28 @@
       "axis_max": "scale up to {{v}}",
       "no_data": "no data"
     },
+    "methods": {
+      "title": "Requests by method",
+      "hint": "A ranking of subpaths (the «Method» column) over the same period and under the same filters as the «Requests» chart. Bar length is the number of requests, the blue part is delivered, the red one is errors. The unit is a request, not a delivery attempt, so the sum over methods matches «Total». Hover a row for the full name and the numbers; a click opens the journal filtered by that method.",
+      "others": "Others",
+      "others_n": "{{n}} methods",
+      "others_n_more": "more than {{n}} methods",
+      "show_more": "Show more",
+      "show_less": "Collapse",
+      "empty_method": "(no subpath)",
+      "empty_method_hint": "Requests without a subpath are plain node calls. The journal has no «empty method» filter, so this row does not link anywhere.",
+      "open_logs": "Open the journal for this method",
+      "tooltip": {
+        "requests": "{{n}} requests",
+        "share": "{{pct}} % of all",
+        "delivered": "Delivered {{n}}",
+        "errors": "Errors {{n}}"
+      },
+      "single": "No breakdown: every request in this period went to a single subpath.",
+      "no_subpaths": "The node does not proxy subpaths — the method is empty on every record.",
+      "filtered": "The ranking does not apply: a method filter is active. Clear it to see the breakdown.",
+      "unavailable": "The method breakdown is unavailable. The KPI and the charts above are still counted."
+    },
     "pulse": {
       "label": "Last activity",
       "just_now": "just now",
