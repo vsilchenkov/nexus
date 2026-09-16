@@ -225,10 +225,7 @@
       "empty_method_hint": "Requests without a subpath are plain node calls. The journal has no «empty method» filter, so this row does not link anywhere.",
       "open_logs": "Open the journal for this method",
       "tooltip": {
-        "requests": "{{n}} requests",
-        "share": "{{pct}} % of all",
-        "delivered": "Delivered {{n}}",
-        "errors": "Errors {{n}}"
+        "share": "{{pct}} % of all"
       },
       "single": "No breakdown: every request in this period went to a single subpath.",
       "no_subpaths": "The node does not proxy subpaths — the method is empty on every record.",
