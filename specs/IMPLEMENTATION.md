@@ -6237,7 +6237,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 ### 4.87 §102 — запросы по методам: почему рейтинг, а не стопка, и откуда берётся строка «Остальные»
 
 Раздел [102-method-breakdown.md](sections/102-method-breakdown.md). Ветка
-`feature/node-method-breakdown`. Статус ◐ — раздел в работе, блоки 102.1–102.10.
+`feature/node-method-breakdown`. Статус ✅ — блоки 102.1–102.10 закрыты.
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -6250,6 +6250,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Компонент рейтинга | ✅ Phase 102.7 | [MethodsChart.tsx](../web-ui/src/components/ui/MethodsChart.tsx) (строка = `<a href>`, «Остальные» вычитанием, «Показать ещё» вне ссылок), [MethodsChart.test.tsx](../web-ui/src/components/ui/MethodsChart.test.tsx) — 15 тестов, [ChartTooltip.tsx](../web-ui/src/components/ui/ChartTooltip.tsx) (опц. `title` с переносом длинного имени) |
 | Дип-линк «Метрики → Журнал» с фильтрами | ✅ Phase 102.8 | [nodeTabUrl.ts](../web-ui/src/lib/nodeTabUrl.ts) (`LOG_WINDOW_PARAMS` + `method,q,q_case,q_word,q_regex,client_host`, `withLogsMethod`, `applyLogsFilter`), [nodeTabLink.ts](../web-ui/src/lib/nodeTabLink.ts) (`logsWindow`/`logsMethod`), [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) (`LogsInitialFilter`, `initForm`, раскрытие панели), [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) строит переход сам (проп `onOpenLogs` убран), тесты [nodeTabUrl.test.ts](../web-ui/src/lib/nodeTabUrl.test.ts), [LogsTab.deeplink.test.tsx](../web-ui/src/components/node/LogsTab.deeplink.test.tsx) |
 | Карточка на вкладке «Метрики» | ✅ Phase 102.9 | [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) — карточка между «Запросами» и ёмкостью, четыре деградации §102.5, [MetricsTab.methods.test.tsx](../web-ui/src/components/node/MetricsTab.methods.test.tsx) — 8 тестов |
+| Встроенный бандл SPA + CHANGELOG | ✅ Phase 102.10 | [internal/web/static/](../internal/web/static/) (`make build-ui`), [CHANGELOG.md](../CHANGELOG.md) |
 
 - **Форма графика выбиралась под вопрос, а не под красоту.** Спрошено «сколько запросов у каждого
   метода» — это рейтинг (сравнение длин), а не временной ряд. Стопка по времени отвечала бы на
