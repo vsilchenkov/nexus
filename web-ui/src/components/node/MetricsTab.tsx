@@ -202,25 +202,19 @@ export function MetricsTab({
   const kpi = m.data?.kpi;
   const chartUnavailable = m.data && !m.data.chart_available;
 
-  // §102: состояние карточки «Запросы по методам». Каждое «нечего показывать»
-  // названо своей причиной: пустая карточка без объяснения читается как поломка.
+  // §102: карточка «Запросы по методам» показывается ТОЛЬКО когда есть что
+  // ранжировать, иначе её нет вовсе. Раньше каждое «нечего показывать» было
+  // названо подсказкой, но на практике объяснять было нечего: у обычного узла
+  // (метод пуст у всех записей) и у узла с единственным подпутём карточка
+  // висела всегда — пустой блок занимал место ровно там, где у passthrough-узла
+  // стоят данные, и сообщал лишь о самом себе.
+  //
+  // Рейтинга нет, когда: разбивку не отдал источник (внешняя таблица §64 без
+  // колонки method), включён фильтр по методу (рейтинг вырождается в одну
+  // строку со 100 %), или групп меньше двух (сравнивать не с чем).
   const methods = m.data?.methods ?? [];
-  const methodsAvailable = m.data?.methods_available ?? false;
-  const methodsHint = !m.data
-    ? null
-    : applied.method
-      ? // Фильтр по методу вырождает рейтинг в одну строку со 100 %.
-        "metrics.methods.filtered"
-      : !methodsAvailable
-        ? "metrics.methods.unavailable"
-        : methods.length === 0
-          ? "metrics.no_data"
-          : methods.length === 1
-            ? methods[0].method
-              ? "metrics.methods.single"
-              : // Единственная группа с пустым method — узел не проксирует подпути.
-                "metrics.methods.no_subpaths"
-            : null;
+  const methodsShown =
+    !!m.data?.chart_available && !!m.data.methods_available && !applied.method && methods.length > 1;
   // Окно ссылки считается на рендере: у пресета это «последние N от СЕЙЧАС», и
   // адрес обязан описывать то же окно, что посчитал сервер (расхождение —
   // секунды между рендером и запросом, как у ссылки из столбца графика).
@@ -367,8 +361,8 @@ export function MetricsTab({
 
       {/* §102: рейтинг подпутей — СРАЗУ под графиком «Запросы»: тот же период,
           те же фильтры, та же единица счёта (запись). Карточки нет вовсе, когда
-          у узла нет таблицы логов — сверху уже висит общая подсказка. */}
-      {m.data?.chart_available && (
+          ранжировать нечего, — см. methodsShown. */}
+      {methodsShown && m.data && (
         <Card>
           <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
             {t("metrics.methods.title")}
@@ -380,20 +374,16 @@ export function MetricsTab({
               переходит на попытки. Расхождение единиц на одной карточке обязано
               быть названо — иначе «сумма полос ≠ сумме столбцов» читается как
               ошибка расчёта. */}
-          {!methodsHint && byAttempts && (
+          {byAttempts && (
             <div className="mb-2 text-xs text-warn">{t("metrics.methods.unit_mismatch")}</div>
           )}
-          {methodsHint ? (
-            <div className="py-2 text-xs text-fg-subtle">{t(methodsHint)}</div>
-          ) : (
-            <MethodsChart
-              data={methods}
-              total={kpi?.total ?? 0}
-              delivered={kpi?.delivered ?? 0}
-              truncated={m.data.methods_truncated}
-              hrefFor={methodHref}
-            />
-          )}
+          <MethodsChart
+            data={methods}
+            total={kpi?.total ?? 0}
+            delivered={kpi?.delivered ?? 0}
+            truncated={m.data.methods_truncated}
+            hrefFor={methodHref}
+          />
         </Card>
       )}
 

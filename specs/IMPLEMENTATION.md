@@ -6237,7 +6237,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 ### 4.87 §102 — запросы по методам: почему рейтинг, а не стопка, и откуда берётся строка «Остальные»
 
 Раздел [102-method-breakdown.md](sections/102-method-breakdown.md). Ветка
-`feature/node-method-breakdown`. Статус ✅ — блоки 102.1–102.11 закрыты.
+`feature/node-method-breakdown`. Статус ✅ — блоки 102.1–102.12 закрыты.
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -6251,6 +6251,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Дип-линк «Метрики → Журнал» с фильтрами | ✅ Phase 102.8 | [nodeTabUrl.ts](../web-ui/src/lib/nodeTabUrl.ts) (`LOG_WINDOW_PARAMS` + `method,q,q_case,q_word,q_regex,client_host`, `withLogsMethod`, `applyLogsFilter`), [nodeTabLink.ts](../web-ui/src/lib/nodeTabLink.ts) (`logsWindow`/`logsMethod`), [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) (`LogsInitialFilter`, `initForm`, раскрытие панели), [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) строит переход сам (проп `onOpenLogs` убран), тесты [nodeTabUrl.test.ts](../web-ui/src/lib/nodeTabUrl.test.ts), [LogsTab.deeplink.test.tsx](../web-ui/src/components/node/LogsTab.deeplink.test.tsx) |
 | Карточка на вкладке «Метрики» | ✅ Phase 102.9 | [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) — карточка между «Запросами» и ёмкостью, четыре деградации §102.5, [MetricsTab.methods.test.tsx](../web-ui/src/components/node/MetricsTab.methods.test.tsx) — 10 тестов |
 | Встроенный бандл SPA + CHANGELOG | ✅ Phase 102.10 | [internal/web/static/](../internal/web/static/) (`make build-ui`), [CHANGELOG.md](../CHANGELOG.md) |
+| Карточка прячется, когда ранжировать нечего | ✅ Phase 102.12 | [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) (`methodsShown`), [MetricsTab.methods.test.tsx](../web-ui/src/components/node/MetricsTab.methods.test.tsx) — 11 тестов; ключи-подсказки `single`/`no_subpaths`/`filtered`/`unavailable` удалены из локалей |
 | Ревизия перед сдачей + стенд | ✅ Phase 102.11 | предупреждение о расхождении единиц (`metrics.methods.unit_mismatch`), правило «последний метод показывается сам», парная кнопка «Показать ещё» / «Свернуть»; [MethodsChart.tsx](../web-ui/src/components/ui/MethodsChart.tsx), [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx), тесты + пересборка бандла |
 
 - **Форма графика выбиралась под вопрос, а не под красоту.** Спрошено «сколько запросов у каждого
@@ -6287,6 +6288,14 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   порядок `total DESC, method ASC` (тай-брейкер проверяется парой равных по счёту методов) и
   послабление §64, без которого у узла на чужой таблице карточка была бы вечно пуста при непустом
   «Всего».
+
+- **Пустой карточки быть не должно (Phase 102.12).** Изначально каждое «нечего показывать» было
+  названо подсказкой на месте рейтинга — по образцу соседних карточек вкладки. На экране это
+  оказалось хуже отсутствия: у ОБЫЧНОГО узла (метод пуст у всех записей — таких узлов большинство)
+  карточка висела всегда и сообщала только о самом себе, занимая место ровно там, где у
+  passthrough-узла стоят данные. Теперь карточка появляется, только когда групп две и больше,
+  источник отдал разбивку и не включён фильтр по методу; причина отказа разбивки уходит в DBG-лог,
+  а не на экран. Побочно это снимает вопрос «почему на половине узлов карточка пустая».
 
 - **Что нашла ревизия перед сдачей (Phase 102.11).** Три расхождения, все — «ТЗ обещает, кода нет»
   либо «код есть, повода нет»: (1) §102.5 объявлял предупреждение о расхождении единиц при

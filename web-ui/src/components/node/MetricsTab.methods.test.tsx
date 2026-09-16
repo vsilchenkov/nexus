@@ -120,7 +120,7 @@ describe("MetricsTab: карточка «Запросы по методам» (�
     });
   });
 
-  it("при активном фильтре по методу вместо рейтинга — объяснение", async () => {
+  it("при активном фильтре по методу карточки нет: рейтинг из одной строки не рейтинг", async () => {
     metrics = { ...BASE, methods: [{ method: LONG, total: 60, delivered: 55 }] };
     renderTab();
     await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
@@ -131,7 +131,7 @@ describe("MetricsTab: карточка «Запросы по методам» (�
     const option = await screen.findByRole("option", { name: LONG });
     fireEvent.click(option);
 
-    await waitFor(() => expect(screen.getByText("metrics.methods.filtered")).toBeTruthy());
+    await waitFor(() => expect(screen.queryByText("metrics.methods.title")).toBeNull());
     expect(methodLinks()).toHaveLength(0);
   });
 
@@ -152,21 +152,34 @@ describe("MetricsTab: карточка «Запросы по методам» (�
   it("недоступная разбивка гасит только карточку — KPI и график живы", async () => {
     metrics = { ...BASE, methods: [], methods_available: false };
     renderTab();
-    await waitFor(() => expect(screen.getByText("metrics.methods.unavailable")).toBeTruthy());
-    // KPI на месте: 100 запросов.
-    expect(screen.getByText("100")).toBeTruthy();
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText("100")).toBeTruthy()); // KPI: 100 запросов
+    expect(screen.queryByText("metrics.methods.title")).toBeNull();
   });
 
-  it("узел без подпутей объясняет это, а не показывает пустую карточку", async () => {
+  it("узел без подпутей карточку не получает вовсе", async () => {
+    // Обычный (не passthrough) узел: метод пуст у всех записей. Карточка с
+    // объяснением висела бы на каждой такой странице, сообщая только о себе.
     metrics = { ...BASE, methods: [{ method: "", total: 100, delivered: 90 }] };
     renderTab();
-    await waitFor(() => expect(screen.getByText("metrics.methods.no_subpaths")).toBeTruthy());
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText("100")).toBeTruthy());
+    expect(screen.queryByText("metrics.methods.title")).toBeNull();
   });
 
-  it("единственный подпуть — «разбивки нет», а не рейтинг из одной строки", async () => {
+  it("единственный подпуть — карточки нет: сравнивать не с чем", async () => {
     metrics = { ...BASE, methods: [{ method: LONG, total: 100, delivered: 90 }] };
     renderTab();
-    await waitFor(() => expect(screen.getByText("metrics.methods.single")).toBeTruthy());
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByText("100")).toBeTruthy());
+    expect(screen.queryByText("metrics.methods.title")).toBeNull();
+  });
+
+  it("два подпути — карточка уже есть: это и есть минимальный рейтинг", async () => {
+    // Граница: один метод — нечего сравнивать, два — уже разбивка.
+    renderTab();
+    await waitFor(() => expect(screen.getByText("metrics.methods.title")).toBeTruthy());
+    expect(methodLinks()).toHaveLength(2);
   });
 
   it("без таблицы логов карточки нет вовсе — сверху уже висит общая подсказка", async () => {
@@ -174,6 +187,5 @@ describe("MetricsTab: карточка «Запросы по методам» (�
     renderTab();
     await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
     expect(screen.queryByText("metrics.methods.title")).toBeNull();
-    expect(screen.queryByText("metrics.methods.unavailable")).toBeNull();
   });
 });
