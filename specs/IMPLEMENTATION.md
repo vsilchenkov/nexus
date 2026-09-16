@@ -6237,7 +6237,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 ### 4.87 §102 — запросы по методам: почему рейтинг, а не стопка, и откуда берётся строка «Остальные»
 
 Раздел [102-method-breakdown.md](sections/102-method-breakdown.md). Ветка
-`feature/node-method-breakdown`. Статус ✅ — блоки 102.1–102.12 закрыты.
+`feature/node-method-breakdown`. Статус ✅ — блоки 102.1–102.13 закрыты.
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -6251,6 +6251,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Дип-линк «Метрики → Журнал» с фильтрами | ✅ Phase 102.8 | [nodeTabUrl.ts](../web-ui/src/lib/nodeTabUrl.ts) (`LOG_WINDOW_PARAMS` + `method,q,q_case,q_word,q_regex,client_host`, `withLogsMethod`, `applyLogsFilter`), [nodeTabLink.ts](../web-ui/src/lib/nodeTabLink.ts) (`logsWindow`/`logsMethod`), [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) (`LogsInitialFilter`, `initForm`, раскрытие панели), [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) строит переход сам (проп `onOpenLogs` убран), тесты [nodeTabUrl.test.ts](../web-ui/src/lib/nodeTabUrl.test.ts), [LogsTab.deeplink.test.tsx](../web-ui/src/components/node/LogsTab.deeplink.test.tsx) |
 | Карточка на вкладке «Метрики» | ✅ Phase 102.9 | [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) — карточка между «Запросами» и ёмкостью, четыре деградации §102.5, [MetricsTab.methods.test.tsx](../web-ui/src/components/node/MetricsTab.methods.test.tsx) — 10 тестов |
 | Встроенный бандл SPA + CHANGELOG | ✅ Phase 102.10 | [internal/web/static/](../internal/web/static/) (`make build-ui`), [CHANGELOG.md](../CHANGELOG.md) |
+| Пошаговое раскрытие до конца списка | ✅ Phase 102.13 | [MethodsChart.tsx](../web-ui/src/components/ui/MethodsChart.tsx) (`METHOD_ROWS_STEP`, кнопка стоит, пока есть непоказанные), [metrics.go](../internal/web/usecase/metrics.go) (`MethodsLimit` 20 → 100), [log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go) (`maxMethodStats` 50 → 200) |
 | Карточка прячется, когда ранжировать нечего | ✅ Phase 102.12 | [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx) (`methodsShown`), [MetricsTab.methods.test.tsx](../web-ui/src/components/node/MetricsTab.methods.test.tsx) — 11 тестов; ключи-подсказки `single`/`no_subpaths`/`filtered`/`unavailable` удалены из локалей |
 | Ревизия перед сдачей + стенд | ✅ Phase 102.11 | предупреждение о расхождении единиц (`metrics.methods.unit_mismatch`), правило «последний метод показывается сам», парная кнопка «Показать ещё» / «Свернуть»; [MethodsChart.tsx](../web-ui/src/components/ui/MethodsChart.tsx), [MetricsTab.tsx](../web-ui/src/components/node/MetricsTab.tsx), тесты + пересборка бандла |
 
@@ -6288,6 +6289,15 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   порядок `total DESC, method ASC` (тай-брейкер проверяется парой равных по счёту методов) и
   послабление §64, без которого у узла на чужой таблице карточка была бы вечно пуста при непустом
   «Всего».
+
+- **«Показать ещё» доводит до конца списка, а не до потолка выдачи (Phase 102.13).** Первая
+  редакция раскрывала рейтинг одним кликом до 20 строк — ровно столько отдавал сервер. На узле с
+  тридцатью подпутями это значило, что десять методов не увидеть вовсе: кнопка исчезала, а «Остальные»
+  их не называла. Теперь клик добавляет восемь строк и кнопка остаётся, пока есть непоказанные;
+  выдача сервера поднята до 100 строк (`MethodsLimit`), кап адаптера — до 200, как у фасета методов
+  §48.3 (та же колонка, один потолок). Платится размером ответа: сто строк — это ~10–15 КБ на
+  поллинг вкладки «Метрики» (и только её: «Обзор» разбивку не просит). Методы сверх ста по-прежнему
+  живут в строке «Остальные · более N методов».
 
 - **Пустой карточки быть не должно (Phase 102.12).** Изначально каждое «нечего показывать» было
   названо подсказкой на месте рейтинга — по образцу соседних карточек вкладки. На экране это
