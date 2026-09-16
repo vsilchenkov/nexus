@@ -22,10 +22,14 @@
 
 ## [Unreleased]
 
+## [1.36.0] - 2026-09-16
+
 **Откат:** без отката схемы (миграций нет). Прежний код не знает новых полей конверта и ключей
 Redis и возвращается к поиску узла по пути; бейджи узлов до первого вызова показывают старые ключи
 (они не удаляются и живут 30 суток). Дашборды Grafana и правила алертов §101 на метриках прежнего кода
 работают (метка `team` пуста), откатывать их не обязательно.
+
+Два раздела ТЗ: команда в идентичности узла (§101) и рейтинг запросов по методам (§102).
 
 Раздел ТЗ §101 — команда в идентичности узла. Повод: в топах экрана Kafka строка `telegram` была без
 ссылки, потому что путь `telegram` есть у двух команд, а метрики несли только путь. Разбор нашёл ту же
@@ -112,6 +116,11 @@ Redis и возвращается к поиску узла по пути; бей
 - **Выкат: Sender → Receiver → Web**, затем `docker compose restart prometheus` (DEPLOYMENT §9.1.4).
   Образы собирать заранее и поднимать сервисы подряд: пока Receiver старый, async-сообщение к пути,
   занятому узлами нескольких команд, теряется с алертом `NexusDLQMessagesLost`.
+- **Инструменты выпуска: релиз в зеркало на GitHub.** `scripts/release/create_github_release.py`
+  создаёт (и обновляет) релиз в публичном зеркале из раздела CHANGELOG, переписывая относительные
+  ссылки на абсолютные. Зеркало описано в карте реализации. Кода сервисов не касается.
+- **Оглавление `specs/sections/README.md`** снова перечисляет все разделы ТЗ — таблица отстала от
+  содержимого каталога.
 
 ## [1.35.1] - 2026-09-09
 
@@ -3446,7 +3455,13 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.32.1...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.36.0...HEAD
+[1.36.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.35.1...v1.36.0
+[1.35.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.35.0...v1.35.1
+[1.35.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.34.1...v1.35.0
+[1.34.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.34.0...v1.34.1
+[1.34.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.33.0...v1.34.0
+[1.33.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.32.1...v1.33.0
 [1.32.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.32.0...v1.32.1
 [1.32.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.6...v1.32.0
 [1.31.6]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.5...v1.31.6
