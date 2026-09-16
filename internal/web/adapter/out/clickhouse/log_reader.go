@@ -45,11 +45,18 @@ func chUnavailable(err error) bool {
 // выполнил ручной ALTER из release notes) — ТОЖЕ мягкая деградация «логи
 // временно недоступны», а не 500: SELECT'ы читают колонку списком, и до ALTER
 // каждый поллинг вкладки «Логи» флудил бы 500/Sentry раз в несколько секунд
-// (поймано на стенде). Привязано строго к client_host — прочие missing-column
-// (чужие поломки DDL) остаются серверными ошибками и не маскируются.
+// (поймано на стенде).
+//
+// §102: по той же причине сюда добавлена колонка method — рейтинг «Запросы по
+// методам» группируется по ней на каждом поллинге вкладки «Метрики». Подстрока
+// ловит и http_method (§39.4), и это намеренно: обе колонки — признак одной и
+// той же ситуации «внешняя таблица §64 без ручного ALTER».
+//
+// Привязано строго к этим двум именам — прочие missing-column (чужие поломки
+// DDL) остаются серверными ошибками и не маскируются.
 func classifyCHErr(op string, err error) error {
 	wrapped := fmt.Errorf("%s: %w", op, err)
-	if chUnavailable(err) || isMissingColumnErr(err, "client_host") {
+	if chUnavailable(err) || isMissingColumnErr(err, "client_host") || isMissingColumnErr(err, "method") {
 		return errors.Join(wrapped, domain.ErrLogsBackendUnavailable)
 	}
 	return wrapped
@@ -1904,4 +1911,97 @@ func isSafeTableName(name string) bool {
 		}
 	}
 	return dot > 0 && dot < len(name)-1
+}
+
+// maxMethodStats — потолок строк рейтинга «Запросы по методам» (§102).
+//
+// Это кап адаптера, а не размер выдачи: сколько строк нужно, решает вызывающий,
+// но просить у ClickHouse произвольно много групп он не вправе — иначе
+// потребитель со scope metrics:read закажет разбивку на сто тысяч строк. Тот же
+// приём, что у фасета методов (maxDistinctMethods).
+const maxMethodStats = 50
+
+// NodeMethodStats — рейтинг значений колонки method под фильтрами q (§102).
+//
+// Агрегация ОДНОСТАДИЙНАЯ. Двухстадийная свёртка строк в записи (GROUP BY ID,
+// как в chartSQL при ByRecord) существует ради привязки записи к интервалу её
+// ПЕРВОГО прогона — у рейтинга интервалов нет, привязывать не к чему. Единицу
+// это не меняет: total/delivered считаются теми же выражениями uniqueExprs, что
+// и NodeKPI, поэтому Σ по группам сходится с KPI — на этом держится расчёт
+// строки «Остальные» на клиенте (§102.3).
+//
+// WHERE строится общим searchConds — тем же, что у списка логов, KPI и обоих
+// графиков (§79.4): отдельный набор условий гарантированно разошёлся бы с ними.
+//
+// Пустое значение method (обычный узел, записи до §39) — законная группа и из
+// выдачи не исключается: без неё Σ перестала бы сходиться с KPI.
+func (r *LogReaderCH) NodeMethodStats(ctx context.Context, q port.LogQuery, approx bool, limit int) ([]port.MethodStat, bool, error) {
+	if !isSafeTableName(q.Table) {
+		return nil, false, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	limit = methodStatsLimit(limit)
+	q.BeforeID, q.Limit = "", 0
+
+	conds, args := r.searchConds(ctx, q)
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, false, err
+	}
+	// LIMIT limit+1: лишняя строка — единственный честный признак «методов
+	// больше». Признак «вернулось ровно limit» объявил бы несуществующий хвост
+	// при РОВНО limit методах (§102.4).
+	rows, err := conn.Query(ctx, methodStatsSQL(q.Table, where, approx, limit+1), args...)
+	if err != nil {
+		return nil, false, classifyCHErr("clickhouse node method stats", err)
+	}
+	defer rows.Close()
+
+	out := make([]port.MethodStat, 0, limit)
+	more := false
+	for rows.Next() {
+		var st port.MethodStat
+		if err := rows.Scan(&st.Method, &st.Total, &st.Delivered); err != nil {
+			return nil, false, fmt.Errorf("scan node method stats: %w", err)
+		}
+		if len(out) == limit {
+			more = true
+			break
+		}
+		// Кламп как в NodeKPI: в приблизительном режиме delivered считается
+		// независимым HLL и может оказаться больше total («доставлено 101 %»).
+		st.Delivered = min(st.Delivered, st.Total)
+		out = append(out, st)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, classifyCHErr("clickhouse node method stats", err)
+	}
+	return out, more, nil
+}
+
+// methodStatsLimit — согласование запрошенного числа строк с капом адаптера.
+// Непрошенное (0 и меньше) и запредельное одинаково сводятся к капу: у
+// «сколько-нибудь» и «слишком много» ответ один — максимум, который адаптер
+// готов посчитать.
+func methodStatsLimit(limit int) int {
+	if limit <= 0 || limit > maxMethodStats {
+		return maxMethodStats
+	}
+	return limit
+}
+
+// methodStatsSQL — запрос рейтинга методов. Второй ключ сортировки (method)
+// обязателен: без него порядок строк с равными счётчиками не определён, и они
+// переставлялись бы на каждом поллинге вкладки.
+func methodStatsSQL(table, where string, approx bool, limit int) string {
+	totalExpr, deliveredExpr := uniqueExprs(approx)
+	return fmt.Sprintf(`SELECT
+		method,
+		%s AS total,
+		%s AS delivered
+	FROM %s%s
+	GROUP BY method ORDER BY total DESC, method ASC LIMIT %d`, totalExpr, deliveredExpr, table, where, limit)
 }

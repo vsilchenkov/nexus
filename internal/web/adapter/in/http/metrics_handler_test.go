@@ -34,7 +34,15 @@ type captureNodeLogs struct {
 	// мьютексом, иначе -race красит тест, а не код.
 	latencyStep int64
 	latencyErr  error
-	mu          sync.Mutex
+
+	// §102: рейтинг методов — та же конкурентная группа.
+	methods      []port.MethodStat
+	methodsMore  bool
+	methodsErr   error
+	methodsCalls int
+	methodsLim   int
+
+	mu sync.Mutex
 }
 
 func (c *captureNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, _ bool) (port.NodeKPI, error) {
@@ -59,6 +67,15 @@ func (c *captureNodeLogs) NodeLatencyChart(_ context.Context, _ port.LogQuery, s
 		return nil, err
 	}
 	return []port.LatencyPoint{{TsMs: 1, P50ms: 5, P95ms: 30, Attempts: 2}}, nil
+}
+
+func (c *captureNodeLogs) NodeMethodStats(_ context.Context, _ port.LogQuery, _ bool, limit int) ([]port.MethodStat, bool, error) {
+	c.mu.Lock()
+	c.methodsCalls++
+	c.methodsLim = limit
+	rows, more, err := c.methods, c.methodsMore, c.methodsErr
+	c.mu.Unlock()
+	return rows, more, err
 }
 
 // metricsNodeRepo — port.NodeRepo с одним узлом.

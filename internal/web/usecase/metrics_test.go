@@ -90,7 +90,19 @@ type fakeNodeLogs struct {
 	gotLatencyQuery port.LogQuery
 	gotLatencyStep  int64
 	latencyCalls    int
-	mu              sync.Mutex
+
+	// §102: рейтинг методов. Кроме результата фиксируются запрос, режим
+	// точности и лимит — все три обязаны совпасть с тем, чем считался KPI,
+	// иначе Σ по методам не сойдётся с ним на клиенте.
+	methods       []port.MethodStat
+	methodsMore   bool
+	methodsErr    error
+	gotMethodsQ   port.LogQuery
+	gotMethodsApx bool
+	gotMethodsLim int
+	methodsCalls  int
+
+	mu sync.Mutex
 }
 
 // NodeKPI на рабочем столе зовётся КОНКУРЕНТНО по узлам (nodesOverviewCH), так
@@ -119,6 +131,15 @@ func (f *fakeNodeLogs) NodeLatencyChart(_ context.Context, q port.LogQuery, step
 	f.latencyCalls++
 	f.mu.Unlock()
 	return f.latency, f.latencyErr
+}
+
+// §102: третья конкурентная горутина той же группы — запись под тем же мьютексом.
+func (f *fakeNodeLogs) NodeMethodStats(_ context.Context, q port.LogQuery, approx bool, limit int) ([]port.MethodStat, bool, error) {
+	f.mu.Lock()
+	f.gotMethodsQ, f.gotMethodsApx, f.gotMethodsLim = q, approx, limit
+	f.methodsCalls++
+	f.mu.Unlock()
+	return f.methods, f.methodsMore, f.methodsErr
 }
 
 // fakeNodeRepo встраивает port.NodeRepo (nil): usecase зовёт Get и List.
