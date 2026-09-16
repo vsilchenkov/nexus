@@ -181,7 +181,7 @@ type NodeLogMetrics interface {
 	// (детерминизм: без второго ключа порядок одинаковых счётчиков плавает от
 	// запроса к запросу, и строки на экране переставляются на каждом поллинге).
 	//
-	// more сообщает, что методов БОЛЬШЕ, чем вернулось строк. Флаг считает
+	// truncated сообщает, что методов БОЛЬШЕ, чем вернулось строк. Флаг считает
 	// адаптер (он запрашивает на строку больше и лишнюю отбрасывает), а не
 	// вызывающий по «пришло ровно limit»: при РОВНО limit методах такой признак
 	// объявил бы несуществующий хвост (§102.4).
@@ -189,7 +189,7 @@ type NodeLogMetrics interface {
 	// approx — та же настройка точности, что у NodeKPI (§44-perf). Вызывающий
 	// обязан передать сюда ТО ЖЕ значение, что и в NodeKPI одного запроса:
 	// разные режимы дают разные оценки, и Σ по методам разъедется с KPI.
-	NodeMethodStats(ctx context.Context, q LogQuery, approx bool, limit int) (stats []MethodStat, more bool, err error)
+	NodeMethodStats(ctx context.Context, q LogQuery, approx bool, limit int) (stats []MethodStat, truncated bool, err error)
 }
 
 // PromMetrics — глобальные и кросс-сервисные метрики из Prometheus

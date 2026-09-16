@@ -97,7 +97,7 @@ type fakeNodeLogs struct {
 	// точности и лимит — все три обязаны совпасть с тем, чем считался KPI,
 	// иначе Σ по методам не сойдётся с ним на клиенте.
 	methods       []port.MethodStat
-	methodsMore   bool
+	methodsCut    bool
 	methodsErr    error
 	gotMethodsQ   port.LogQuery
 	gotMethodsApx bool
@@ -141,7 +141,7 @@ func (f *fakeNodeLogs) NodeMethodStats(_ context.Context, q port.LogQuery, appro
 	f.gotMethodsQ, f.gotMethodsApx, f.gotMethodsLim = q, approx, limit
 	f.methodsCalls++
 	f.mu.Unlock()
-	return f.methods, f.methodsMore, f.methodsErr
+	return f.methods, f.methodsCut, f.methodsErr
 }
 
 // fakeNodeRepo встраивает port.NodeRepo (nil): usecase зовёт Get и List.
@@ -993,18 +993,18 @@ func TestMetricsUsecase_NodeMethods(t *testing.T) {
 		assert.True(t, got.ChartAvailable)
 	})
 
-	t.Run("more доезжает до ответа", func(t *testing.T) {
+	t.Run("признак усечения доезжает до ответа", func(t *testing.T) {
 		t.Parallel()
 		logs := &fakeNodeLogs{
-			kpi:         port.NodeKPI{Total: 100},
-			methods:     []port.MethodStat{{Method: "a", Total: 10}},
-			methodsMore: true,
+			kpi:        port.NodeKPI{Total: 100},
+			methods:    []port.MethodStat{{Method: "a", Total: 10}},
+			methodsCut: true,
 		}
 		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
 
 		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", WithMethods: true})
 		require.NoError(t, err)
-		assert.True(t, got.MethodsMore)
+		assert.True(t, got.MethodsTruncated)
 	})
 
 	t.Run("ошибка графика гасит и рейтинг: вкладки нет", func(t *testing.T) {

@@ -244,10 +244,10 @@ type NodeMetrics struct {
 	// Заполняется только при NodeMetricsQuery.WithMethods.
 	Methods []port.MethodStat
 
-	// MethodsMore — методов в окне БОЛЬШЕ, чем строк в Methods. Клиент
+	// MethodsTruncated — методов в окне БОЛЬШЕ, чем строк в Methods. Клиент
 	// показывает это знаком «+» в строке «Остальные»: без флага он не отличил
 	// бы полностью показанный список из MethodsLimit методов от усечённого.
-	MethodsMore bool
+	MethodsTruncated bool
 
 	// MethodsAvailable — рейтинг посчитан. Отдельный флаг по той же причине,
 	// что у латентности: пустой список законен (в окне нет запросов), и от
@@ -695,12 +695,12 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, in NodeMetricsQuery) (
 	// поэтому время ответа вкладки не растёт; нагрузка на ClickHouse на этой
 	// вкладке примерно удваивается — осознанная цена, названная в §84.5.
 	var (
-		series      []port.SeriesPoint
-		latency     []port.LatencyPoint
-		latErr      error
-		methods     []port.MethodStat
-		methodsMore bool
-		methodsErr  error
+		series     []port.SeriesPoint
+		latency    []port.LatencyPoint
+		latErr     error
+		methods    []port.MethodStat
+		methodsCut bool
+		methodsErr error
 	)
 	g, gctx := errgroup.WithContext(mctx)
 	g.Go(func() error {
@@ -743,12 +743,12 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, in NodeMetricsQuery) (
 			mtctx, cancel := context.WithTimeout(gctx, methodsTimeout)
 			defer cancel()
 			t0 := u.clock.Now()
-			stats, more, err := u.nodeLogs.NodeMethodStats(mtctx, q, approx, MethodsLimit)
-			methods, methodsMore, methodsErr = stats, more, err
+			stats, cut, err := u.nodeLogs.NodeMethodStats(mtctx, q, approx, MethodsLimit)
+			methods, methodsCut, methodsErr = stats, cut, err
 			u.logger.Debug("node metrics: method stats",
 				u.logger.Str("node", n.Path),
 				u.logger.Int("methods", len(stats)),
-				u.logger.Any("more", more),
+				u.logger.Any("truncated", cut),
 				u.logger.Int("duration_ms", int(u.clock.Now().Sub(t0).Milliseconds())),
 				u.logger.Any("failed", err != nil))
 			// Как и латентность, ошибка рейтинга НЕ валит группу.
@@ -773,7 +773,7 @@ func (u *MetricsUsecase) NodeMetrics(ctx context.Context, in NodeMetricsQuery) (
 		switch {
 		case methodsErr == nil:
 			res.Methods = methods
-			res.MethodsMore = methodsMore
+			res.MethodsTruncated = methodsCut
 			res.MethodsAvailable = true
 		case errors.Is(methodsErr, domain.ErrLogsBackendUnavailable):
 			// KPI уже прошёл, значит источник жив: мягкая деградация здесь —

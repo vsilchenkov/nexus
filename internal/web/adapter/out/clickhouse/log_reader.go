@@ -1961,14 +1961,14 @@ func (r *LogReaderCH) NodeMethodStats(ctx context.Context, q port.LogQuery, appr
 	defer rows.Close()
 
 	out := make([]port.MethodStat, 0, limit)
-	more := false
+	truncated := false
 	for rows.Next() {
 		var st port.MethodStat
 		if err := rows.Scan(&st.Method, &st.Total, &st.Delivered); err != nil {
 			return nil, false, fmt.Errorf("scan node method stats: %w", err)
 		}
 		if len(out) == limit {
-			more = true
+			truncated = true
 			break
 		}
 		// Кламп как в NodeKPI: в приблизительном режиме delivered считается
@@ -1979,7 +1979,7 @@ func (r *LogReaderCH) NodeMethodStats(ctx context.Context, q port.LogQuery, appr
 	if err := rows.Err(); err != nil {
 		return nil, false, classifyCHErr("clickhouse node method stats", err)
 	}
-	return out, more, nil
+	return out, truncated, nil
 }
 
 // methodStatsLimit — согласование запрошенного числа строк с капом адаптера.

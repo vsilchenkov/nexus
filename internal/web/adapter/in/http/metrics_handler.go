@@ -377,9 +377,18 @@ type latencyPointDTO struct {
 	Attempts uint64  `json:"attempts"`
 }
 
+// methodStatDTO — строка рейтинга «Запросы по методам» (§102). Единица —
+// ЗАПИСЬ, как у kpi.total: клиент вычитает сумму показанных строк из него,
+// получая «Остальные». method="" — записи без подпути (обычный узел, §39).
+type methodStatDTO struct {
+	Method    string `json:"method"`
+	Total     uint64 `json:"total"`
+	Delivered uint64 `json:"delivered"`
+}
+
 // Node godoc
 // @Summary  KPI + временной ряд графика узла (§21).
-// @Description  Источник — ClickHouse-логи узла: точные счётчики по УНИКАЛЬНЫМ запросам. §79.4: принимает те же фильтры, что журнал логов (q/method/client_host/status/done) — KPI и график считаются под ними. §79.5: step задаёт ширину столбца, фактическая возвращается в step_seconds; столбец — записи по интервалу прихода с итоговым статусом (chart_unit=records), на больших окнах деградирует до счёта по прогонам (chart_unit=attempts). Без ClickHouse или при таймауте → нули с chart_available=false.
+// @Description  Источник — ClickHouse-логи узла: точные счётчики по УНИКАЛЬНЫМ запросам. §79.4: принимает те же фильтры, что журнал логов (q/method/client_host/status/done) — KPI и график считаются под ними. §79.5: step задаёт ширину столбца, фактическая возвращается в step_seconds; столбец — записи по интервалу прихода с итоговым статусом (chart_unit=records), на больших окнах деградирует до счёта по прогонам (chart_unit=attempts). §102: with_methods=1 добавляет рейтинг по колонке method (до 20 строк, по убыванию; единица — ЗАПИСЬ, как kpi.total, поэтому строку «Остальные» клиент получает вычитанием); methods_truncated=true — методов больше, чем строк в ответе. Разбивка деградирует отдельно (methods_available=false), не гася KPI и графики. Без ClickHouse или при таймауте → нули с chart_available=false.
 // @Tags     metrics
 // @Produce  json
 // @Param    id           path   string  true   "node id"
@@ -395,6 +404,7 @@ type latencyPointDTO struct {
 // @Param    client_host  query  string  false  "фильтр по хосту клиента (§67)"
 // @Param    status       query  string  false  "ok | err (§72.1)"
 // @Param    done         query  string  false  "yes | no"
+// @Param    with_methods query  string  false  "1 — добавить рейтинг по колонке method (§102)"
 // @Success  200  {object}  NodeMetricsResponse
 // @Failure  400  {object}  ErrorResponse  "некорректный поисковый запрос"
 // @Failure  404  {object}  ErrorResponse
@@ -414,6 +424,10 @@ func (h *MetricsHandler) Node(c *gin.Context) {
 		Until:  until,
 		Step:   c.Query("step"),
 		Filter: logQueryFromContext(c),
+		// §102: разбивка по методам — по требованию. Тем же эндпоинтом ходит
+		// вкладка «Обзор», которой она не нужна, а стоит она отдельного
+		// запроса к ClickHouse на каждом поллинге.
+		WithMethods: boolFlag(c.Query("with_methods")),
 	})
 	if err != nil {
 		if errors.Is(err, logsearch.ErrBadQuery) {
@@ -444,6 +458,13 @@ func (h *MetricsHandler) Node(c *gin.Context) {
 			Attempts: p.Attempts,
 		})
 	}
+	// §102: рейтинг всегда массив, а не null — по той же причине, что ряд
+	// латентности: пустой рейтинг законен, и клиенту не приходится различать
+	// два «нет данных».
+	methods := make([]methodStatDTO, 0, len(res.Methods))
+	for _, m := range res.Methods {
+		methods = append(methods, methodStatDTO{Method: m.Method, Total: m.Total, Delivered: m.Delivered})
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"kpi": nodeKPIDTO{
 			Total:      res.KPI.Total,
@@ -460,5 +481,8 @@ func (h *MetricsHandler) Node(c *gin.Context) {
 		"chart_unit":        res.ChartUnit,
 		"latency":           latency,
 		"latency_available": res.LatencyAvailable,
+		"methods":           methods,
+		"methods_available": res.MethodsAvailable,
+		"methods_truncated": res.MethodsTruncated,
 	})
 }

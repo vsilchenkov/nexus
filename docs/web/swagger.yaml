@@ -685,6 +685,33 @@ definitions:
         type: string
       kpi:
         $ref: '#/definitions/internal_web_adapter_in_http.nodeKPIDTO'
+      latency:
+        description: |-
+          Latency/LatencyAvailable — ряд перцентилей по тем же интервалам (§84.5).
+          Ответ строится gin.H, поэтому swagger-drift-check расхождение этой
+          структуры с ним не ловит: поля §84.5 отсутствовали здесь до §102.
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.latencyPointDTO'
+        type: array
+      latency_available:
+        type: boolean
+      methods:
+        description: |-
+          Methods — рейтинг по колонке method (§102), до usecase.MethodsLimit
+          строк, по убыванию total. Приезжает только при with_methods=1; единица —
+          ЗАПИСЬ, как у KPI.Total, поэтому строка «Остальные» получается
+          вычитанием суммы показанных строк из KPI.Total.
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.methodStatDTO'
+        type: array
+      methods_available:
+        description: |-
+          MethodsAvailable — рейтинг посчитан. false при with_methods=1 означает
+          деградацию именно разбивки (KPI и графики при этом живы).
+        type: boolean
+      methods_truncated:
+        description: MethodsTruncated — методов в окне больше, чем строк в Methods.
+        type: boolean
       range_ms:
         type: integer
       series:
@@ -1852,6 +1879,17 @@ definitions:
       members:
         type: integer
     type: object
+  internal_web_adapter_in_http.latencyPointDTO:
+    properties:
+      attempts:
+        type: integer
+      p50_ms:
+        type: number
+      p95_ms:
+        type: number
+      ts:
+        type: integer
+    type: object
   internal_web_adapter_in_http.logMaskPreviewRequest:
     properties:
       pattern:
@@ -1971,6 +2009,15 @@ definitions:
         type: string
       user_id:
         type: string
+    type: object
+  internal_web_adapter_in_http.methodStatDTO:
+    properties:
+      delivered:
+        type: integer
+      method:
+        type: string
+      total:
+        type: integer
     type: object
   internal_web_adapter_in_http.nodeGroupMoveRequest:
     properties:
@@ -5100,7 +5147,11 @@ paths:
         — KPI и график считаются под ними. §79.5: step задаёт ширину столбца, фактическая
         возвращается в step_seconds; столбец — записи по интервалу прихода с итоговым
         статусом (chart_unit=records), на больших окнах деградирует до счёта по прогонам
-        (chart_unit=attempts). Без ClickHouse или при таймауте → нули с chart_available=false.'
+        (chart_unit=attempts). §102: with_methods=1 добавляет рейтинг по колонке method
+        (до 20 строк, по убыванию; единица — ЗАПИСЬ, как kpi.total, поэтому строку
+        «Остальные» клиент получает вычитанием); methods_truncated=true — методов
+        больше, чем строк в ответе. Разбивка деградирует отдельно (methods_available=false),
+        не гася KPI и графики. Без ClickHouse или при таймауте → нули с chart_available=false.'
       parameters:
       - description: node id
         in: path
@@ -5155,6 +5206,10 @@ paths:
       - description: yes | no
         in: query
         name: done
+        type: string
+      - description: 1 — добавить рейтинг по колонке method (§102)
+        in: query
+        name: with_methods
         type: string
       produces:
       - application/json
