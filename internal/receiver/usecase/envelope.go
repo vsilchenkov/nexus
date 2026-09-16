@@ -32,6 +32,13 @@ type Envelope struct {
 	// Sender-копией Envelope (internal/sender/usecase/async_envelope.go).
 	RequestPath string `json:"request_path,omitempty"`
 
+	// NodeID и Team — §101.4: какой узел принял сообщение. Sender ищет узел по
+	// NodeID: путь уникален лишь внутри команды, а NodeUsecase.Move меняет
+	// команду при том же id. Team — слог на момент приёма, для заголовков и
+	// диагностики. Пусты у конвертов, записанных до §101 (см. §101.5).
+	NodeID string `json:"node_id,omitempty"`
+	Team   string `json:"team,omitempty"`
+
 	// IngressMethod — §83.7: root_method узла В МОМЕНТ ПРИЁМА. По нему consumer
 	// отличает сообщение, принятое как async, от сообщения sync-узла, которое
 	// попало в очередь по §3.6 (узел был на паузе). Первое после перевода узла
@@ -58,9 +65,11 @@ type RMQMeta struct {
 
 // BuildEnvelope формирует Envelope из входящего запроса узла,
 // уже прошедшего incoming-auth + resolveURL + dynamic-auth.
+// teamSlug — слог команды, в которой узел найден (§101.4).
 func BuildEnvelope(
 	id string,
 	node *domain.Node,
+	teamSlug string,
 	method, targetURL, authHeader, clientIP, requestPath string,
 	headers http.Header,
 	cleanQuery url.Values,
@@ -74,6 +83,8 @@ func BuildEnvelope(
 	return &Envelope{
 		ID:            id,
 		NodePath:      node.Path,
+		NodeID:        node.ID,
+		Team:          teamSlug,
 		Method:        method,
 		TargetURL:     finalURL,
 		AuthHeader:    authHeader,

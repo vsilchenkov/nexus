@@ -46,12 +46,19 @@ export const SLOW_METRICS_MS = 2000;
 // приехал, запрос НЕ уходит вовсе: иначе повторяется мигание §71 — показали
 // 24 ч, через 300 мс переключили на сохранённые 7 д и сделали два запроса
 // вместо одного.
+// §102: withMethods — просить ли рейтинг по методам (with_methods=1). Просит
+// только вкладка «Метрики»; «Обзор» зовёт тот же эндпоинт с тем же id и тем же
+// периодом, поэтому флаг ОБЯЗАН входить и в queryKey, и в ключ useStableData:
+// иначе две вкладки делят одну запись кеша, поллинг «Обзора» затирает разбивку
+// (карточка мигает «недоступно»), а «залипший» снимок смешивает ответы с
+// рейтингом и без него.
 export function useNodeMetrics(
   id: string | undefined,
   period: Period,
   step: ChartStep = "auto",
   filterParams: Record<string, string> = {},
   enabled = true,
+  withMethods = false,
 ) {
   const refetch = useMetricsRefetchMs();
   // Ключ фильтров — стабильная строка: объект в queryKey сравнивается
@@ -63,13 +70,14 @@ export function useNodeMetrics(
   useEffect(() => setSlow(false), [filterKey, id]);
 
   const q = useQuery({
-    queryKey: ["node-metrics", id, periodKey(period), stepKey(step), filterKey],
+    queryKey: ["node-metrics", id, periodKey(period), stepKey(step), filterKey, withMethods],
     queryFn: async () => {
       const started = Date.now();
       const res = await api.get<NodeMetricsResp>(`/api/metrics/nodes/${id}`, {
         ...periodParams(period),
         ...stepParams(step),
         ...filterParams,
+        ...(withMethods ? { with_methods: "1" } : {}),
       });
       setSlow(Date.now() - started > SLOW_METRICS_MS);
       return res;
@@ -79,7 +87,7 @@ export function useNodeMetrics(
   });
   const data = useStableData(
     q.data,
-    `${id ?? ""}:${periodKey(period)}:${stepKey(step)}:${filterKey}`,
+    `${id ?? ""}:${periodKey(period)}:${stepKey(step)}:${filterKey}:${withMethods ? "m" : ""}`,
     (d) => d.chart_available,
   );
   return { ...q, data, slow };

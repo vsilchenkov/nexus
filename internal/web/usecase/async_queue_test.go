@@ -27,25 +27,28 @@ type stubPeeker struct {
 	err         error
 	scanFrom    time.Time
 	scanTo      time.Time
-	scanPath    string
+	scanOwner   port.QueueOwner
+	listOwners  []port.QueueOwner
+	bodyOwner   port.QueueOwner
 	listTopics  []string
 	scanTopics  []string
 	bodyTopic   string
 }
 
-func (s *stubPeeker) PeekList(_ context.Context, _, topic, _ string, _, _ int) (port.PeekListResult, error) {
+func (s *stubPeeker) PeekList(_ context.Context, _, topic string, owner port.QueueOwner, _, _ int) (port.PeekListResult, error) {
 	s.listTopics = append(s.listTopics, topic)
+	s.listOwners = append(s.listOwners, owner)
 	if s.listByTopic != nil {
 		return s.listByTopic[topic], s.err
 	}
 	return s.list, s.err
 }
-func (s *stubPeeker) PeekBody(_ context.Context, topic string, _ int, _ int64) (port.QueueMessageBody, error) {
-	s.bodyTopic = topic
+func (s *stubPeeker) PeekBody(_ context.Context, topic string, _ int, _ int64, owner port.QueueOwner) (port.QueueMessageBody, error) {
+	s.bodyTopic, s.bodyOwner = topic, owner
 	return s.body, s.err
 }
-func (s *stubPeeker) ScanIDs(_ context.Context, _, topic, nodePath string, from, to time.Time, _ int) (port.ScanIDsResult, error) {
-	s.scanPath, s.scanFrom, s.scanTo = nodePath, from, to
+func (s *stubPeeker) ScanIDs(_ context.Context, _, topic string, owner port.QueueOwner, from, to time.Time, _ int) (port.ScanIDsResult, error) {
+	s.scanOwner, s.scanFrom, s.scanTo = owner, from, to
 	s.scanTopics = append(s.scanTopics, topic)
 	if s.scanByTopic != nil {
 		return s.scanByTopic[topic], s.err
@@ -73,13 +76,23 @@ func newQueueUC(peeker port.AsyncQueuePeeker, cancel port.QueueCancelWriter, nod
 	return newQueueUCFull(peeker, cancel, nil, node)
 }
 
+// newQueueUCFull — путь узла однозначен во всём инстансе: старые конверты без
+// node_id считаются своими (§101.8). Неоднозначный путь — newQueueUCPaths.
 func newQueueUCFull(peeker port.AsyncQueuePeeker, cancel port.QueueCancelWriter, failed port.FailedLogsPurger, node *domain.Node) (*AsyncQueueUsecase, *stubAuditRepo) {
+	paths := &fakeNodePaths{ids: map[string]string{}}
+	if node != nil {
+		paths.ids[node.Path] = node.ID
+	}
+	return newQueueUCPaths(peeker, cancel, failed, node, paths)
+}
+
+func newQueueUCPaths(peeker port.AsyncQueuePeeker, cancel port.QueueCancelWriter, failed port.FailedLogsPurger, node *domain.Node, paths port.NodePathResolver) (*AsyncQueueUsecase, *stubAuditRepo) {
 	repo := &stubAuditRepo{}
 	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{}}
 	if node != nil {
 		nodes.nodes[node.ID] = node
 	}
-	uc := NewAsyncQueueUsecase(peeker, cancel, failed, nodes,
+	uc := NewAsyncQueueUsecase(peeker, cancel, failed, nodes, paths,
 		NewAuditUsecase(repo, logging.NewNoop()),
 		"nexus-sender", "nexus.async",
 		"nexus-sender-paused", "nexus.async.paused",
@@ -96,7 +109,7 @@ func newQueueUCCap(failed port.FailedLogsPurger, cancel port.QueueCancelWriter, 
 	if node != nil {
 		nodes.nodes[node.ID] = node
 	}
-	uc := NewAsyncQueueUsecase(&stubPeeker{}, cancel, failed, nodes,
+	uc := NewAsyncQueueUsecase(&stubPeeker{}, cancel, failed, nodes, nil,
 		NewAuditUsecase(repo, logging.NewNoop()),
 		"nexus-sender", "nexus.async",
 		"nexus-sender-paused", "nexus.async.paused",
@@ -291,6 +304,58 @@ func TestAsyncQueue_TeamScope_NotFound(t *testing.T) {
 	assert.ErrorIs(t, err, domain.ErrNodeNotFound)
 }
 
+// TestAsyncQueue_Owner_SameNamePathInAnotherTeam (§101.8): путь узла занят и в
+// другой команде — старые конверты без node_id могут быть чужими, поэтому
+// список, очистка и тело получают владельца без AcceptLegacy.
+func TestAsyncQueue_Owner_SameNamePathInAnotherTeam(t *testing.T) {
+	t.Parallel()
+	peeker := &stubPeeker{}
+	paths := &fakeNodePaths{ids: map[string]string{}} // неоднозначный путь IDsByPaths не отдаёт
+	uc, _ := newQueueUCPaths(peeker, &stubCancelWriter{}, nil, asyncNode(), paths)
+	ctx := context.Background()
+
+	_, err := uc.List(ctx, "n1", "t1")
+	require.NoError(t, err)
+	_, err = uc.PurgeAll(ctx, Actor{UserID: "u"}, "n1", "t1")
+	require.NoError(t, err)
+	_, err = uc.Body(ctx, "n1", "t1", "", 0, 1)
+	require.NoError(t, err)
+
+	want := port.QueueOwner{Path: "partner/echo", NodeID: "n1"}
+	assert.Equal(t, []port.QueueOwner{want, want}, peeker.listOwners, "оба топика очереди")
+	assert.Equal(t, want, peeker.scanOwner)
+	assert.Equal(t, want, peeker.bodyOwner)
+	assert.Contains(t, paths.asked, "partner/echo")
+}
+
+// TestAsyncQueue_Owner_ResolverErrorHidesLegacy: сбой PostgreSQL на проверке
+// однозначности не открывает старые конверты — вкладка работает, но без них.
+func TestAsyncQueue_Owner_ResolverErrorHidesLegacy(t *testing.T) {
+	t.Parallel()
+	peeker := &stubPeeker{}
+	uc, _ := newQueueUCPaths(peeker, &stubCancelWriter{}, nil, asyncNode(),
+		&fakeNodePaths{err: errors.New("pg down")})
+
+	_, err := uc.List(context.Background(), "n1", "t1")
+	require.NoError(t, err)
+	require.NotEmpty(t, peeker.listOwners)
+	assert.False(t, peeker.listOwners[0].AcceptLegacy)
+	assert.Equal(t, "n1", peeker.listOwners[0].NodeID)
+}
+
+// TestAsyncQueue_Body_NotOwned_NotFound: чужое сообщение по координатам из
+// запроса — «не найдено», handler отвечает 404 (§101.8).
+func TestAsyncQueue_Body_NotOwned_NotFound(t *testing.T) {
+	t.Parallel()
+	peeker := &stubPeeker{err: port.ErrQueueMessageNotOwned}
+	uc, _ := newQueueUC(peeker, &stubCancelWriter{}, asyncNode())
+
+	_, err := uc.Body(context.Background(), "n1", "t1", "", 3, 7)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, domain.ErrNotFound)
+	assert.Equal(t, port.QueueOwner{Path: "partner/echo", NodeID: "n1", AcceptLegacy: true}, peeker.bodyOwner)
+}
+
 func TestAsyncQueue_PurgePeriod_ForwardsWindowAndIDs(t *testing.T) {
 	t.Parallel()
 	peeker := &stubPeeker{scan: port.ScanIDsResult{IDs: []string{"a", "b", "c"}, Capped: true}}
@@ -305,7 +370,7 @@ func TestAsyncQueue_PurgePeriod_ForwardsWindowAndIDs(t *testing.T) {
 	assert.True(t, r.Capped)
 
 	// Окно проброшено в ScanIDs.
-	assert.Equal(t, "partner/echo", peeker.scanPath)
+	assert.Equal(t, port.QueueOwner{Path: "partner/echo", NodeID: "n1", AcceptLegacy: true}, peeker.scanOwner)
 	assert.Equal(t, from, peeker.scanFrom)
 	assert.Equal(t, to, peeker.scanTo)
 	// IDs форвардятся в Cancel с retention-TTL.

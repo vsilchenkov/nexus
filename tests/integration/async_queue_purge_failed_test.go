@@ -98,7 +98,7 @@ func TestAsyncQueue_PurgeFailed_E2E(t *testing.T) {
 	logReader := webch.NewLogReader(provider, logger)
 	node := &domain.Node{ID: "n1", Path: "partner/echo", TeamID: "t1", ClickHouseTable: table}
 	auditRepo := &pfAuditRepo{}
-	aqUC := webuc.NewAsyncQueueUsecase(nil, cancelSet, logReader, &pfNodeRepo{node: node},
+	aqUC := webuc.NewAsyncQueueUsecase(nil, cancelSet, logReader, &pfNodeRepo{node: node}, nil,
 		webuc.NewAuditUsecase(auditRepo, logger),
 		"nexus-sender", "nexus.async",
 		"nexus-sender-paused", "nexus.async.paused",
@@ -191,7 +191,7 @@ func TestAsyncQueue_PurgeFailed_MultipleBatches_E2E(t *testing.T) {
 	node := &domain.Node{ID: "n1", Path: "partner/echo", TeamID: "t1", ClickHouseTable: table}
 	auditRepo := &pfAuditRepo{}
 	aqUC := webuc.NewAsyncQueueUsecase(nil, queuecancel.New(redisClient), logReader,
-		&pfNodeRepo{node: node}, webuc.NewAuditUsecase(auditRepo, logger),
+		&pfNodeRepo{node: node}, nil, webuc.NewAuditUsecase(auditRepo, logger),
 		"nexus-sender", "nexus.async",
 		"nexus-sender-paused", "nexus.async.paused",
 		time.Hour, batch, logger)

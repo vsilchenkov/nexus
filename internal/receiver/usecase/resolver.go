@@ -11,7 +11,8 @@ import (
 
 // resolveNode ищет узел по (teamSlug, nodePath), полученным из catch-all
 // сегмента URL (см. splitTeamSlugAndPath в adapter/in/http), и возвращает
-// найденный узел вместе с remainder — хвостом входящего пути после пути узла.
+// найденный узел, remainder — хвост входящего пути после пути узла — и слог
+// команды, в которой узел НАЙДЕН.
 //
 // remainder пуст при точном совпадении пути (обычный случай). Непустой
 // remainder возвращается только при path-passthrough (§39): когда точного узла
@@ -23,41 +24,50 @@ import (
 // (team=default, path=a/b). Парсер выбирает первую интерпретацию; при miss
 // пробует вторую (фикс #8). Тот же порядок приоритетов сохранён и для
 // префиксного (passthrough) матча: сначала интерпретация с явным слогом.
-func resolveNode(ctx context.Context, nodes port.NodeReader, teamSlug, nodePath string) (*domain.Node, string, error) {
+//
+// Поэтому слог найденного узла не всегда равен слогу из адреса: при
+// интерпретации B узел лежит в default-команде, а первый сегмент адреса
+// оказался частью пути. Метки метрик (§101.3) обязаны нести именно его.
+func resolveNode(ctx context.Context, nodes port.NodeReader, teamSlug, nodePath string) (*domain.Node, string, string, error) {
+	explicit := teamSlug
+	if explicit == "" {
+		explicit = domain.DefaultTeamSlug // NodeReader трактует пустой слог так же
+	}
+
 	// 1. Точное совпадение, интерпретация A (team=teamSlug, path=nodePath).
 	node, err := nodes.Get(ctx, teamSlug, nodePath)
 	if err == nil {
-		return node, "", nil
+		return node, "", explicit, nil
 	}
 	if !errors.Is(err, domain.ErrNodeNotFound) {
-		return nil, "", err // инфра-ошибка — наружу как 502, не маскируем под 404
+		return nil, "", "", err // инфра-ошибка — наружу как 502, не маскируем под 404
 	}
 
 	// 2. Точное совпадение, интерпретация B (legacy без слога: default-team,
 	// path="teamSlug/nodePath"). Только если слог реально был.
 	if teamSlug != "" {
 		if node2, err2 := nodes.Get(ctx, "", teamSlug+"/"+nodePath); err2 == nil {
-			return node2, "", nil
+			return node2, "", domain.DefaultTeamSlug, nil
 		}
 	}
 
 	// 3. Префиксный (passthrough) матч, интерпретация A.
 	if n, remainder, perr := prefixMatch(ctx, nodes, teamSlug, nodePath); perr == nil {
-		return n, remainder, nil
+		return n, remainder, explicit, nil
 	} else if !errors.Is(perr, domain.ErrNodeNotFound) {
-		return nil, "", perr
+		return nil, "", "", perr
 	}
 
 	// 4. Префиксный (passthrough) матч, интерпретация B (legacy).
 	if teamSlug != "" {
 		if n, remainder, perr := prefixMatch(ctx, nodes, "", teamSlug+"/"+nodePath); perr == nil {
-			return n, remainder, nil
+			return n, remainder, domain.DefaultTeamSlug, nil
 		} else if !errors.Is(perr, domain.ErrNodeNotFound) {
-			return nil, "", perr
+			return nil, "", "", perr
 		}
 	}
 
-	return nil, "", domain.ErrNodeNotFound
+	return nil, "", "", domain.ErrNodeNotFound
 }
 
 // prefixMatch реализует path-passthrough (§39): идёт по префиксам path от

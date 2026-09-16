@@ -5,8 +5,11 @@
 // через DI. Это исключает кросс-сервисное «протекание» и упрощает unit-тесты.
 //
 // Минимальный набор (§6):
-//   - nexus_requests_total{service, method, node, status}
-//   - nexus_request_duration_seconds{service, method, node}
+//   - nexus_requests_total{service, method, team, node, status}
+//   - nexus_request_duration_seconds{service, method, team, node}
+//
+// §101.3: у всех per-node рядов метки team и node — узел идентифицирует пара,
+// путь уникален лишь внутри команды. Пишутся они методами из node_labels.go.
 //   - nexus_kafka_lag{topic, partition, group}
 //   - nexus_clickhouse_buffer_size{table}
 //   - nexus_clickhouse_errors_total{table, op}
@@ -28,8 +31,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-
-	"nexus/internal/domain"
 )
 
 // Metrics — контейнер всех Prometheus-метрик одного сервиса.
@@ -46,19 +47,17 @@ type Metrics struct {
 	// последний вызов завершился ошибкой (status 0/4xx/5xx), 0 если 2xx. Overview
 	// определяет «Down» по этой метрике (снимок «сейчас»), а не по доле ошибок за
 	// период. Caveat мульти-реплик: каждая держит своё значение, Web берёт
-	// max by(node).
+	// max by(team, node).
 	NodeLastRequestError *prometheus.GaugeVec
 	LoopDetectedTotal    *prometheus.CounterVec // §32: запросы, отклонённые по hop-лимиту
 	// AsyncIngressRejectedTotal — §82.3: запросы во внешний /requestAsync к узлу,
 	// который настроен не как requestAsync. Клиент видит только 404, поэтому без
 	// счётчика рассинхронизация настроек остаётся невидимой.
 	//
-	// Метка node — путь ИЗ АДРЕСА, как у RequestsTotal (та же конвенция). Счётчик
-	// растёт только после успешного резолва узла, поэтому кардинальность
-	// ограничена числом узлов — кроме узлов с path_passthrough, где в путь входит
-	// произвольный хвост запроса. Экспозиция та же, что у RequestsTotal{node}, и
-	// новым классом риска не является; точный узел ищи в warn'е receiver.async —
-	// там резолвнутый path и node_id.
+	// Метка node — путь резолвнутого узла, как у RequestsTotal (§101.3). Счётчик
+	// растёт только после резолва, поэтому кардинальность ограничена числом
+	// узлов, в том числе у path_passthrough: хвост адреса в метку не попадает.
+	// node_id и IP клиента — в warn'е receiver.async.
 	AsyncIngressRejectedTotal *prometheus.CounterVec
 	// AckRenderFailedTotal — §83: шаблон ответа приёма не отработал. Метка
 	// reason — замкнутое множество ackspec.Reason (body_not_json, path_not_found,
@@ -109,19 +108,19 @@ type Metrics struct {
 	L2CacheSize      prometheus.Gauge
 
 	// §27: узел RabbitMQAsync (Puller-воркер в Receiver).
-	RMQMessagesPulledTotal *prometheus.CounterVec // {node, status=ok|nack|reject}
+	RMQMessagesPulledTotal *prometheus.CounterVec // {team, node, status=ok|nack|reject}
 	RMQPullDuration        *prometheus.HistogramVec
-	RMQConnectionState     *prometheus.GaugeVec // {node}: 0=down,1=connecting,2=up
-	RMQQueueDepth          *prometheus.GaugeVec // {node}
-	RMQConsumerCount       *prometheus.GaugeVec // {node}
-	NodeDegraded           *prometheus.GaugeVec // {node, reason}: 1 при degraded
+	RMQConnectionState     *prometheus.GaugeVec // {team, node}: 0=down,1=connecting,2=up
+	RMQQueueDepth          *prometheus.GaugeVec // {team, node}
+	RMQConsumerCount       *prometheus.GaugeVec // {team, node}
+	NodeDegraded           *prometheus.GaugeVec // {team, node, reason}: 1 при degraded
 
 	// §36: авто-репроцессор DLQ (повторная доставка неудачных async-сообщений).
-	DLQReprocessTotal *prometheus.CounterVec // {node, result=succeeded|failed|ttl_dropped|skipped|dropped}
+	DLQReprocessTotal *prometheus.CounterVec // {team, node, result=succeeded|failed|ttl_dropped|skipped|dropped}
 	// ReplayBodySourceTotal — §96.9: чем на самом деле кормится приёмник при
 	// повторе. Рост source=log на узле с включённым лимитом тела означает, что
 	// окно retention очереди коротко; rejected — что тело потеряно совсем.
-	ReplayBodySourceTotal *prometheus.CounterVec // {node, source=queue|log|rejected}
+	ReplayBodySourceTotal *prometheus.CounterVec // {team, node, source=queue|log|rejected}
 	DLQReprocessDuration  prometheus.Histogram   // длительность одного прохода sweeper'а (секунды)
 
 	// §74.3: состояние схемы PostgreSQL относительно кода сервиса.
@@ -171,9 +170,9 @@ func New(service string, opts ...Option) *Metrics {
 
 		RequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name:        "nexus_requests_total",
-			Help:        "Total Nexus requests by method (request/requestAsync), node path and resulting HTTP status.",
+			Help:        "Total Nexus requests by method (request/requestAsync), team slug, node path and resulting HTTP status.",
 			ConstLabels: constLabels,
-		}, []string{"method", "node", "status"}),
+		}, []string{"method", "team", "node", "status"}),
 
 		// §22: «незавершённые» исходящие вызовы Sender (done=0): статус не 2xx —
 		// сетевой сбой (0), 3xx/4xx/5xx, circuit-breaker. Единый сигнал для
@@ -182,14 +181,14 @@ func New(service string, opts ...Option) *Metrics {
 			Name:        "nexus_request_incomplete_total",
 			Help:        "Sender outbound calls that did not complete successfully (non-2xx) by method and node path.",
 			ConstLabels: constLabels,
-		}, []string{"method", "node"}),
+		}, []string{"method", "team", "node"}),
 
 		// §41 («Down»): см. комментарий у поля NodeLastRequestError.
 		NodeLastRequestError: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        "nexus_node_last_request_error",
 			Help:        "Last Sender outbound call outcome per node: 0 ok (2xx), 1 degraded (responded non-2xx <500), 2 down (transport error or 5xx). Drives Overview badge (§41, §52).",
 			ConstLabels: constLabels,
-		}, []string{"node"}),
+		}, []string{"team", "node"}),
 
 		// §32: запросы, отклонённые защитой от зацикливания (превышен hop-лимит
 		// X-Nexus-Hops). mode=sync|async — путь, на котором сработала защита.
@@ -207,7 +206,7 @@ func New(service string, opts ...Option) *Metrics {
 			Name:        "nexus_async_ingress_rejected_total",
 			Help:        "Requests to /api/v1/requestAsync rejected because the node is not configured as requestAsync (§82.3).",
 			ConstLabels: constLabels,
-		}, []string{"node"}),
+		}, []string{"team", "node"}),
 
 		// §94: отказы на входе. reason — из domain.RejectReason, status — из
 		// ответов Receiver; оба множества конечны и известны заранее.
@@ -231,7 +230,7 @@ func New(service string, opts ...Option) *Metrics {
 			Name:        "nexus_async_ack_render_failed_total",
 			Help:        "Async acknowledgement template renders that failed, by reason (§83).",
 			ConstLabels: constLabels,
-		}, []string{"node", "reason"}),
+		}, []string{"team", "node", "reason"}),
 
 		// Phase AUD.8 (D.4): сбои проверки rate-limit'а (Redis недоступен и
 		// т.п.). Лимиты по §9.4 fail-open — этот счётчик единственный сигнал,
@@ -275,7 +274,7 @@ func New(service string, opts ...Option) *Metrics {
 			// верх диапазона, чтобы histogram_quantile (p95/p99 per-node, §21)
 			// не «прилипал» к +Inf на медленных узлах.
 			Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600},
-		}, []string{"method", "node"}),
+		}, []string{"method", "team", "node"}),
 
 		KafkaLag: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        "nexus_kafka_lag",
@@ -351,38 +350,38 @@ func New(service string, opts ...Option) *Metrics {
 			Name:        "nexus_rmq_messages_pulled_total",
 			Help:        "RabbitMQAsync messages pulled by node and outcome (ok, nack, reject).",
 			ConstLabels: constLabels,
-		}, []string{"node", "status"}),
+		}, []string{"team", "node", "status"}),
 
 		RMQPullDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:        "nexus_rmq_pull_duration_seconds",
 			Help:        "RabbitMQAsync batch pull+publish duration in seconds by node.",
 			ConstLabels: constLabels,
 			Buckets:     prometheus.DefBuckets,
-		}, []string{"node"}),
+		}, []string{"team", "node"}),
 
 		RMQConnectionState: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        "nexus_rmq_connection_state",
 			Help:        "RabbitMQAsync connection state by node: 0=down, 1=connecting, 2=up.",
 			ConstLabels: constLabels,
-		}, []string{"node"}),
+		}, []string{"team", "node"}),
 
 		RMQQueueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        "nexus_rmq_queue_depth",
 			Help:        "RabbitMQAsync source queue depth (messages) by node, sampled each tick.",
 			ConstLabels: constLabels,
-		}, []string{"node"}),
+		}, []string{"team", "node"}),
 
 		RMQConsumerCount: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        "nexus_rmq_consumer_count",
 			Help:        "RabbitMQAsync source queue consumer count by node.",
 			ConstLabels: constLabels,
-		}, []string{"node"}),
+		}, []string{"team", "node"}),
 
 		NodeDegraded: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        "nexus_node_degraded",
 			Help:        "Pull node (RabbitMQAsync) degraded state: 1 when degraded, 0 otherwise.",
 			ConstLabels: constLabels,
-		}, []string{"node", "reason"}),
+		}, []string{"team", "node", "reason"}),
 
 		// §36: исход обработки одного DLQ-сообщения авто-репроцессором.
 		// result: succeeded (доставлено 2xx), failed (не-2xx → republish),
@@ -392,7 +391,7 @@ func New(service string, opts ...Option) *Metrics {
 			Name:        "nexus_dlq_reprocess_total",
 			Help:        "DLQ reprocessor outcomes per node and result (succeeded, failed, ttl_dropped, skipped, dropped).",
 			ConstLabels: constLabels,
-		}, []string{"node", "result"}),
+		}, []string{"team", "node", "result"}),
 
 		// §96.9: источник тела повтора. queue — полное тело из конверта очереди,
 		// log — журнальная копия (она целая, иначе повтор бы отказал),
@@ -401,7 +400,7 @@ func New(service string, opts ...Option) *Metrics {
 			Name:        "nexus_replay_body_source_total",
 			Help:        "Replay request body source per node (queue, log, rejected).",
 			ConstLabels: constLabels,
-		}, []string{"node", "source"}),
+		}, []string{"team", "node", "source"}),
 
 		// §36: длительность одного прохода sweeper'а над DLQ.
 		DLQReprocessDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -503,12 +502,6 @@ func (m *Metrics) ObserveMailSend(purpose, result string, seconds float64) {
 	m.MailSendDuration.WithLabelValues(purpose).Observe(seconds)
 }
 
-// IncReplayBodySource реализует usecase.ReplayMetrics (§96.9): откуда взято
-// тело повтора. source — queue | log | rejected.
-func (m *Metrics) IncReplayBodySource(node, source string) {
-	m.ReplayBodySourceTotal.WithLabelValues(node, source).Inc()
-}
-
 // IncL2Hit реализует nodecache.L2Metrics: счётчик попаданий в L2-кеш.
 // kind — "fresh" (валидная запись) либо "stale" (после fallback'а при ошибке downstream).
 func (m *Metrics) IncL2Hit(kind string) {
@@ -528,12 +521,6 @@ func (m *Metrics) SetL2Size(n int) { m.L2CacheSize.Set(float64(n)) }
 // зацикливания (§32). mode — "sync" либо "async".
 func (m *Metrics) IncLoopDetected(mode string) { m.LoopDetectedTotal.WithLabelValues(mode).Inc() }
 
-// IncAsyncIngressRejected — §82.3: обращение во внешний /requestAsync к узлу,
-// который не настроен асинхронным.
-func (m *Metrics) IncAsyncIngressRejected(node string) {
-	m.AsyncIngressRejectedTotal.WithLabelValues(node).Inc()
-}
-
 // IncIngressRejected — §94: запрос отклонён на входе. reason — код из
 // domain.RejectReason, status — HTTP-код ответа.
 func (m *Metrics) IncIngressRejected(reason, status string) {
@@ -548,21 +535,6 @@ func (m *Metrics) IncIngressRejectDropped(cause string, n int) {
 		return
 	}
 	m.IngressRejectDroppedTotal.WithLabelValues(cause).Add(float64(n))
-}
-
-// IncAckRenderFailed — §83: шаблон ответа приёма не отработал. reason берётся
-// из замкнутого множества ackspec.Reason (плюс "compile"/"unknown"), свободные
-// строки сюда попадать не должны — иначе кардинальность метрики не ограничена.
-func (m *Metrics) IncAckRenderFailed(node, reason string) {
-	m.AckRenderFailedTotal.WithLabelValues(node, reason).Inc()
-}
-
-// SetNodeLastRequestOutcome фиксирует исход последнего исходящего вызова узла
-// (§41/§52): 0=ok (2xx), 1=degraded (ответил не-2xx <500), 2=down (транспортная
-// ошибка или 5xx). Порядок значений важен: PromQL `max by (node)` между
-// репликами Sender выбирает худшее состояние. Управляет бейджем узла в Overview.
-func (m *Metrics) SetNodeLastRequestOutcome(node string, outcome domain.NodeOutcome) {
-	m.NodeLastRequestError.WithLabelValues(node).Set(outcome.GaugeValue())
 }
 
 // Registry возвращает собственный prometheus.Registry — для тестов или

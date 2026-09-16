@@ -2,9 +2,12 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
@@ -46,16 +49,18 @@ func (f *fakeConsumer) Close() error                  { return nil }
 type fakeProducer struct {
 	mu        sync.Mutex
 	published [][]byte
+	headers   []map[string]string
 	err       error
 }
 
-func (f *fakeProducer) Produce(_ context.Context, _, _ string, value []byte, _ map[string]string) error {
+func (f *fakeProducer) Produce(_ context.Context, _, _ string, value []byte, headers map[string]string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return f.err
 	}
 	f.published = append(f.published, value)
+	f.headers = append(f.headers, headers)
 	return nil
 }
 
@@ -132,5 +137,41 @@ func TestPullerWorker_Oversize_Reject(t *testing.T) {
 	}
 	if len(prod.published) != 0 {
 		t.Fatalf("oversize message must not be published")
+	}
+}
+
+// TestPullerWorker_EnvelopeCarriesNodeIdentity (§101.7) — одноимённые pull-узлы
+// двух команд различаются только id и слогом: без них Sender не знает, чей это
+// конверт.
+func TestPullerWorker_EnvelopeCarriesNodeIdentity(t *testing.T) {
+	cons := &fakeConsumer{batches: [][]RMQDelivery{{
+		{DeliveryTag: 1, Body: []byte(`{"x":1}`), MessageID: "m1"},
+	}}}
+	prod := &fakeProducer{}
+	node := testNode()
+	node.ID = "3c2b1a09-8f7e-4d6c-9b5a-1f2e3d4c5b6a"
+	node.TeamSlug = "billing"
+	m := metrics.New("receiver")
+	w := NewPullerWorker(node, nil, prod, "nexus.async", 0, m, nil, logging.NewNoop())
+	w.consumer = cons
+
+	w.pullOnce(context.Background())
+
+	if len(prod.published) != 1 {
+		t.Fatalf("want 1 published, got %d", len(prod.published))
+	}
+	var env Envelope
+	if err := json.Unmarshal(prod.published[0], &env); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	if env.NodeID != node.ID || env.Team != "billing" {
+		t.Fatalf("envelope identity = (%q, %q), want (%q, billing)", env.NodeID, env.Team, node.ID)
+	}
+	if h := prod.headers[0]; h["node_id"] != node.ID || h["team"] != "billing" {
+		t.Fatalf("kafka headers identity = (%q, %q), want (%q, billing)", h["node_id"], h["team"], node.ID)
+	}
+	// §101.3: ряды pull-узла несут слог — одноимённые узлы команд не складываются.
+	if v := testutil.ToFloat64(w.metrics.RMQMessagesPulledTotal.WithLabelValues("billing", node.Path, "ok")); v != 1 {
+		t.Fatalf("rmq pulled{team=billing} = %v, want 1", v)
 	}
 }

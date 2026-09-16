@@ -115,8 +115,8 @@ func (mgr *PullerManager) runningPaths() []string {
 	mgr.mu.Lock()
 	defer mgr.mu.Unlock()
 	out := make([]string, 0, len(mgr.running))
-	for p := range mgr.running {
-		out = append(out, p)
+	for _, h := range mgr.running {
+		out = append(out, h.path)
 	}
 	return out
 }
@@ -216,6 +216,25 @@ func TestLeaseRenewedForRunningWorkers(t *testing.T) {
 	defer lease.mu.Unlock()
 	assert.Equal(t, []string{leaseName("id-1"), leaseName("id-1")}, lease.acquired)
 	assert.Equal(t, int64(30*time.Second), lease.lastTTLNs, "TTL — два периода reconcile")
+}
+
+// TestReconcileRunsSameNamePathsSeparately (§101.7): pull-узлы с одним путём в
+// разных командах получают по воркеру. Карта воркеров по пути оставляла один из
+// них без воркера — его очередь RabbitMQ не читал никто.
+func TestReconcileRunsSameNamePathsSeparately(t *testing.T) {
+	t.Parallel()
+
+	lease := newFakeLease(true)
+	mgr := newLeaseTestManager(t, lease,
+		leaseTestNode("id-messengers", "telegram"), leaseTestNode("id-webhook", "telegram"))
+	mgr.reconcile(context.Background())
+
+	assert.ElementsMatch(t, []string{"telegram", "telegram"}, mgr.runningPaths())
+
+	mgr.stopAll()
+	assert.ElementsMatch(t,
+		[]string{leaseName("id-messengers"), leaseName("id-webhook")},
+		lease.releasedNames(), "аренда отдаётся по обоим узлам")
 }
 
 // TestStopAllReleasesLeases (§93.8): при штатной остановке аренды отдаются.

@@ -45,7 +45,7 @@ func asyncIngressRevoked(node *domain.Node, env Envelope) (reason string, stop b
 // все» (§36.11), а тот идёт через HTTP на Receiver и упёрся бы в гейт §82.3,
 // пока узел sync, — то есть восстановление было бы недоступно ровно тогда,
 // когда оно нужно.
-func (p *AsyncProcessor) dropNotAsync(ctx context.Context, raw []byte, env Envelope, reason string) HandleResult {
+func (p *AsyncProcessor) dropNotAsync(ctx context.Context, raw []byte, env Envelope, node *domain.Node, reason string) HandleResult {
 	// Warn, а не info: это рассинхронизация настроек и клиента, её надо чинить.
 	p.logger.Warn("async delivery revoked: node is no longer async",
 		p.logger.Str("op", "async.Handle"),
@@ -53,7 +53,7 @@ func (p *AsyncProcessor) dropNotAsync(ctx context.Context, raw []byte, env Envel
 		p.logger.Str("id", env.ID),
 		p.logger.Str("reason", reason))
 
-	hdrs := map[string]string{
+	hdrs := withNodeIdentity(map[string]string{
 		"id":         env.ID,
 		"node_path":  env.NodePath,
 		"orig_topic": "nexus.async",
@@ -62,15 +62,14 @@ func (p *AsyncProcessor) dropNotAsync(ctx context.Context, raw []byte, env Envel
 		// здесь: иначе отбой по гейту неотличим от обычной ошибки доставки.
 		"reason":          reason,
 		"last_attempt_at": time.Now().UTC().Format(time.RFC3339Nano),
-	}
+	}, env)
 	if err := p.dlq.Produce(ctx, p.dlqTopic, env.NodePath, raw, hdrs); err != nil {
 		p.logger.ErrorWithOp("dlq publish failed", err, "async.dropNotAsync",
 			p.logger.Str("id", env.ID))
 		return HandleRetry
 	}
 	if p.metrics != nil {
-		p.metrics.RequestsTotal.
-			WithLabelValues("requestAsync", env.NodePath, ReasonNodeNotAsync).Inc()
+		p.metrics.IncRequest("requestAsync", nodeLabels(node), ReasonNodeNotAsync)
 	}
 	return HandleDLQed
 }

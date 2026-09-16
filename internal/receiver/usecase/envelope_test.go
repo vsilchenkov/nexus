@@ -25,6 +25,7 @@ func TestBuildEnvelope_HappyPath(t *testing.T) {
 	t.Parallel()
 
 	node := stubNodeForEnvelope("partner/echo", "X-Trace-Id")
+	node.ID = "7d0b6f4e-8a51-4d3e-9c1a-2f0e5b7c9d10"
 	hdr := http.Header{}
 	hdr.Set("X-Trace-Id", "abc-123")
 	hdr.Set("Content-Type", "application/json")
@@ -35,6 +36,7 @@ func TestBuildEnvelope_HappyPath(t *testing.T) {
 	env := BuildEnvelope(
 		"id-42",
 		node,
+		"acme",
 		http.MethodPost,
 		"https://api.example.com/hook",
 		"Bearer xyz",
@@ -48,6 +50,9 @@ func TestBuildEnvelope_HappyPath(t *testing.T) {
 	require.NotNil(t, env)
 	assert.Equal(t, "id-42", env.ID)
 	assert.Equal(t, "partner/echo", env.NodePath)
+	// §101.4: Sender ищет узел по id — путь уникален лишь внутри команды.
+	assert.Equal(t, node.ID, env.NodeID)
+	assert.Equal(t, "acme", env.Team)
 	assert.Equal(t, http.MethodPost, env.Method)
 	assert.Equal(t, "https://api.example.com/hook?limit=10", env.TargetURL)
 	assert.Equal(t, "Bearer xyz", env.AuthHeader)
@@ -77,6 +82,7 @@ func TestBuildEnvelope_EmptyForwardHeaders_OnlyContentType(t *testing.T) {
 	env := BuildEnvelope(
 		"id-1",
 		node,
+		"acme",
 		http.MethodGet,
 		"https://api.example.com/x",
 		"",
@@ -106,6 +112,7 @@ func TestBuildEnvelope_NoContentType_NoQuery(t *testing.T) {
 	env := BuildEnvelope(
 		"id-2",
 		node,
+		"acme",
 		http.MethodPut,
 		"https://api.example.com/r",
 		"",
@@ -132,6 +139,7 @@ func TestBuildEnvelope_QueryMergedWithExistingURL(t *testing.T) {
 	env := BuildEnvelope(
 		"id-3",
 		node,
+		"acme",
 		http.MethodGet,
 		"https://api.example.com/x?already=1",
 		"",
@@ -162,6 +170,7 @@ func TestBuildEnvelope_ForwardHeaders_CaseInsensitive(t *testing.T) {
 	env := BuildEnvelope(
 		"id-4",
 		node,
+		"acme",
 		http.MethodPost,
 		"https://api.example.com/x",
 		"",

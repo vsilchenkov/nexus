@@ -22,10 +22,12 @@ import (
 // не должна разводить один и тот же трафик по разным рядам Prometheus (на
 // method="requestAsync" стоит дашборд Kafka, на "request" — алерт латентности).
 //
-// node = резолвнутый путь узла. Receiver кладёт его в контекст под ключом
-// NodeLabelKey (без слога команды — совпадает с меткой node у Sender, иначе
-// per-node merge in/out на дашборде разъезжается); fallback — path-параметр
-// после /api/v1/request/.../ для V1, либо "" для остальных.
+// node и team = путь и слог команды резолвнутого узла, и только они (§101.3).
+// Receiver кладёт их в контекст под NodeLabelKey и TeamLabelKey после резолва
+// (путь без слога — совпадает с меткой node у Sender). Запасного значения из
+// адреса нет: у passthrough-узла хвост адреса несёт секреты (токены ботов) и не
+// ограничен, а на выходах до резолва (400/405/413/429/508) путь задаёт клиент.
+// Без меток в контексте — "".
 //
 // /metrics и /health не учитываются, чтобы не зашумлять данные.
 func GinMiddleware(m *Metrics) gin.HandlerFunc {
@@ -46,11 +48,11 @@ func GinMiddleware(m *Metrics) gin.HandlerFunc {
 		if method == "" {
 			method = c.Request.Method + " " + path
 		}
-		node := nodeLabel(c)
+		labels := NodeLabelsFromGin(c)
 		status := strconv.Itoa(c.Writer.Status())
 
-		m.RequestsTotal.WithLabelValues(method, node, status).Inc()
-		m.RequestDuration.WithLabelValues(method, node).Observe(time.Since(started).Seconds())
+		m.IncRequest(method, labels, status)
+		m.ObserveRequestDuration(method, labels, time.Since(started).Seconds())
 	}
 }
 
@@ -66,10 +68,21 @@ func rootMethodFromPath(fullPath string) string {
 	return ""
 }
 
-// NodeLabelKey — ключ gin-контекста, под которым обработчик может положить
-// канонический путь узла (node.Path, без слога команды). Если задан —
-// GinMiddleware пишет его в метку node вместо сырого path-параметра.
+// NodeLabelKey — ключ gin-контекста, под которым обработчик кладёт путь
+// резолвнутого узла (node.Path, без слога команды). Единственный источник метки
+// node (§101.3): из адреса метка не выводится.
 const NodeLabelKey = "nexus_node"
+
+// TeamLabelKey — ключ gin-контекста со слогом команды резолвнутого узла
+// (§101.3). Ставится вместе с NodeLabelKey: путь уникален лишь внутри команды,
+// и узел идентифицирует только пара.
+const TeamLabelKey = "nexus_team"
+
+// NodeLabelsFromGin — метки узла, положенные обработчиком в контекст запроса
+// (§101.3). До резолва и на маршрутах не про узел — пустые.
+func NodeLabelsFromGin(c *gin.Context) NodeLabels {
+	return NodeLabels{Team: c.GetString(TeamLabelKey), Node: c.GetString(NodeLabelKey)}
+}
 
 // NodeUnresolved — метка node для запросов к НЕСУЩЕСТВУЮЩЕМУ узлу (§94.8).
 //
@@ -95,24 +108,3 @@ const (
 	// подмешиваться в боевые request/requestAsync.
 	RootMethodShortURL = "route"
 )
-
-// nodeLabel — канонический путь узла из контекста (если обработчик его положил),
-// иначе fallback на сырой path-параметр URL.
-func nodeLabel(c *gin.Context) string {
-	if v := c.GetString(NodeLabelKey); v != "" {
-		return v
-	}
-	return nodePathFromGin(c)
-}
-
-// nodePathFromGin — значение path-параметра без ведущего "/".
-func nodePathFromGin(c *gin.Context) string {
-	p := c.Param("path")
-	if p == "" {
-		return ""
-	}
-	if p[0] == '/' {
-		return p[1:]
-	}
-	return p
-}

@@ -2569,7 +2569,7 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы (ретраи → outgoing\u003eincoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих; занижение increase). Деградирует при недоступном источнике.",
+                "description": "Возвращает обе стороны (Prometheus — попытки/increase; ClickHouse — уникальные запросы) и per-node-сверку. Помогает объяснить расхождение шапки/таблицы (ретраи → outgoing\u003eincoming в Prometheus; CH-ошибки ≥ Prometheus при 3xx/висящих; занижение increase). Prometheus-сторона — только ряды текущей команды (§101.9): итоги по её слогу, «узлы только в Prometheus» — её переименованные и удалённые узлы; без текущей команды сторона пуста. Деградирует при недоступном источнике.",
                 "produces": [
                     "application/json"
                 ],
@@ -2689,7 +2689,7 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "Источник — ClickHouse-логи узла: точные счётчики по УНИКАЛЬНЫМ запросам. §79.4: принимает те же фильтры, что журнал логов (q/method/client_host/status/done) — KPI и график считаются под ними. §79.5: step задаёт ширину столбца, фактическая возвращается в step_seconds; столбец — записи по интервалу прихода с итоговым статусом (chart_unit=records), на больших окнах деградирует до счёта по прогонам (chart_unit=attempts). Без ClickHouse или при таймауте → нули с chart_available=false.",
+                "description": "Источник — ClickHouse-логи узла: точные счётчики по УНИКАЛЬНЫМ запросам. §79.4: принимает те же фильтры, что журнал логов (q/method/client_host/status/done) — KPI и график считаются под ними. §79.5: step задаёт ширину столбца, фактическая возвращается в step_seconds; столбец — записи по интервалу прихода с итоговым статусом (chart_unit=records), на больших окнах деградирует до счёта по прогонам (chart_unit=attempts). §102: with_methods=1 добавляет рейтинг по колонке method (до 100 строк, по убыванию; единица — ЗАПИСЬ, как kpi.total, поэтому строку «Остальные» клиент получает вычитанием); methods_truncated=true — методов больше, чем строк в ответе. Разбивка деградирует отдельно (methods_available=false), не гася KPI и графики. Без ClickHouse или при таймауте → нули с chart_available=false.",
                 "produces": [
                     "application/json"
                 ],
@@ -2775,6 +2775,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "yes | no",
                         "name": "done",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "1 — добавить рейтинг по колонке method (§102)",
+                        "name": "with_methods",
                         "in": "query"
                     }
                 ],
@@ -8068,6 +8074,31 @@ const docTemplate = `{
                 "kpi": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.nodeKPIDTO"
                 },
+                "latency": {
+                    "description": "Latency/LatencyAvailable — ряд перцентилей по тем же интервалам (§84.5).\nОтвет строится gin.H, поэтому swagger-drift-check расхождение этой\nструктуры с ним не ловит: поля §84.5 отсутствовали здесь до §102.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.latencyPointDTO"
+                    }
+                },
+                "latency_available": {
+                    "type": "boolean"
+                },
+                "methods": {
+                    "description": "Methods — рейтинг по колонке method (§102), до usecase.MethodsLimit\nстрок, по убыванию total. Приезжает только при with_methods=1; единица —\nЗАПИСЬ, как у KPI.Total, поэтому строка «Остальные» получается\nвычитанием суммы показанных строк из KPI.Total.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.methodStatDTO"
+                    }
+                },
+                "methods_available": {
+                    "description": "MethodsAvailable — рейтинг посчитан. false при with_methods=1 означает\nдеградацию именно разбивки (KPI и графики при этом живы).",
+                    "type": "boolean"
+                },
+                "methods_truncated": {
+                    "description": "MethodsTruncated — методов в окне больше, чем строк в Methods.",
+                    "type": "boolean"
+                },
                 "range_ms": {
                     "type": "integer"
                 },
@@ -9480,6 +9511,9 @@ const docTemplate = `{
                 },
                 "rate": {
                     "type": "number"
+                },
+                "team": {
+                    "type": "string"
                 }
             }
         },
@@ -9559,6 +9593,9 @@ const docTemplate = `{
                 },
                 "share": {
                     "type": "number"
+                },
+                "team": {
+                    "type": "string"
                 }
             }
         },
@@ -9650,6 +9687,23 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "members": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.latencyPointDTO": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "integer"
+                },
+                "p50_ms": {
+                    "type": "number"
+                },
+                "p95_ms": {
+                    "type": "number"
+                },
+                "ts": {
                     "type": "integer"
                 }
             }
@@ -9827,6 +9881,20 @@ const docTemplate = `{
                 },
                 "user_id": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.methodStatDTO": {
+            "type": "object",
+            "properties": {
+                "delivered": {
+                    "type": "integer"
+                },
+                "method": {
+                    "type": "string"
+                },
+                "total": {
+                    "type": "integer"
                 }
             }
         },

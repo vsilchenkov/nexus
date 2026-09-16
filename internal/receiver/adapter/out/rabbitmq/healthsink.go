@@ -3,6 +3,7 @@ package rabbitmq
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -12,7 +13,7 @@ import (
 )
 
 // RedisHealthKey — Redis-hash, куда Puller-воркеры пишут health-снимки
-// (field = node path, value = JSON RMQHealth). Web читает оттуда для §27.8.
+// (field = id узла, §101.7; value = JSON RMQHealth). Web читает оттуда для §27.8.
 // Общий стор вместо нового gRPC Receiver→Web.
 const RedisHealthKey = "rmq:health"
 
@@ -34,6 +35,11 @@ func NewHealthSink(client *goredis.Client) *HealthSink {
 // Publish пишет снимок в hash и обновляет TTL ключа. Fail-soft: ошибка Redis
 // не должна ронять воркер (health — вспомогательный сигнал).
 func (s *HealthSink) Publish(ctx context.Context, h domain.RMQHealth) error {
+	if h.NodeID == "" {
+		// Поле по пути склеило бы одноимённые pull-узлы разных команд (§101.7),
+		// а пустое поле — вообще все такие снимки.
+		return fmt.Errorf("rmq health: node %q has no id", h.NodePath)
+	}
 	data, err := json.Marshal(h)
 	if err != nil {
 		return err
@@ -41,7 +47,7 @@ func (s *HealthSink) Publish(ctx context.Context, h domain.RMQHealth) error {
 	ctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
 	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, RedisHealthKey, h.NodePath, data)
+	pipe.HSet(ctx, RedisHealthKey, h.NodeID, data)
 	pipe.Expire(ctx, RedisHealthKey, healthTTL)
 	_, err = pipe.Exec(ctx)
 	return err

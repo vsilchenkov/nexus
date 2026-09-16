@@ -14,6 +14,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
 	rcv "nexus/internal/receiver/usecase"
 	"nexus/internal/web/usecase/port"
 )
@@ -122,7 +123,7 @@ func WithQueueOriginals(r port.AsyncOriginalReader, sources []port.QueueSource) 
 // ReplayMetrics — учёт источника тела повтора (§96.9). Реализует
 // metrics.Metrics; nil допустим (unit-тесты, сборка без метрик).
 type ReplayMetrics interface {
-	IncReplayBodySource(node, source string)
+	IncReplayBodySource(n metrics.NodeLabels, source string)
 }
 
 // Источники тела повтора для метрики (§96.9).
@@ -311,6 +312,22 @@ func (u *ReplayUsecase) resolveReplayNode(ctx context.Context, nodeID, teamID st
 	return node, nil
 }
 
+// nodeTeamSlug — слог команды узла: для адреса реинъекции (§18) и метки team
+// (§101.3). Ошибка резолва не фатальна — пустой слог: адрес без слога верен для
+// default-узлов, у остальных честно всплывёт 404, а метка останется без команды.
+func (u *ReplayUsecase) nodeTeamSlug(ctx context.Context, node *domain.Node) string {
+	if u.teams == nil || node.TeamID == "" {
+		return ""
+	}
+	t, err := u.teams.GetByID(ctx, node.TeamID)
+	if err != nil {
+		u.logger.Debug("replay: team slug resolve failed, path without slug",
+			u.logger.Str("team_id", node.TeamID), u.logger.Err(err))
+		return ""
+	}
+	return t.Slug
+}
+
 // replayOne — пере-инжектирует один залогированный запрос logID через Receiver
 // (узел уже резолвлен). Без rate-limit/резолва/аудита — их делают вызывающие
 // (Replay — построчно, ReplayFailed — массово).
@@ -338,11 +355,13 @@ func (u *ReplayUsecase) replayOne(
 	// в журнале: две копии правила разошлись бы, и предпросмотр обещал бы не то,
 	// что уходит.
 	method := domain.ReplayEffectiveMethod(node.IncomingMethod, orig.HTTPMethod)
+	// §101.3: слог нужен и метке источника тела, и адресу реинъекции (§18) ниже.
+	teamSlug := u.nodeTeamSlug(ctx, node)
 	// Тело: явный BodyOverride важнее всего (оператор задал его руками), затем
 	// оригинальный конверт из очереди (§96), и только потом журнальная копия.
 	body, bodySource := opts.BodyOverride, replaySourceOverride
 	if body == nil {
-		body, bodySource, err = u.replayBody(node, orig, method, src)
+		body, bodySource, err = u.replayBody(node, metrics.NodeLabels{Team: teamSlug, Node: node.Path}, orig, method, src)
 		if err != nil {
 			return nil, err
 		}
@@ -419,15 +438,8 @@ func (u *ReplayUsecase) replayOne(
 	// путь в default-команде и отвечает 404 "node not found" (боевой баг:
 	// replay узла команды vika). Ошибка резолва — идём без слага (для
 	// default-узлов это корректно, для остальных 404 честно всплывёт).
-	if u.teams != nil && node.TeamID != "" {
-		t, terr := u.teams.GetByID(ctx, node.TeamID)
-		switch {
-		case terr != nil:
-			u.logger.Debug("replay: team slug resolve failed, path without slug",
-				u.logger.Str("team_id", node.TeamID), u.logger.Err(terr))
-		case t.Slug != domain.DefaultTeamSlug && t.Slug != "":
-			nodePath = t.Slug + "/" + nodePath
-		}
+	if teamSlug != domain.DefaultTeamSlug && teamSlug != "" {
+		nodePath = teamSlug + "/" + nodePath
 	}
 
 	resp, err := u.dispatcher.Dispatch(ctx, port.DispatchRequest{
@@ -527,14 +539,14 @@ func (u *ReplayUsecase) lookupSince(from time.Time) time.Time {
 // усечение) проверяются только когда конверта нет: они говорят о том, чего нет
 // в ЖУРНАЛЕ, а не о том, что нечего отправлять.
 func (u *ReplayUsecase) replayBody(
-	node *domain.Node, orig *domain.LogRecord, method string, src replaySource,
+	node *domain.Node, labels metrics.NodeLabels, orig *domain.LogRecord, method string, src replaySource,
 ) ([]byte, string, error) {
 	if src.original != nil {
 		u.logger.Debug("replay: body taken from queue envelope",
 			u.logger.Str("log_id", orig.ID), u.logger.Str("node", node.Path),
 			u.logger.Str("topic", src.original.Topic),
 			u.logger.Int("body_bytes", len(src.original.Body)))
-		u.countBodySource(node.Path, replaySourceQueue)
+		u.countBodySource(labels, replaySourceQueue)
 		return src.original.Body, replaySourceQueue, nil
 	}
 	if domain.IsMultipartLogPlaceholder(orig.Request) {
@@ -552,7 +564,7 @@ func (u *ReplayUsecase) replayBody(
 			u.logger.Str("log_id", orig.ID), u.logger.Str("node", node.Path),
 			u.logger.Int("stored_bytes", len(orig.Request)),
 			u.logger.Any("request_size", orig.RequestSize))
-		u.countBodySource(node.Path, replaySourceRejected)
+		u.countBodySource(labels, replaySourceRejected)
 		if orig.Type == domain.RootMethodRequest {
 			return nil, "", ErrReplayBodyTruncated
 		}
@@ -568,14 +580,14 @@ func (u *ReplayUsecase) replayBody(
 	u.logger.Debug("replay: body taken from log copy, envelope not found",
 		u.logger.Str("log_id", orig.ID), u.logger.Str("node", node.Path),
 		u.logger.Int("body_bytes", len(orig.Request)))
-	u.countBodySource(node.Path, replaySourceLog)
+	u.countBodySource(labels, replaySourceLog)
 	return []byte(orig.Request), replaySourceLog, nil
 }
 
 // countBodySource — учёт источника тела (§96.9). Метрики опциональны.
-func (u *ReplayUsecase) countBodySource(node, source string) {
+func (u *ReplayUsecase) countBodySource(n metrics.NodeLabels, source string) {
 	if u.metrics != nil {
-		u.metrics.IncReplayBodySource(node, source)
+		u.metrics.IncReplayBodySource(n, source)
 	}
 }
 

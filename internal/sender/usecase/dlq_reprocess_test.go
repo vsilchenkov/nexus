@@ -19,9 +19,11 @@ import (
 type stubBreakerInspector struct {
 	open bool
 	err  error
+	keys []string // §101.6: по какому ключу спрашивали
 }
 
-func (s *stubBreakerInspector) IsOpen(_ context.Context, _ string) (bool, error) {
+func (s *stubBreakerInspector) IsOpen(_ context.Context, key string) (bool, error) {
+	s.keys = append(s.keys, key)
 	return s.open, s.err
 }
 
@@ -187,9 +189,12 @@ func TestReprocess_Paused_RepublishSkipped(t *testing.T) {
 
 func TestReprocess_BreakerOpen_RepublishSkipped(t *testing.T) {
 	t.Parallel()
-	h := newReprocessorForTest(t, enabledNode(), nil, &port.HTTPResponse{StatusCode: 200}, nil, &stubBreakerInspector{open: true})
+	node := enabledNode()
+	node.ID = "d3aae718-0000-4000-8000-000000000002"
+	h := newReprocessorForTest(t, node, nil, &port.HTTPResponse{StatusCode: 200}, nil, &stubBreakerInspector{open: true})
 	got := h.proc.ProcessMessage(context.Background(), makeDLQEnvelope(t, "partner/echo", time.Now()), nil)
 	assert.Equal(t, ReprocessCommit, got, "breaker открыт → republish без попытки")
+	assert.Equal(t, []string{"id:" + node.ID}, h.breaker.keys, "§101.6: breaker узла — по id, а не по пути")
 	assert.Equal(t, 0, h.httpc.calls, "breaker открыт → HTTP-вызов не идёт (нет fast-fail-churn)")
 	require.Len(t, h.dlq.produced, 1)
 	assert.Equal(t, "circuit_breaker_open", h.dlq.produced[0].headers["reason"])

@@ -88,7 +88,8 @@ type SendOutput struct {
 
 // CircuitBreaker — interface circuit breaker'а (§9.5 ТЗ).
 // Объявлен здесь, чтобы usecase не зависел от Redis-реализации.
-// Реализация — internal/platform/circuitbreaker.
+// Реализация — internal/platform/circuitbreaker. key — ключ узла, см.
+// breakerKey (§101.6).
 type CircuitBreaker interface {
 	Allow(ctx context.Context, key string) (bool, error)
 	RecordSuccess(ctx context.Context, key string) error
@@ -249,8 +250,14 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	// живого узла и тот начал бы отдавать 503 боевому трафику).
 	allowed := true
 	if !in.DryRun {
+		if in.NodeID == "" {
+			// §51.9/§101.6: breaker по пути общий у одноимённых узлов разных
+			// команд — такой fallback должен быть виден при разборе чужих 503.
+			u.logger.Debug("send: node id missing, circuit breaker keyed by path",
+				u.logger.Str("id", in.ID), u.logger.Str("node", in.NodePath))
+		}
 		var cbErr error
-		allowed, cbErr = u.cb.Allow(ctx, in.NodePath)
+		allowed, cbErr = u.cb.Allow(ctx, breakerKey(in.NodeID, in.NodePath))
 		if cbErr != nil {
 			// §51.9: ошибка breaker'а (Redis) раньше проглатывалась в «_» —
 			// fail-open невидим. Allow при ошибке разрешает вызов, фиксируем след.

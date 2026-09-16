@@ -4,10 +4,14 @@
 // процесса (после деплоя узлы ложно показывают «OK»), а этот ключ в Redis
 // переживает рестарт любого из процессов. Sender пишет (RedisWriter), Web читает.
 //
-// Ключ nexus:node:last_error:<path>; TTL ~30 суток — ключи удалённых/
+// Ключ nexus:node:last_error:id:<node_id>; TTL ~30 суток — ключи удалённых/
 // простаивающих узлов самоистекают, без неограниченного роста. Best-effort:
 // ошибка Redis логируется и не пробрасывается — статус узла не должен влиять
 // на доставку (в духе fail-open §9.4 и §41).
+//
+// Ключ по id, а не по пути (§101.6): путь уникален лишь внутри команды, и
+// одноимённые узлы разных команд делили бы один бейдж. Ключи прежнего формата
+// переносит LegacyMigrator.
 //
 // Кодировка значения (§52) — НАМЕРЕННО не совпадает с гауджем
 // (domain.NodeOutcome.GaugeValue: 0=ok/1=degraded/2=down):
@@ -38,7 +42,7 @@
 // (sender.node_down_threshold). Любой успешный ответ обнуляет счётчик, 4xx его
 // не трогает вовсе — это ответ приёмника, а не его отказ.
 //
-// Счётчик живёт ОТДЕЛЬНЫМ ключом (nexus:node:fail_streak:<path>) с тем же TTL:
+// Счётчик живёт ОТДЕЛЬНЫМ ключом (nexus:node:fail_streak:id:<node_id>) с тем же TTL:
 // формат значения исхода не меняется, и читатели любой версии продолжают
 // работать. Инкремент и решение выполняются одним Lua-скриптом — при двух
 // репликах Sender (§93) последовательность «прочитал → посчитал → записал»
@@ -59,6 +63,9 @@ const (
 	keyPrefix = "nexus:node:last_error:"
 	// streakPrefix — ключ счётчика подряд идущих «тяжёлых» отказов узла.
 	streakPrefix = "nexus:node:fail_streak:"
+	// idTag — §101.6: ключи по id узла. Двоеточие запрещено и в пути узла, и в
+	// слоге команды, поэтому ключ по id не совпадёт ни с одним ключом по пути.
+	idTag = "id:"
 	// defaultTTL — срок жизни ключа исхода. Перезаписывается каждым вызовом узла;
 	// длинный TTL нужен лишь чтобы простаивающие/удалённые узлы со временем ушли.
 	defaultTTL = 30 * 24 * time.Hour
@@ -68,13 +75,17 @@ const (
 	DefaultDownThreshold = 10
 )
 
-// StreakKey — Redis-ключ счётчика подряд идущих отказов узла. Экспортно ради
-// диагностики: «почему узел до сих пор не down» отвечается одним GET.
-func StreakKey(nodePath string) string { return streakPrefix + nodePath }
+// StreakKey — Redis-ключ счётчика подряд идущих отказов узла по его id.
+// Экспортно ради диагностики: «почему узел до сих пор не down» отвечается одним GET.
+func StreakKey(nodeID string) string { return streakPrefix + idTag + nodeID }
 
-// Key возвращает Redis-ключ исхода последнего вызова узла по его пути. Экспортно,
+// Key возвращает Redis-ключ исхода последнего вызова узла по его id. Экспортно,
 // чтобы читающая сторона (Web-адаптер) использовала тот же формат без дублирования.
-func Key(nodePath string) string { return keyPrefix + nodePath }
+func Key(nodeID string) string { return keyPrefix + idTag + nodeID }
+
+// LegacyKey — ключ исхода по пути узла, как его писал Sender до §101. Нужен
+// только переносу (LegacyMigrator): новые версии по нему не пишут и не читают.
+func LegacyKey(nodePath string) string { return keyPrefix + nodePath }
 
 // EncodeOutcome кодирует исход в Redis-значение (таблица — в doc пакета).
 func EncodeOutcome(o domain.NodeOutcome) string {
@@ -206,17 +217,23 @@ func outcomeClass(o domain.NodeOutcome) string {
 // Ошибку Redis логирует Warn и не возвращает — фиксация статуса не должна
 // влиять на доставку запроса (fail-open §9.4). В этом случае возвращается
 // исходный исход: без счётчика решить о пороге нечем.
-func (w *RedisWriter) SetLastOutcome(ctx context.Context, nodePath string, outcome domain.NodeOutcome) domain.NodeOutcome {
-	if nodePath == "" {
+//
+// Пустой nodeID — исход не пишется (§101.6): ключ по пути снова склеил бы
+// одноимённые узлы разных команд, а ключ с пустым id — вообще все такие вызовы.
+func (w *RedisWriter) SetLastOutcome(ctx context.Context, nodeID string, outcome domain.NodeOutcome) domain.NodeOutcome {
+	if nodeID == "" {
+		// §51.9: тихий пропуск — иначе «почему бейдж узла не меняется» не разобрать.
+		w.logger.Debug("nodestatus: empty node id, outcome not persisted",
+			w.logger.Str("outcome", string(outcome)))
 		return outcome
 	}
 	res, err := w.script.Run(ctx, w.client,
-		[]string{Key(nodePath), StreakKey(nodePath)},
+		[]string{Key(nodeID), StreakKey(nodeID)},
 		outcomeClass(outcome), w.threshold, defaultTTL.Milliseconds(),
 	).Text()
 	if err != nil {
 		w.logger.Warn("nodestatus: redis set failed",
-			w.logger.Str("node", nodePath), w.logger.Err(err))
+			w.logger.Str("node_id", nodeID), w.logger.Err(err))
 		return outcome
 	}
 	eff, ok := DecodeOutcome(res)
@@ -224,14 +241,14 @@ func (w *RedisWriter) SetLastOutcome(ctx context.Context, nodePath string, outco
 		// Скрипт возвращает только "0"/"1"/"2"; сюда попадём разве что при
 		// правке скрипта — сообщаем и не выдумываем исход.
 		w.logger.Warn("nodestatus: unexpected script result",
-			w.logger.Str("node", nodePath), w.logger.Str("result", res))
+			w.logger.Str("node_id", nodeID), w.logger.Str("result", res))
 		return outcome
 	}
 	if eff != outcome {
 		// §51.9: переход «сырой down → degraded» неочевиден и объясняет, почему
 		// узел не покраснел после ошибки.
 		w.logger.Debug("nodestatus: outcome adjusted by fail-streak threshold",
-			w.logger.Str("node", nodePath),
+			w.logger.Str("node_id", nodeID),
 			w.logger.Str("raw", string(outcome)),
 			w.logger.Str("effective", string(eff)),
 			w.logger.Int("threshold", w.threshold))

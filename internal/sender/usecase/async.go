@@ -16,8 +16,16 @@ import (
 
 // NodeReader — interface чтения актуального узла перед обработкой
 // сообщения (sender перечитывает status/retry на каждое сообщение).
+//
+// §101.5: узел ищется по id из конверта. Путь — только у конвертов, записанных
+// до §101, и он может быть занят узлами нескольких команд.
 type NodeReader interface {
-	GetByPath(ctx context.Context, path string) (*domain.Node, error)
+	// GetByID — узел по id; нет узла — domain.ErrNodeNotFound.
+	GetByID(ctx context.Context, id string) (*domain.Node, error)
+	// ListByPath — все узлы с этим путём во всех командах; нет ни одного —
+	// пустой список без ошибки. Креды гарантированы только у единственного
+	// узла: несколько узлов конверт не исполняют.
+	ListByPath(ctx context.Context, path string) ([]*domain.Node, error)
 }
 
 // DLQProducer — publish failed message в nexus.async.dlq.
@@ -41,7 +49,10 @@ type NodeStatusWriter interface {
 	// SetLastOutcome возвращает ЭФФЕКТИВНЫЙ исход: сырой down остаётся degraded,
 	// пока подряд идущих отказов меньше порога (§52-доп). По нему же выставляется
 	// Prometheus-гаудж — иначе бейдж и алерты трактовали бы один узел по-разному.
-	SetLastOutcome(ctx context.Context, nodePath string, outcome domain.NodeOutcome) domain.NodeOutcome
+	//
+	// nodeID — ключ исхода (§101.6): по пути одноимённые узлы разных команд
+	// делили бы один бейдж.
+	SetLastOutcome(ctx context.Context, nodeID string, outcome domain.NodeOutcome) domain.NodeOutcome
 }
 
 // AsyncProcessor — обработчик одного Kafka-сообщения для Sender.
@@ -158,17 +169,10 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 		return HandleAck // не повторяем — это битое сообщение
 	}
 
-	node, err := p.nodes.GetByPath(ctx, env.NodePath)
-	if err != nil {
-		if errors.Is(err, domain.ErrNodeNotFound) {
-			p.logger.Warn("async message for unknown node, dropping",
-				p.logger.Str("node_path", env.NodePath),
-				p.logger.Str("id", env.ID))
-			return HandleAck
-		}
-		p.logger.ErrorWithOp("node read failed", err, "async.Handle",
-			p.logger.Str("node_path", env.NodePath))
-		return HandleRetry
+	// §101.5: узел — по node_id конверта; по пути — только у конвертов до §101.
+	node, res, ok := p.nodeForEnvelope(ctx, raw, env)
+	if !ok {
+		return res
 	}
 	if node.Status == domain.NodeStatusDisabled {
 		p.logger.Info("async drop: node disabled",
@@ -192,7 +196,7 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 				p.logger.Str("node_path", env.NodePath),
 				p.logger.Str("id", env.ID))
 			if p.metrics != nil {
-				p.metrics.RequestsTotal.WithLabelValues("requestAsync", env.NodePath, "cancelled").Inc()
+				p.metrics.IncRequest("requestAsync", nodeLabels(node), "cancelled")
 			}
 			return HandleAck
 		}
@@ -201,11 +205,11 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 	// §83.7: узел больше не async — принятое ранее в очередь не доставляем.
 	// Проверка ДО paused-ветки: решение терминальное, откладывать нечего.
 	if reason, stop := asyncIngressRevoked(node, env); stop {
-		return p.dropNotAsync(ctx, raw, env, reason)
+		return p.dropNotAsync(ctx, raw, env, node, reason)
 	}
 
 	if node.Status == domain.NodeStatusPaused {
-		return p.handlePaused(ctx, raw, env, msgHeaders)
+		return p.handlePaused(ctx, raw, env, node, msgHeaders)
 	}
 
 	// §51.9: старт обработки async-сообщения — привязка id↔узел на debug.
@@ -243,22 +247,21 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 	effOutcome := outcome
 	if p.nodeStatus != nil && !out.ParentGone {
 		statusCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeStatusWriteTimeout)
-		effOutcome = p.nodeStatus.SetLastOutcome(statusCtx, env.NodePath, outcome)
+		effOutcome = p.nodeStatus.SetLastOutcome(statusCtx, node.ID, outcome)
 		cancel()
 	}
 	if p.metrics != nil {
-		p.metrics.RequestsTotal.
-			WithLabelValues("requestAsync", env.NodePath, strconv.FormatInt(int64(out.StatusCode), 10)).Inc()
-		p.metrics.RequestDuration.
-			WithLabelValues("requestAsync", env.NodePath).Observe(float64(out.DurationMs) / 1000.0)
+		labels := nodeLabels(node)
+		p.metrics.IncRequest("requestAsync", labels, strconv.FormatInt(int64(out.StatusCode), 10))
+		p.metrics.ObserveRequestDuration("requestAsync", labels, float64(out.DurationMs)/1000.0)
 		if isErr {
-			p.metrics.RequestsIncompleteTotal.WithLabelValues("requestAsync", env.NodePath).Inc()
+			p.metrics.IncRequestIncomplete("requestAsync", labels)
 		}
 		// §41/§52: исход последнего вызова узла (in-memory гаудж).
 		// §81.2: обрыв вызывающей стороной (здесь — остановка сервиса) исходом
 		// узла не считается.
 		if !out.ParentGone {
-			p.metrics.SetNodeLastRequestOutcome(env.NodePath, effOutcome)
+			p.metrics.SetNodeLastRequestOutcome(labels, effOutcome)
 		}
 	}
 
@@ -307,7 +310,7 @@ func (p *AsyncProcessor) Handle(ctx context.Context, raw []byte, msgHeaders map[
 // Без pausedTopic — устаревшее поведение: подождать и переобработать на месте.
 // Коммитить сообщение в этом режиме нельзя (иначе оно потеряется), поэтому вся
 // партиция стоит до снятия паузы.
-func (p *AsyncProcessor) handlePaused(ctx context.Context, raw []byte, env Envelope, msgHeaders map[string]string) HandleResult {
+func (p *AsyncProcessor) handlePaused(ctx context.Context, raw []byte, env Envelope, node *domain.Node, msgHeaders map[string]string) HandleResult {
 	if p.pausedTopic == "" {
 		// Ожидание прерываемо ctx: при shutdown воркер не должен висеть до
 		// pausedRetryAfter на каждом сообщении.
@@ -345,7 +348,7 @@ func (p *AsyncProcessor) handlePaused(ctx context.Context, raw []byte, env Envel
 		p.logger.Str("paused_topic", p.pausedTopic),
 		p.logger.Str("paused_since", hdrs["paused_since"]))
 	if p.metrics != nil {
-		p.metrics.RequestsTotal.WithLabelValues("requestAsync", env.NodePath, "paused").Inc()
+		p.metrics.IncRequest("requestAsync", nodeLabels(node), "paused")
 	}
 	return HandleRequeued
 }
@@ -359,23 +362,23 @@ func (p *AsyncProcessor) pausedHeaders(env Envelope, in map[string]string) map[s
 	if since == "" {
 		since = now
 	}
-	return map[string]string{
+	return withNodeIdentity(map[string]string{
 		"id":              env.ID,
 		"node_path":       env.NodePath,
 		"orig_topic":      headerOr(in, "orig_topic", "nexus.async"),
 		"paused_since":    since,
 		"last_requeue_at": now,
-	}
+	}, env)
 }
 
 func (p *AsyncProcessor) publishDLQ(ctx context.Context, raw []byte, env Envelope, out SendOutput) error {
-	hdrs := map[string]string{
+	hdrs := withNodeIdentity(map[string]string{
 		"id":         env.ID,
 		"node_path":  env.NodePath,
 		"orig_topic": "nexus.async",
 		"reason": fmt.Sprintf("status=%d attempts=%d duration_ms=%d err=%s",
 			out.StatusCode, out.Attempts, out.DurationMs, out.Error),
 		"last_attempt_at": time.Now().UTC().Format(time.RFC3339Nano),
-	}
+	}, env)
 	return p.dlq.Produce(ctx, p.dlqTopic, env.NodePath, raw, hdrs)
 }

@@ -22,21 +22,23 @@ func TestSetNodeLastRequestOutcome(t *testing.T) {
 	t.Parallel()
 	m := metrics.New("sender")
 
-	m.SetNodeLastRequestOutcome("svc/ok", domain.NodeOutcomeOK)
-	if v := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("svc/ok")); v != 0 {
+	n := func(path string) metrics.NodeLabels { return metrics.NodeLabels{Team: "svc", Node: path} }
+
+	m.SetNodeLastRequestOutcome(n("svc/ok"), domain.NodeOutcomeOK)
+	if v := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("svc", "svc/ok")); v != 0 {
 		t.Fatalf("ok node gauge = %v, want 0", v)
 	}
-	m.SetNodeLastRequestOutcome("svc/degraded", domain.NodeOutcomeDegraded)
-	if v := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("svc/degraded")); v != 1 {
+	m.SetNodeLastRequestOutcome(n("svc/degraded"), domain.NodeOutcomeDegraded)
+	if v := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("svc", "svc/degraded")); v != 1 {
 		t.Fatalf("degraded node gauge = %v, want 1", v)
 	}
-	m.SetNodeLastRequestOutcome("svc/bad", domain.NodeOutcomeDown)
-	if v := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("svc/bad")); v != 2 {
+	m.SetNodeLastRequestOutcome(n("svc/bad"), domain.NodeOutcomeDown)
+	if v := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("svc", "svc/bad")); v != 2 {
 		t.Fatalf("down node gauge = %v, want 2", v)
 	}
 	// Последний успешный вызов гасит «Down».
-	m.SetNodeLastRequestOutcome("svc/bad", domain.NodeOutcomeOK)
-	if v := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("svc/bad")); v != 0 {
+	m.SetNodeLastRequestOutcome(n("svc/bad"), domain.NodeOutcomeOK)
+	if v := testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("svc", "svc/bad")); v != 0 {
 		t.Fatalf("after recovery gauge = %v, want 0", v)
 	}
 }
@@ -47,8 +49,8 @@ func TestNew_RegistersAllRequiredMetrics(t *testing.T) {
 
 	// CounterVec/HistogramVec не печатают строки без хотя бы одной серии —
 	// поэтому сначала «прикасаемся» к каждому ряду §6, потом проверяем дамп.
-	m.RequestsTotal.WithLabelValues("request", "demo", "200").Inc()
-	m.RequestDuration.WithLabelValues("request", "demo").Observe(0.01)
+	m.IncRequest("request", metrics.NodeLabels{Team: "shop", Node: "demo"}, "200")
+	m.ObserveRequestDuration("request", metrics.NodeLabels{Team: "shop", Node: "demo"}, 0.01)
 	m.KafkaLag.WithLabelValues("nexus.async", "0", "sender").Set(0)
 	m.CHBufferSize.WithLabelValues("nexus.logs").Set(0)
 	m.CHErrorsTotal.WithLabelValues("nexus.logs", "insert").Add(0)
@@ -78,8 +80,8 @@ func TestNew_ServiceLabelIsolated(t *testing.T) {
 	a := metrics.New("receiver")
 	b := metrics.New("sender")
 
-	a.RequestsTotal.WithLabelValues("request", "demo", "200").Inc()
-	b.RequestsTotal.WithLabelValues("request", "demo", "200").Add(3)
+	a.IncRequest("request", metrics.NodeLabels{Node: "demo"}, "200")
+	b.IncRequest("request", metrics.NodeLabels{Node: "demo"}, "200")
 
 	require.Equal(t, `service="receiver"`, findServiceLabel(t, a.Handler()))
 	require.Equal(t, `service="sender"`, findServiceLabel(t, b.Handler()))
@@ -96,6 +98,9 @@ func TestGinMiddleware_RecordsRequestsAndDuration(t *testing.T) {
 	r.Any("/api/v1/request/*path", func(c *gin.Context) {
 		// Имитируем работу — observe в гистограмме должен быть > 0.
 		time.Sleep(2 * time.Millisecond)
+		// §101.3: метку узла кладёт обработчик после резолва, как Receiver.
+		c.Set(metrics.NodeLabelKey, "orders")
+		c.Set(metrics.TeamLabelKey, "partner")
 		c.Status(http.StatusOK)
 	})
 
@@ -106,13 +111,13 @@ func TestGinMiddleware_RecordsRequestsAndDuration(t *testing.T) {
 
 	dump := dumpMetrics(t, m.Handler())
 
-	// requests_total{method="request",node="partner/orders",status="200"} == 1.
+	// requests_total{method="request",team="partner",node="orders",status="200"} == 1.
 	requireSample(t, dump,
-		`nexus_requests_total{method="request",node="partner/orders",service="receiver",status="200"} 1`)
+		`nexus_requests_total{method="request",node="orders",service="receiver",status="200",team="partner"} 1`)
 
 	// duration: количество наблюдений ровно 1.
 	requireSample(t, dump,
-		`nexus_request_duration_seconds_count{method="request",node="partner/orders",service="receiver"} 1`)
+		`nexus_request_duration_seconds_count{method="request",node="orders",service="receiver",team="partner"} 1`)
 }
 
 func TestGinMiddleware_SkipsHealthAndMetrics(t *testing.T) {
@@ -158,7 +163,7 @@ func TestGinMiddleware_NonV1Path_UsesFullRoute(t *testing.T) {
 	dump := dumpMetrics(t, m.Handler())
 	// node = "" (нет path-параметра /v1), method = "GET /api/nodes/:id" (template, не URL).
 	requireSample(t, dump,
-		`nexus_requests_total{method="GET /api/nodes/:id",node="",service="web",status="404"} 1`)
+		`nexus_requests_total{method="GET /api/nodes/:id",node="",service="web",status="404",team=""} 1`)
 }
 
 // ---- helpers ----
@@ -215,7 +220,7 @@ func TestNew_InstanceLabel(t *testing.T) {
 	t.Parallel()
 
 	withID := metrics.New("web", metrics.WithInstance("kz"))
-	withID.RequestsTotal.WithLabelValues("request", "svc/hook", "200").Inc()
+	withID.IncRequest("request", metrics.NodeLabels{Node: "svc/hook"}, "200")
 	dump := dumpMetrics(t, withID.Handler())
 	if !strings.Contains(dump, `nexus_instance="kz"`) {
 		t.Errorf("метка nexus_instance не выставлена:\n%s", dump)
@@ -225,7 +230,7 @@ func TestNew_InstanceLabel(t *testing.T) {
 	}
 
 	plain := metrics.New("web", metrics.WithInstance(""))
-	plain.RequestsTotal.WithLabelValues("request", "svc/hook", "200").Inc()
+	plain.IncRequest("request", metrics.NodeLabels{Node: "svc/hook"}, "200")
 	if dump := dumpMetrics(t, plain.Handler()); strings.Contains(dump, "nexus_instance") {
 		t.Errorf("пустой идентификатор не должен добавлять метку:\n%s", dump)
 	}

@@ -83,10 +83,11 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 		return nil, domain.ErrLoopDetected
 	}
 
-	node, remainder, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
+	node, remainder, teamSlug, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
 	}
+	in.notifyResolved(teamSlug, node.Path)
 	if node.Status == domain.NodeStatusDisabled {
 		// Наружу — 404 «узла нет» (§94.2), в журнале — честное «узел выключен».
 		return nil, domain.ErrNodeDisabled
@@ -174,7 +175,7 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 		return nil, err
 	}
 
-	env := BuildEnvelope(id, node, EffectiveOutgoingMethod(node, in.Method), targetURL, authHeader, in.ClientIP, remainder,
+	env := BuildEnvelope(id, node, teamSlug, EffectiveOutgoingMethod(node, in.Method), targetURL, authHeader, in.ClientIP, remainder,
 		effHeader, cleanQuery, effBody)
 	// §32: служебный hop-счётчик в обход allowlist узла. На стороне Sender
 	// заголовок уйдёт во внешний запрос; если цель — снова Receiver, счётчик
@@ -191,6 +192,8 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	headers := map[string]string{
 		"id":        id,
 		"node_path": node.Path,
+		"node_id":   node.ID, // §101.4: путь уникален лишь внутри команды
+		"team":      teamSlug,
 		"attempt":   "0",
 	}
 

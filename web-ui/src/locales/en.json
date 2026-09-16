@@ -213,6 +213,22 @@
       "axis_max": "scale up to {{v}}",
       "no_data": "no data"
     },
+    "methods": {
+      "title": "Requests by method",
+      "hint": "A ranking of subpaths (the «Method» column) over the same period and under the same filters as the «Requests» chart. Bar length is the number of requests, the blue part is delivered, the red one is errors. The unit is a request, not a delivery attempt, so the sum over methods matches «Total». Hover a row for the full name and the numbers; a click opens the journal filtered by that method.",
+      "others": "Others",
+      "others_n": "{{n}} methods",
+      "others_n_more": "more than {{n}} methods",
+      "show_more": "Show more",
+      "show_less": "Collapse",
+      "empty_method": "(no subpath)",
+      "empty_method_hint": "Requests without a subpath are plain node calls. The journal has no «empty method» filter, so this row does not link anywhere.",
+      "open_logs": "Open the journal for this method",
+      "tooltip": {
+        "share": "{{pct}} % of all"
+      },
+      "unit_mismatch": "The window is large: the chart above counts delivery attempts while the ranking counts requests. The sum over methods matches «Total», but not the bar heights."
+    },
     "pulse": {
       "label": "Last activity",
       "just_now": "just now",
@@ -326,7 +342,10 @@
       "share": "Share",
       "empty": "No data for the period"
     },
-    "node_unresolved": "No node with this path right now: it was renamed, deleted, or the path is used by nodes of several teams. Prometheus keeps the old path, so the row stays in the top list.",
+    "node_unresolved": "The team has no node with this path right now: it was renamed, deleted or moved to another team — or the row could not be matched to a node at the moment. Prometheus keeps the old labels, so the row stays in the top list until they leave the period.",
+    "node_legacy": "These series were recorded before metrics told teams apart, and they can't be matched to one node: the path belongs to nodes of several teams, no node has this path, or the node list is unavailable right now. The row disappears once the old series leave the period.",
+    "node_placeholder": "Requests to addresses with no matching node (404 response). The path from such an address is not written to metrics: it may carry tokens and random URLs.",
+    "no_team": "no team",
     "top_failures": {
       "title": "Top failures",
       "node": "Node",

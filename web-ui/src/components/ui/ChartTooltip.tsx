@@ -19,6 +19,11 @@ export type TooltipSeries = {
 };
 
 export type ChartTooltipProps = {
+  // title — заголовок-имя над всем остальным (§102.5): в рейтинге методов
+  // тултип обязан показать ПОЛНОЕ имя, которое в строке сокращено. Переносится
+  // по любому символу: в путях нет пробелов, и без break-all длинное имя
+  // вылезло бы за пределы тултипа вместо переноса.
+  title?: string;
   period?: { from: string; to?: string; durationLabel?: string; note?: string };
   primary?: { value: string; unit?: string; tone?: "normal" | "warn" | "err" };
   series?: TooltipSeries[];
@@ -54,7 +59,7 @@ function Marker({ marker, color }: { marker: TooltipMarker; color: string }) {
   return <span className="inline-block h-2 w-2 shrink-0 rounded-sm" style={{ background: color }} />;
 }
 
-export function ChartTooltip({ period, primary, series, footer, action, compact }: ChartTooltipProps) {
+export function ChartTooltip({ title, period, primary, series, footer, action, compact }: ChartTooltipProps) {
   return (
     <div
       className={cn(
@@ -62,6 +67,12 @@ export function ChartTooltip({ period, primary, series, footer, action, compact 
         compact ? "min-w-[140px] px-2.5 py-2" : "min-w-[180px] px-3 py-2.5",
       )}
     >
+      {title && (
+        <div className="mb-1.5 max-w-[280px] break-all font-mono text-[11px] leading-snug text-fg">
+          {title}
+        </div>
+      )}
+
       {period && (
         <div className="mb-1.5 flex items-baseline gap-1.5 font-mono text-[11px] text-fg-subtle">
           <span>{period.from}</span>

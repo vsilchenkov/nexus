@@ -7,11 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
 	"nexus/internal/domain/logsearch"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -20,20 +22,17 @@ import (
 type fakeProm struct {
 	totals       port.GlobalTotals
 	totalsErr    error
+	totalsTeam   string // §101.9: слог, с которым спросили итоги
 	queue        float64
 	queueErr     error
-	throughput   map[string]port.NodeThroughput
+	throughput   map[port.NodeKey]port.NodeThroughput
 	thrErr       error
-	nodeErrs     map[string]float64
+	nodeErrs     map[port.NodeKey]float64
 	nodeErrErr   error
-	lastErrs     map[string]float64
+	lastErrs     map[port.NodeKey]float64
 	lastErrsErr  error
-	series       map[string][]float64
+	series       map[port.NodeKey][]float64
 	seriesErr    error
-	nodeKPI      port.NodeKPI
-	nodeKPIErr   error
-	nodeChart    []port.SeriesPoint
-	nodeChartErr error
 	kafkaOv      port.KafkaSummary
 	kafkaOvErr   error
 	kafkaSeries  map[string][]port.KafkaPoint
@@ -42,27 +41,22 @@ type fakeProm struct {
 	topicSizeErr error
 }
 
-func (f *fakeProm) GlobalTotals(_ context.Context, _ time.Duration) (port.GlobalTotals, error) {
+func (f *fakeProm) GlobalTotals(_ context.Context, _ time.Duration, team string) (port.GlobalTotals, error) {
+	f.totalsTeam = team
 	return f.totals, f.totalsErr
 }
 func (f *fakeProm) KafkaQueue(_ context.Context) (float64, error) { return f.queue, f.queueErr }
-func (f *fakeProm) NodeThroughput(_ context.Context, _, _ time.Time) (map[string]port.NodeThroughput, error) {
+func (f *fakeProm) NodeThroughput(_ context.Context, _, _ time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
 	return f.throughput, f.thrErr
 }
-func (f *fakeProm) NodeErrors(_ context.Context, _ time.Duration) (map[string]float64, error) {
+func (f *fakeProm) NodeErrors(_ context.Context, _ time.Duration) (map[port.NodeKey]float64, error) {
 	return f.nodeErrs, f.nodeErrErr
 }
-func (f *fakeProm) NodeLastErrors(_ context.Context, _ time.Time) (map[string]float64, error) {
+func (f *fakeProm) NodeLastErrors(_ context.Context, _ time.Time) (map[port.NodeKey]float64, error) {
 	return f.lastErrs, f.lastErrsErr
 }
-func (f *fakeProm) NodeSeries(_ context.Context, _, _ time.Time, _ int) (map[string][]float64, error) {
+func (f *fakeProm) NodeSeries(_ context.Context, _, _ time.Time, _ int) (map[port.NodeKey][]float64, error) {
 	return f.series, f.seriesErr
-}
-func (f *fakeProm) NodeKPI(_ context.Context, _ string, _, _ time.Time) (port.NodeKPI, error) {
-	return f.nodeKPI, f.nodeKPIErr
-}
-func (f *fakeProm) NodeChart(_ context.Context, _ string, _, _ time.Time, _ int) ([]port.SeriesPoint, error) {
-	return f.nodeChart, f.nodeChartErr
 }
 func (f *fakeProm) KafkaOverview(_ context.Context, _, _ time.Time) (port.KafkaSummary, error) {
 	return f.kafkaOv, f.kafkaOvErr
@@ -87,6 +81,7 @@ type fakeNodeLogs struct {
 	latencyErr error
 
 	gotKPIQuery   port.LogQuery
+	gotKPIApprox  bool
 	gotChartQuery port.LogQuery
 	gotChart      port.ChartQuery
 	chartCalls    int
@@ -97,14 +92,26 @@ type fakeNodeLogs struct {
 	gotLatencyQuery port.LogQuery
 	gotLatencyStep  int64
 	latencyCalls    int
-	mu              sync.Mutex
+
+	// §102: рейтинг методов. Кроме результата фиксируются запрос, режим
+	// точности и лимит — все три обязаны совпасть с тем, чем считался KPI,
+	// иначе Σ по методам не сойдётся с ним на клиенте.
+	methods       []port.MethodStat
+	methodsCut    bool
+	methodsErr    error
+	gotMethodsQ   port.LogQuery
+	gotMethodsApx bool
+	gotMethodsLim int
+	methodsCalls  int
+
+	mu sync.Mutex
 }
 
 // NodeKPI на рабочем столе зовётся КОНКУРЕНТНО по узлам (nodesOverviewCH), так
 // что запись полей фейка тоже под мьютексом — иначе -race красит тест, а не код.
-func (f *fakeNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, _ bool) (port.NodeKPI, error) {
+func (f *fakeNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, approx bool) (port.NodeKPI, error) {
 	f.mu.Lock()
-	f.gotKPIQuery = q
+	f.gotKPIQuery, f.gotKPIApprox = q, approx
 	f.kpiCalls++
 	f.mu.Unlock()
 	return f.kpi, f.kpiErr
@@ -128,6 +135,15 @@ func (f *fakeNodeLogs) NodeLatencyChart(_ context.Context, q port.LogQuery, step
 	return f.latency, f.latencyErr
 }
 
+// §102: третья конкурентная горутина той же группы — запись под тем же мьютексом.
+func (f *fakeNodeLogs) NodeMethodStats(_ context.Context, q port.LogQuery, approx bool, limit int) ([]port.MethodStat, bool, error) {
+	f.mu.Lock()
+	f.gotMethodsQ, f.gotMethodsApx, f.gotMethodsLim = q, approx, limit
+	f.methodsCalls++
+	f.mu.Unlock()
+	return f.methods, f.methodsCut, f.methodsErr
+}
+
 // fakeNodeRepo встраивает port.NodeRepo (nil): usecase зовёт Get и List.
 type fakeNodeRepo struct {
 	port.NodeRepo
@@ -146,11 +162,13 @@ func (f *fakeNodeRepo) List(_ context.Context, _ port.ListNodesFilter) ([]*domai
 // fakeNodeStatus — Redis-источник исхода последнего вызова (§46/§52,
 // port.NodeStatusReader).
 type fakeNodeStatus struct {
-	m   map[string]domain.NodeOutcome
-	err error
+	m     map[string]domain.NodeOutcome
+	err   error
+	asked []string // §101.6: по каким id спрашивали
 }
 
-func (f *fakeNodeStatus) GetLastOutcomes(_ context.Context, _ []string) (map[string]domain.NodeOutcome, error) {
+func (f *fakeNodeStatus) GetLastOutcomes(_ context.Context, ids []string) (map[string]domain.NodeOutcome, error) {
+	f.asked = append(f.asked, ids...)
 	return f.m, f.err
 }
 
@@ -158,6 +176,12 @@ func (f *fakeNodeStatus) GetLastOutcomes(_ context.Context, _ []string) (map[str
 
 // §44.A: Overview отдаёт только очередь Kafka + флаг доступности Prometheus.
 // Трафик (входящие/исходящие/ошибки) переехал в NodesOverview.Totals.
+// twoTelegramTeams — команды боевого случая §101: путь telegram есть и в
+// messengers, и в webhook.
+func twoTelegramTeams() port.TeamRepo {
+	return slugDirectory(map[string]string{"t-messengers": "messengers", "t-webhook": "webhook"})
+}
+
 func TestMetricsUsecase_Overview(t *testing.T) {
 	t.Parallel()
 	log := logging.NewNoop()
@@ -208,18 +232,20 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 
 	t.Run("maps rows by node", func(t *testing.T) {
 		t.Parallel()
+		key := port.NodeKey{Team: "hooks", Path: "webhook/send"}
 		prom := &fakeProm{
-			throughput: map[string]port.NodeThroughput{
-				"webhook/send": {In: 4201, Out: 4198, Errors: 2},
+			throughput: map[port.NodeKey]port.NodeThroughput{
+				key: {In: 4201, Out: 4198, Errors: 2},
 			},
 			// §41/§52: gauge=2 → последний вызов — down.
-			lastErrs: map[string]float64{"webhook/send": 2},
+			lastErrs: map[port.NodeKey]float64{key: 2},
 		}
 		// §86.4: строки строятся по узлам скоупа, а числа берутся из Prometheus
-		// по пути. До §86 ветка отдавала всё, что нашлось в Prometheus, без
-		// какой-либо привязки к команде.
-		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "webhook/send"}}}
-		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log)
+		// по паре (слог команды, путь) — §101.9. До §86 ветка отдавала всё, что
+		// нашлось в Prometheus, без какой-либо привязки к команде.
+		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "webhook/send", TeamID: "t-hooks"}}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log,
+			WithMetricsTeams(slugDirectory(map[string]string{"t-hooks": "hooks"})))
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.True(t, got.PrometheusAvailable)
 		require.Len(t, got.Items, 1)
@@ -250,24 +276,26 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 	// без записи в Redis добираются из Prometheus (0→ok, 1→degraded, 2→down).
 	t.Run("last outcome: redis priority + prometheus fallback", func(t *testing.T) {
 		t.Parallel()
+		k := func(p string) port.NodeKey { return port.NodeKey{Team: "a", Path: p} }
 		prom := &fakeProm{
-			throughput: map[string]port.NodeThroughput{
-				"a/x": {In: 1}, "b/y": {In: 1}, "c/z": {In: 1}, "d/w": {In: 1},
+			throughput: map[port.NodeKey]port.NodeThroughput{
+				k("a/x"): {In: 1}, k("b/y"): {In: 1}, k("c/z"): {In: 1}, k("d/w"): {In: 1},
 			},
 			// Prometheus: a/x — down, c/z — degraded, d/w — ok (нет значения).
-			lastErrs: map[string]float64{"a/x": 2, "b/y": 2, "c/z": 1},
+			lastErrs: map[port.NodeKey]float64{k("a/x"): 2, k("b/y"): 2, k("c/z"): 1},
 		}
 		// Redis: a/x → degraded (перебивает Prometheus down), b/y → down;
 		// c/z и d/w отсутствуют → fallback на Prometheus.
 		rs := &fakeNodeStatus{m: map[string]domain.NodeOutcome{
-			"a/x": domain.NodeOutcomeDegraded,
-			"b/y": domain.NodeOutcomeDown,
+			"n1": domain.NodeOutcomeDegraded, // a/x
+			"n2": domain.NodeOutcomeDown,     // b/y
 		}}
 		repo := &fakeNodeRepo{list: []*domain.Node{
-			{ID: "n1", Path: "a/x"}, {ID: "n2", Path: "b/y"},
-			{ID: "n3", Path: "c/z"}, {ID: "n4", Path: "d/w"},
+			{ID: "n1", Path: "a/x", TeamID: "t-a"}, {ID: "n2", Path: "b/y", TeamID: "t-a"},
+			{ID: "n3", Path: "c/z", TeamID: "t-a"}, {ID: "n4", Path: "d/w", TeamID: "t-a"},
 		}}
-		uc := NewMetricsUsecase(prom, nil, repo, nil, rs, log)
+		uc := NewMetricsUsecase(prom, nil, repo, nil, rs, log,
+			WithMetricsTeams(slugDirectory(map[string]string{"t-a": "a"})))
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		by := map[string]NodeThroughputRow{}
 		for _, it := range got.Items {
@@ -282,16 +310,129 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 			"нет ни в Redis, ни в Prometheus → ok")
 	})
 
+	// §101.6: в режиме «Все команды» строки одноимённых узлов стоят рядом, и у
+	// каждой свой исход — Redis спрашивается по id, а не по пути.
+	t.Run("last outcome: same path in two teams keeps own outcome", func(t *testing.T) {
+		t.Parallel()
+		prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+			{Team: "messengers", Path: "telegram"}: {In: 1},
+		}}
+		rs := &fakeNodeStatus{m: map[string]domain.NodeOutcome{
+			"id-messengers": domain.NodeOutcomeDown,
+			"id-webhook":    domain.NodeOutcomeOK,
+		}}
+		repo := &fakeNodeRepo{list: []*domain.Node{
+			{ID: "id-messengers", Path: "telegram", TeamID: "t-messengers"},
+			{ID: "id-webhook", Path: "telegram", TeamID: "t-webhook"},
+		}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, rs, log, WithMetricsTeams(twoTelegramTeams()))
+		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
+		by := map[string]NodeThroughputRow{}
+		for _, it := range got.Items {
+			by[it.NodeID] = it
+		}
+		require.Len(t, by, 2)
+		require.Equal(t, domain.NodeOutcomeDown, by["id-messengers"].LastOutcome)
+		require.Equal(t, domain.NodeOutcomeOK, by["id-webhook"].LastOutcome)
+		require.ElementsMatch(t, []string{"id-messengers", "id-webhook"}, rs.asked)
+	})
+
+	// §101.9: до §101 ряд Prometheus ключевался путём, и одноимённые узлы
+	// разных команд получали одинаковые числа, спарклайн и гаудж (граница §86.8).
+	t.Run("same path in two teams: own numbers, sparkline and gauge", func(t *testing.T) {
+		t.Parallel()
+		msg := port.NodeKey{Team: "messengers", Path: "telegram"}
+		wh := port.NodeKey{Team: "webhook", Path: "telegram"}
+		prom := &fakeProm{
+			throughput: map[port.NodeKey]port.NodeThroughput{
+				msg: {In: 1747, Errors: 1747},
+				wh:  {In: 8, Errors: 8},
+			},
+			lastErrs: map[port.NodeKey]float64{msg: 2},
+			series:   map[port.NodeKey][]float64{wh: {3, 5}},
+		}
+		repo := &fakeNodeRepo{list: []*domain.Node{
+			{ID: "id-messengers", Path: "telegram", TeamID: "t-messengers"},
+			{ID: "id-webhook", Path: "telegram", TeamID: "t-webhook"},
+		}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log, WithMetricsTeams(twoTelegramTeams()))
+		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
+		by := map[string]NodeThroughputRow{}
+		for _, it := range got.Items {
+			by[it.NodeID] = it
+		}
+		require.EqualValues(t, 1747, by["id-messengers"].Errors)
+		require.EqualValues(t, 8, by["id-webhook"].Errors)
+		require.Equal(t, domain.NodeOutcomeDown, by["id-messengers"].LastOutcome)
+		require.Equal(t, domain.NodeOutcomeOK, by["id-webhook"].LastOutcome,
+			"гаудж соседней команды не красит этот узел")
+		require.Equal(t, []float64{3, 5}, by["id-webhook"].Spark)
+		require.Empty(t, by["id-messengers"].Spark)
+	})
+
+	// §101.9: в окне выката часть трафика — ряды до обновления, без команды.
+	// Счётчики приписываются узлу только при однозначном во всём инстансе пути;
+	// p95 не складывается.
+	t.Run("legacy rows: counters folded only for unambiguous path", func(t *testing.T) {
+		t.Parallel()
+		prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+			{Team: "a", Path: "solo"}: {In: 10, P95ms: 50},
+			{Path: "solo"}:            {In: 5, Errors: 1, P95ms: 999},
+			{Team: "a", Path: "twin"}: {In: 3},
+			{Path: "twin"}:            {In: 100},
+			{Path: "foreign"}:         {In: 7},
+		}}
+		keys := &fakeNodeKeys{refs: []port.NodeKeyRef{
+			{ID: "n-solo", Key: port.NodeKey{Team: "a", Path: "solo"}},
+			{ID: "n-twin", Key: port.NodeKey{Team: "a", Path: "twin"}},
+			{ID: "n-twin-b", Key: port.NodeKey{Team: "b", Path: "twin"}},
+		}}
+		repo := &fakeNodeRepo{list: []*domain.Node{
+			{ID: "n-solo", Path: "solo", TeamID: "t-a"},
+			{ID: "n-twin", Path: "twin", TeamID: "t-a"},
+		}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log,
+			WithMetricsTeams(slugDirectory(map[string]string{"t-a": "a"})), WithMetricsNodeKeys(keys))
+		got := uc.NodesOverview(context.Background(), "t-a", time.Now().Add(-time.Hour), time.Now())
+		by := map[string]NodeThroughputRow{}
+		for _, it := range got.Items {
+			by[it.NodeID] = it
+		}
+		require.EqualValues(t, 15, by["n-solo"].In)
+		require.EqualValues(t, 1, by["n-solo"].Errors)
+		require.InDelta(t, 50, by["n-solo"].P95ms, 1e-9, "p95 ряда до §101 не складывается")
+		require.EqualValues(t, 3, by["n-twin"].In, "путь в двух командах — ряд до §101 никому не приписан")
+		require.Equal(t, []string{"solo", "twin"}, keys.askedPaths(),
+			"про пути вне скоупа базу не спрашивают")
+	})
+
+	t.Run("legacy rows: resolver failure leaves them unattributed", func(t *testing.T) {
+		t.Parallel()
+		prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+			{Team: "a", Path: "solo"}: {In: 10},
+			{Path: "solo"}:            {In: 5},
+		}}
+		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n-solo", Path: "solo", TeamID: "t-a"}}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log,
+			WithMetricsTeams(slugDirectory(map[string]string{"t-a": "a"})),
+			WithMetricsNodeKeys(&fakeNodeKeys{err: errors.New("pg down")}))
+		got := uc.NodesOverview(context.Background(), "t-a", time.Now().Add(-time.Hour), time.Now())
+		require.Len(t, got.Items, 1)
+		require.EqualValues(t, 10, got.Items[0].In)
+	})
+
 	// §46: ошибка Redis не валит — деградация на Prometheus.
 	t.Run("redis error degrades to prometheus", func(t *testing.T) {
 		t.Parallel()
+		key := port.NodeKey{Team: "a", Path: "a/x"}
 		prom := &fakeProm{
-			throughput: map[string]port.NodeThroughput{"a/x": {In: 1}},
-			lastErrs:   map[string]float64{"a/x": 2},
+			throughput: map[port.NodeKey]port.NodeThroughput{key: {In: 1}},
+			lastErrs:   map[port.NodeKey]float64{key: 2},
 		}
 		rs := &fakeNodeStatus{err: errors.New("redis down")}
-		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "a/x"}}}
-		uc := NewMetricsUsecase(prom, nil, repo, nil, rs, log)
+		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "a/x", TeamID: "t-a"}}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, rs, log,
+			WithMetricsTeams(slugDirectory(map[string]string{"t-a": "a"})))
 		got := uc.NodesOverview(context.Background(), "", time.Now().Add(-time.Hour), time.Now())
 		require.Len(t, got.Items, 1)
 		require.Equal(t, domain.NodeOutcomeDown, got.Items[0].LastOutcome,
@@ -300,20 +441,20 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 
 	// §86.4: Prometheus-ветка больше не отдаёт всё подряд.
 	//
-	// У метки Prometheus нет команды (`node = <path>`), поэтому до §86 рабочий
-	// стол БЕЗ ClickHouse показывал пути узлов всех команд инстанса — в сквозном
-	// режиме это стало бы прямой утечкой. Теперь строки строятся по узлам
-	// скоупа: чужой узел не появится, а «сирота» (есть в Prometheus, нет в
-	// конфигурации) остаётся видимым только диагностике §44.E.
+	// До §86 рабочий стол БЕЗ ClickHouse показывал пути узлов всех команд
+	// инстанса — в сквозном режиме это стало бы прямой утечкой. Строки строятся
+	// по узлам скоупа: чужой узел не появится, а «сирота» (есть в Prometheus,
+	// нет в конфигурации) остаётся видимым только диагностике §44.E.
 	t.Run("prometheus branch is scoped to configured nodes", func(t *testing.T) {
 		t.Parallel()
-		prom := &fakeProm{throughput: map[string]port.NodeThroughput{
-			"mine/x":    {In: 10},
-			"foreign/y": {In: 999}, // узел чужой команды
-			"orphan/z":  {In: 7},   // трафик без узла в конфигурации
+		prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+			{Team: "mine", Path: "mine/x"}:       {In: 10},
+			{Team: "foreign", Path: "foreign/y"}: {In: 999}, // узел чужой команды
+			{Team: "mine", Path: "orphan/z"}:     {In: 7},   // трафик без узла в конфигурации
 		}}
-		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "mine/x"}}}
-		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log)
+		repo := &fakeNodeRepo{list: []*domain.Node{{ID: "n1", Path: "mine/x", TeamID: "team-mine"}}}
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log,
+			WithMetricsTeams(slugDirectory(map[string]string{"team-mine": "mine", "team-foreign": "foreign"})))
 
 		got := uc.NodesOverview(context.Background(), "team-mine", time.Now().Add(-time.Hour), time.Now())
 
@@ -327,11 +468,12 @@ func TestMetricsUsecase_NodesOverview(t *testing.T) {
 	// сходится с ClickHouse-веткой, где строка есть у каждого узла.
 	t.Run("prometheus branch keeps silent nodes", func(t *testing.T) {
 		t.Parallel()
-		prom := &fakeProm{throughput: map[string]port.NodeThroughput{"loud/x": {In: 5}}}
+		prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{{Team: "t", Path: "loud/x"}: {In: 5}}}
 		repo := &fakeNodeRepo{list: []*domain.Node{
-			{ID: "n1", Path: "loud/x"}, {ID: "n2", Path: "silent/y"},
+			{ID: "n1", Path: "loud/x", TeamID: "team"}, {ID: "n2", Path: "silent/y", TeamID: "team"},
 		}}
-		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log)
+		uc := NewMetricsUsecase(prom, nil, repo, nil, nil, log,
+			WithMetricsTeams(slugDirectory(map[string]string{"team": "t"})))
 
 		got := uc.NodesOverview(context.Background(), "team", time.Now().Add(-time.Hour), time.Now())
 
@@ -421,15 +563,19 @@ func TestMetricsUsecase_Diagnostics(t *testing.T) {
 	log := logging.NewNoop()
 
 	// CH-сторона: узел a/x с уникальными 809/739/70 (out≤in).
-	repo := &fakeNodeRepo{list: []*domain.Node{{Path: "a/x", ClickHouseTable: "db.a"}}}
+	repo := &fakeNodeRepo{list: []*domain.Node{{Path: "a/x", ClickHouseTable: "db.a", TeamID: "default"}}}
 	logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 809, Delivered: 739, Errors: 70}}
 	// Prometheus-сторона: попытки 794/807/68 (outgoing>incoming из-за ретраев).
 	prom := &fakeProm{
-		totals:     port.GlobalTotals{Incoming: 794, Outgoing: 807, Errors: 68},
-		throughput: map[string]port.NodeThroughput{"a/x": {In: 794, Out: 807, Errors: 68}},
+		totals: port.GlobalTotals{Incoming: 794, Outgoing: 807, Errors: 68},
+		throughput: map[port.NodeKey]port.NodeThroughput{
+			{Team: "default", Path: "a/x"}: {In: 794, Out: 807, Errors: 68},
+		},
 	}
-	uc := NewMetricsUsecase(prom, logs, repo, nil, nil, log)
+	uc := NewMetricsUsecase(prom, logs, repo, nil, nil, log,
+		WithMetricsTeams(slugDirectory(map[string]string{"default": "default"})))
 	d := uc.Diagnostics(context.Background(), "default", time.Now().Add(-24*time.Hour), time.Now())
+	require.Equal(t, "default", prom.totalsTeam, "§101.9: итоги Prometheus — по слогу команды")
 
 	require.True(t, d.ClickHouseAvailable)
 	require.True(t, d.PrometheusAvailable)
@@ -449,6 +595,71 @@ func TestMetricsUsecase_Diagnostics(t *testing.T) {
 	require.Equal(t, "a/x", d.Nodes[0].Node)
 	require.EqualValues(t, 809, d.Nodes[0].CHIn)
 	require.EqualValues(t, 794, d.Nodes[0].PromIn)
+}
+
+// TestMetricsUsecase_Diagnostics_OnlyCurrentTeam (§101.9, §101.13). На бою
+// diagnostics под токеном одной команды отдавал 393 пути всех команд, среди них
+// ряды с токенами Telegram-ботов в пути. Теперь Prometheus-сторона — только ряды
+// со слогом команды: её узлы и её «сироты». Чужие пути, ряды до §101 без узла и
+// заглушка <unresolved> не показываются.
+func TestMetricsUsecase_Diagnostics_OnlyCurrentTeam(t *testing.T) {
+	t.Parallel()
+	repo := &fakeNodeRepo{list: []*domain.Node{
+		{ID: "n-tg", Path: "telegram", TeamID: "t-msg", ClickHouseTable: "db.a"},
+		{ID: "n-solo", Path: "solo", TeamID: "t-msg", ClickHouseTable: "db.a"},
+	}}
+	logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 10, Delivered: 9, Errors: 1}}
+	// Итоги строго по слогу: 1747 + 4 — без рядов до §101.
+	prom := &fakeProm{totals: port.GlobalTotals{Incoming: 1751}, throughput: map[port.NodeKey]port.NodeThroughput{
+		{Team: "messengers", Path: "telegram"}:       {In: 1747},
+		{Team: "webhook", Path: "telegram"}:          {In: 8},
+		{Team: "webhook", Path: "hook/private"}:      {In: 50}, // путь чужой команды
+		{Team: "messengers", Path: "renamed/old"}:    {In: 4},  // переименованный узел своей команды
+		{Path: "telegram/bot123456:AAAA/getUpdates"}: {In: 31}, // ряд до §101 с токеном в пути
+		{Path: metrics.NodeUnresolved}:               {In: 9},
+		{Path: "solo"}:                               {In: 2}, // до §101, путь однозначен
+	}}
+	keys := &fakeNodeKeys{refs: []port.NodeKeyRef{
+		{ID: "n-solo", Key: port.NodeKey{Team: "messengers", Path: "solo"}},
+		{ID: "n-tg", Key: port.NodeKey{Team: "messengers", Path: "telegram"}},
+		{ID: "n-tg-wh", Key: port.NodeKey{Team: "webhook", Path: "telegram"}},
+	}}
+	uc := NewMetricsUsecase(prom, logs, repo, nil, nil, logging.NewNoop(),
+		WithMetricsTeams(slugDirectory(map[string]string{"t-msg": "messengers", "t-wh": "webhook"})),
+		WithMetricsNodeKeys(keys))
+
+	d := uc.Diagnostics(context.Background(), "t-msg", time.Now().Add(-time.Hour), time.Now())
+
+	require.True(t, d.PrometheusAvailable)
+	require.Equal(t, "messengers", prom.totalsTeam)
+	nodes := make([]string, 0, len(d.Nodes))
+	by := map[string]DiagNode{}
+	for _, n := range d.Nodes {
+		nodes = append(nodes, n.Node)
+		by[n.Node] = n
+	}
+	require.ElementsMatch(t, []string{"telegram", "solo", "renamed/old"}, nodes)
+	require.EqualValues(t, 1747, by["telegram"].PromIn, "ряд одноимённого узла webhook не прибавлен")
+	require.EqualValues(t, 2, by["solo"].PromIn, "ряд до §101 однозначного пути приписан узлу")
+	require.EqualValues(t, 4, by["renamed/old"].PromIn)
+	require.EqualValues(t, 10, by["telegram"].CHIn)
+	require.EqualValues(t, 1753, d.Prometheus.Incoming,
+		"шапка складывает приписанный ряд до §101 так же, как строка узла solo")
+
+	t.Run("слог команды неизвестен — Prometheus-сторона не заполняется", func(t *testing.T) {
+		t.Parallel()
+		prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+			{Team: "webhook", Path: "hook/private"}: {In: 50},
+		}}
+		uc := NewMetricsUsecase(prom, logs, repo, nil, nil, logging.NewNoop(),
+			WithMetricsTeams(slugDirectory(map[string]string{"t-wh": "webhook"})))
+		d := uc.Diagnostics(context.Background(), "t-unknown", time.Now().Add(-time.Hour), time.Now())
+		require.False(t, d.PrometheusAvailable)
+		for _, n := range d.Nodes {
+			require.NotEqual(t, "hook/private", n.Node)
+			require.Zero(t, n.PromIn)
+		}
+	})
 }
 
 func TestMetricsUsecase_Diagnostics_NoPrometheus(t *testing.T) {
@@ -706,5 +917,109 @@ func TestMetricsUsecase_NodeMetrics(t *testing.T) {
 		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
 		require.NoError(t, err)
 		require.EqualValues(t, 1786114275000, got.KPI.LastSeenMs)
+	})
+}
+
+// TestMetricsUsecase_NodeMethods — рейтинг методов (§102): по требованию,
+// одним снимком с KPI и без каскада деградации.
+func TestMetricsUsecase_NodeMethods(t *testing.T) {
+	t.Parallel()
+	log := logging.NewNoop()
+	node := func() *domain.Node {
+		return &domain.Node{ID: "n1", Path: "p", TeamID: "default", ClickHouseTable: "db.t"}
+	}
+
+	t.Run("без WithMethods разбивка не запрашивается вовсе", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{kpi: port.NodeKPI{Total: 5}}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default"})
+		require.NoError(t, err)
+		assert.Zero(t, logs.methodsCalls, "вкладка «Обзор» ходит тем же эндпоинтом — лишний запрос к CH на каждом поллинге")
+		assert.False(t, got.MethodsAvailable)
+		assert.Empty(t, got.Methods)
+	})
+
+	t.Run("рейтинг считается ТЕМ ЖЕ запросом и режимом, что KPI", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{
+			kpi:     port.NodeKPI{Total: 30, Delivered: 28},
+			methods: []port.MethodStat{{Method: "a", Total: 20, Delivered: 19}, {Method: "", Total: 7, Delivered: 7}},
+		}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{
+			NodeID: "n1", TeamID: "default", WithMethods: true,
+			Filter: port.LogQuery{Method: "", ClientHost: "h", Status: "err"},
+		})
+		require.NoError(t, err)
+		require.True(t, got.MethodsAvailable)
+		assert.Equal(t, logs.methods, got.Methods)
+		assert.Equal(t, MethodsLimit, logs.gotMethodsLim, "лимит задаёт сервер, а не запрос")
+		// Σ по методам вычитается клиентом из kpi.total, поэтому оба числа
+		// обязаны быть посчитаны одним фильтром и одним режимом точности.
+		assert.Equal(t, logs.gotKPIQuery, logs.gotMethodsQ)
+		assert.Equal(t, logs.gotKPIApprox, logs.gotMethodsApx)
+	})
+
+	t.Run("ошибка рейтинга гасит только его", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{
+			kpi:        port.NodeKPI{Total: 5},
+			latency:    []port.LatencyPoint{{TsMs: 1, Attempts: 2}},
+			methodsErr: errors.New("memory limit exceeded"),
+		}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", WithMethods: true})
+		require.NoError(t, err)
+		assert.False(t, got.MethodsAvailable, "деградация рейтинга не должна выглядеть как пустой рейтинг")
+		assert.True(t, got.ChartAvailable, "вкладка обязана остаться рабочей")
+		assert.True(t, got.LatencyAvailable)
+	})
+
+	t.Run("отсутствие колонки method у внешней таблицы — та же мягкая деградация", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{
+			kpi:        port.NodeKPI{Total: 5},
+			methodsErr: domain.ErrLogsBackendUnavailable,
+		}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", WithMethods: true})
+		require.NoError(t, err)
+		assert.False(t, got.MethodsAvailable)
+		assert.True(t, got.ChartAvailable)
+	})
+
+	t.Run("признак усечения доезжает до ответа", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{
+			kpi:        port.NodeKPI{Total: 100},
+			methods:    []port.MethodStat{{Method: "a", Total: 10}},
+			methodsCut: true,
+		}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", WithMethods: true})
+		require.NoError(t, err)
+		assert.True(t, got.MethodsTruncated)
+	})
+
+	t.Run("ошибка графика гасит и рейтинг: вкладки нет", func(t *testing.T) {
+		t.Parallel()
+		logs := &fakeNodeLogs{
+			kpi:      port.NodeKPI{Total: 5},
+			chartErr: errors.New("boom"),
+			methods:  []port.MethodStat{{Method: "a", Total: 5}},
+		}
+		uc := NewMetricsUsecase(nil, logs, &fakeNodeRepo{node: node()}, nil, nil, log)
+
+		got, err := uc.NodeMetrics(context.Background(), NodeMetricsQuery{NodeID: "n1", TeamID: "default", WithMethods: true})
+		require.NoError(t, err)
+		require.False(t, got.ChartAvailable)
+		assert.False(t, got.MethodsAvailable, "без трафика и KPI показывать рейтинг не из чего — «Остальные» считаются из kpi.total")
+		assert.Empty(t, got.Methods)
 	})
 }

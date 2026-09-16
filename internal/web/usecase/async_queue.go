@@ -28,14 +28,19 @@ const asyncQueueListLimit = 50 // «первые 50, как в логах» (§3
 // peeker/cancel опциональны (nil при отсутствии Kafka/Redis): чтение тогда
 // деградирует (KafkaAvailable=false), мутации возвращают ErrAsyncQueueUnavailable.
 // Узел резолвится по id с проверкой team-scope (чужой узел → 404), как в replay.
+// Сообщения узла отбираются по port.QueueOwner (§101.8): путь уникален лишь
+// внутри команды, и ключ сообщения у одноимённых узлов совпадает.
 type AsyncQueueUsecase struct {
 	peeker port.AsyncQueuePeeker
 	cancel port.QueueCancelWriter
 	failed port.FailedLogsPurger // ClickHouse-логи (очистка неудачных), nil без CH
 	nodes  port.NodeRepo
-	audit  *AuditUsecase
-	group  string
-	topic  string
+	// paths — однозначность пути во всём инстансе (§101.8): только у такого
+	// пути старые конверты без node_id считаются своими. nil — старые скрыты.
+	paths port.NodePathResolver
+	audit *AuditUsecase
+	group string
+	topic string
 	// pausedGroup/pausedTopic — delay-топик отложенных сообщений paused-узлов
 	// (§3.6). Очередь узла физически расщеплена на два топика, и вкладка
 	// «Очередь» обязана показывать оба: иначе бэклог паузы «исчезает» из UI, а
@@ -52,6 +57,7 @@ func NewAsyncQueueUsecase(
 	cancel port.QueueCancelWriter,
 	failed port.FailedLogsPurger,
 	nodes port.NodeRepo,
+	paths port.NodePathResolver,
 	audit *AuditUsecase,
 	group, topic string,
 	pausedGroup, pausedTopic string,
@@ -70,6 +76,7 @@ func NewAsyncQueueUsecase(
 		cancel:      cancel,
 		failed:      failed,
 		nodes:       nodes,
+		paths:       paths,
 		audit:       audit,
 		group:       group,
 		topic:       topic,
@@ -138,6 +145,33 @@ func (u *AsyncQueueUsecase) resolveNode(ctx context.Context, nodeID, teamID stri
 	return node, nil
 }
 
+// queueOwner — чьи сообщения очереди отбирать для узла (§101.8). Старые
+// конверты без node_id считаются своими, только если путь однозначен во всём
+// инстансе. Сбой проверки их скрывает: отменить чужое сообщение хуже, чем не
+// показать своё старое.
+func (u *AsyncQueueUsecase) queueOwner(ctx context.Context, node *domain.Node) port.QueueOwner {
+	owner := port.QueueOwner{Path: node.Path, NodeID: node.ID}
+	if u.paths == nil {
+		u.logger.Debug("async queue: no path resolver, legacy envelopes hidden",
+			u.logger.Str("node_id", node.ID))
+		return owner
+	}
+	ids, err := u.paths.IDsByPaths(ctx, []string{node.Path})
+	if err != nil {
+		u.logger.Warn("async queue: path uniqueness check failed, legacy envelopes hidden",
+			u.logger.Str("node_id", node.ID),
+			u.logger.Str("node_path", node.Path),
+			u.logger.Err(err))
+		return owner
+	}
+	owner.AcceptLegacy = ids[node.Path] == node.ID
+	u.logger.Debug("async queue: owner resolved",
+		u.logger.Str("node_id", node.ID),
+		u.logger.Str("node_path", node.Path),
+		u.logger.Any("accept_legacy", owner.AcceptLegacy))
+	return owner
+}
+
 // List — первые 50 метаданных сообщений узла (без тела) из ОБОИХ топиков.
 //
 // Дедуп по id обязателен: сообщение в delay-топике циркулирует (перенос в хвост
@@ -162,11 +196,12 @@ func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (Qu
 		return QueueListResult{Items: []port.QueueMessageMeta{}}, nil
 	}
 
+	owner := u.queueOwner(ctx, node)
 	items := make([]port.QueueMessageMeta, 0, asyncQueueListLimit)
 	seen := make(map[string]bool, asyncQueueListLimit)
 	capped := false
 	for _, src := range u.sources() {
-		r, err := u.peeker.PeekList(ctx, src.group, src.topic, node.Path, asyncQueueListLimit, u.peekCap)
+		r, err := u.peeker.PeekList(ctx, src.group, src.topic, owner, asyncQueueListLimit, u.peekCap)
 		if err != nil {
 			// Деградация, а не ошибка: один недоступный топик не должен ронять
 			// всю вкладку (Kafka-пик — вспомогательная функция, §34.4).
@@ -207,18 +242,22 @@ func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (Qu
 // Для delay-топика координата нестабильна: сообщение переносится в хвост на
 // каждом проходе sweeper'а, поэтому захваченный в List offset может устареть.
 // Это best-effort — ошибку отдаём наружу, UI просит обновить список.
+//
+// Координату присылает клиент, поэтому тело отдаётся только у сообщения своего
+// узла (§101.8); чужое — port.ErrQueueMessageNotOwned, handler отвечает 404.
 func (u *AsyncQueueUsecase) Body(ctx context.Context, nodeID, teamID, topic string, partition int, offset int64) (port.QueueMessageBody, error) {
-	if _, err := u.resolveNode(ctx, nodeID, teamID); err != nil {
+	node, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
 		return port.QueueMessageBody{}, err
 	}
 	if u.peeker == nil {
 		return port.QueueMessageBody{}, ErrAsyncQueueUnavailable
 	}
-	topic, err := u.resolveTopic(topic)
+	topic, err = u.resolveTopic(topic)
 	if err != nil {
 		return port.QueueMessageBody{}, err
 	}
-	body, err := u.peeker.PeekBody(ctx, topic, partition, offset)
+	body, err := u.peeker.PeekBody(ctx, topic, partition, offset, u.queueOwner(ctx, node))
 	if err != nil {
 		return port.QueueMessageBody{}, fmt.Errorf("async queue body: %w", err)
 	}
@@ -292,11 +331,12 @@ func (u *AsyncQueueUsecase) purge(ctx context.Context, actor Actor, nodeID, team
 	}
 	// Оба топика: бэклог paused-узла (главный юзкейс «очистить очередь мёртвого
 	// узла») лежит в delay-топике, а не в основном.
+	owner := u.queueOwner(ctx, node)
 	var ids []string
 	seen := make(map[string]bool)
 	capped := false
 	for _, src := range u.sources() {
-		scan, err := u.peeker.ScanIDs(ctx, src.group, src.topic, node.Path, from, to, u.peekCap)
+		scan, err := u.peeker.ScanIDs(ctx, src.group, src.topic, owner, from, to, u.peekCap)
 		if err != nil {
 			return QueuePurgeResult{}, fmt.Errorf("async queue scan ids (%s): %w", src.topic, err)
 		}

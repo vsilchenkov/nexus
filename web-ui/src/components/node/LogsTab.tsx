@@ -32,11 +32,21 @@ type PageSize = 50 | 100 | 200;
 
 // LogsInitialFilter — стартовый фильтр логов, прокинутый кликом по графику (§33.4):
 // from/to в формате <input type="datetime-local"> (локальная зона).
+//
+// §102.6: к окну добавились расширенные фильтры вкладки «Метрики» — метод,
+// полнотекстовый запрос с режимами и хост клиента. Без них ссылка лгала:
+// тултип обещал число, посчитанное под фильтрами, а журнал открывался без них.
 export type LogsInitialFilter = {
   from?: string;
   to?: string;
   status?: StatusFilter;
   done?: "yes" | "no"; // §35: дип-линк из вкладки «Очередь» (только неудачные)
+  method?: string;
+  q?: string;
+  qCase?: boolean;
+  qWord?: boolean;
+  qRegex?: boolean;
+  clientHost?: string;
 };
 
 const LIVE_BUFFER_LIMIT = 500;
@@ -117,8 +127,17 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     ...emptyAdvForm,
     from: initialFilter?.from ?? "",
     to: initialFilter?.to ?? "",
+    // §102.6: фильтры, приехавшие ссылкой из «Метрик».
+    method: initialFilter?.method ?? "",
+    clientHost: initialFilter?.clientHost ?? "",
+    q: initialFilter?.q ?? "",
+    qCase: !!initialFilter?.qCase,
+    qWord: !!initialFilter?.qWord,
+    qRegex: !!initialFilter?.qRegex,
   };
-  const [showAdv, setShowAdv] = useState(!!(initialFilter?.from || initialFilter?.to));
+  // Панель раскрывается, если ссылка принесла ХОТЬ ОДИН её фильтр: иначе
+  // журнал показывал бы отобранное подмножество, а чем оно отобрано — прятал.
+  const [showAdv, setShowAdv] = useState(!advFormEqual(initForm, emptyAdvForm));
   const [advForm, setAdvForm] = useState(initForm);
   const [appliedFilters, setAppliedFilters] = useState(initForm);
 

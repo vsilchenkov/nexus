@@ -51,3 +51,29 @@ export function fmtSize(n: number, units: string[]): string {
   }
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
+
+// ELLIPSIS — один символ многоточия. Именно один: три точки заняли бы три
+// позиции из бюджета и сместили бы расчёт ширины.
+const ELLIPSIS = "…";
+
+// middleEllipsis — сокращение длинного имени В СЕРЕДИНЕ (§102.5):
+// "suggestions/api/4_1/rs/suggest/address" → "suggestions/api…/suggest/address".
+//
+// Почему не CSS `truncate`: методы одного узла различаются ХВОСТОМ пути
+// (…/findById/address против …/findById/party), и обрезание конца прячет ровно
+// то, что отличает строки друг от друга. Плюс правило, считающее символы,
+// проверяемо тестом, а раскладка в jsdom — нет (урок §100).
+//
+// Хвосту достаётся лишний символ при нечётном остатке: он информативнее начала.
+// Счёт идёт по code point'ам (Array.from), иначе суррогатная пара разрезалась
+// бы пополам и в строке появился бы «ромбик с вопросом».
+export function middleEllipsis(s: string, maxChars: number): string {
+  const chars = Array.from(s);
+  if (maxChars <= 0) return "";
+  if (chars.length <= maxChars) return s;
+  if (maxChars === 1) return ELLIPSIS;
+  const keep = maxChars - 1;
+  const head = Math.floor(keep / 2);
+  const tail = keep - head;
+  return chars.slice(0, head).join("") + ELLIPSIS + chars.slice(chars.length - tail).join("");
+}

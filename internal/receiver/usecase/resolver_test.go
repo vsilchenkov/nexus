@@ -39,32 +39,37 @@ func TestResolveNode_Fallback(t *testing.T) {
 
 	t.Run("legacy slash-path найден по адресу без слога (фикс #8)", func(t *testing.T) {
 		// URL /api/v1/requestAsync/webhook/sendasynq → split → (webhook, sendasynq).
-		got, remainder, err := resolveNode(ctx, reader, "webhook", "sendasynq")
+		got, remainder, team, err := resolveNode(ctx, reader, "webhook", "sendasynq")
 		require.NoError(t, err)
 		assert.Equal(t, legacy, got)
 		assert.Empty(t, remainder)
+		// §101.3: «webhook» оказался частью пути — узел лежит в default-команде.
+		assert.Equal(t, domain.DefaultTeamSlug, team)
 	})
 
 	t.Run("явный слог команды имеет приоритет", func(t *testing.T) {
 		// URL /api/v1/request/partner/orders → split → (partner, orders).
-		got, remainder, err := resolveNode(ctx, reader, "partner", "orders")
+		got, remainder, team, err := resolveNode(ctx, reader, "partner", "orders")
 		require.NoError(t, err)
 		assert.Equal(t, teamScoped, got)
 		assert.Empty(t, remainder)
+		assert.Equal(t, "partner", team)
 	})
 
 	t.Run("single-segment default-team путь", func(t *testing.T) {
 		reader2 := mapNodeReader{nodes: map[string]*domain.Node{
 			domain.DefaultTeamSlug + "/ping": {Path: "ping"},
 		}}
-		got, remainder, err := resolveNode(ctx, reader2, "", "ping")
+		got, remainder, team, err := resolveNode(ctx, reader2, "", "ping")
 		require.NoError(t, err)
 		assert.Equal(t, "ping", got.Path)
 		assert.Empty(t, remainder)
+		// Пустой слог адреса — это default-команда, а не «без команды».
+		assert.Equal(t, domain.DefaultTeamSlug, team)
 	})
 
 	t.Run("реально несуществующий узел → not found", func(t *testing.T) {
-		_, _, err := resolveNode(ctx, reader, "nope", "missing")
+		_, _, _, err := resolveNode(ctx, reader, "nope", "missing")
 		assert.ErrorIs(t, err, domain.ErrNodeNotFound)
 	})
 }
@@ -80,17 +85,18 @@ func TestResolveNode_PathPassthrough(t *testing.T) {
 		ozon := &domain.Node{Path: "ozon", PathPassthrough: true}
 		reader := mapNodeReader{nodes: map[string]*domain.Node{"vika/ozon": ozon}}
 
-		got, remainder, err := resolveNode(ctx, reader, "vika", "ozon/GetAuthToken")
+		got, remainder, team, err := resolveNode(ctx, reader, "vika", "ozon/GetAuthToken")
 		require.NoError(t, err)
 		assert.Equal(t, ozon, got)
 		assert.Equal(t, "GetAuthToken", remainder)
+		assert.Equal(t, "vika", team)
 	})
 
 	t.Run("passthrough on → multi-segment remainder", func(t *testing.T) {
 		svc := &domain.Node{Path: "svc", PathPassthrough: true}
 		reader := mapNodeReader{nodes: map[string]*domain.Node{"team/svc": svc}}
 
-		got, remainder, err := resolveNode(ctx, reader, "team", "svc/user/123")
+		got, remainder, _, err := resolveNode(ctx, reader, "team", "svc/user/123")
 		require.NoError(t, err)
 		assert.Equal(t, svc, got)
 		assert.Equal(t, "user/123", remainder)
@@ -103,17 +109,19 @@ func TestResolveNode_PathPassthrough(t *testing.T) {
 			domain.DefaultTeamSlug + "/ozon": ozon,
 		}}
 
-		got, remainder, err := resolveNode(ctx, reader, "ozon", "GetAuthToken")
+		got, remainder, team, err := resolveNode(ctx, reader, "ozon", "GetAuthToken")
 		require.NoError(t, err)
 		assert.Equal(t, ozon, got)
 		assert.Equal(t, "GetAuthToken", remainder)
+		// Префиксный матч по интерпретации B: узел из default-команды.
+		assert.Equal(t, domain.DefaultTeamSlug, team)
 	})
 
 	t.Run("passthrough off → 404 (текущее поведение сохранено)", func(t *testing.T) {
 		ozon := &domain.Node{Path: "ozon", PathPassthrough: false}
 		reader := mapNodeReader{nodes: map[string]*domain.Node{"vika/ozon": ozon}}
 
-		_, _, err := resolveNode(ctx, reader, "vika", "ozon/GetAuthToken")
+		_, _, _, err := resolveNode(ctx, reader, "vika", "ozon/GetAuthToken")
 		assert.ErrorIs(t, err, domain.ErrNodeNotFound)
 	})
 
@@ -127,7 +135,7 @@ func TestResolveNode_PathPassthrough(t *testing.T) {
 			"team/a/b": abNode,
 		}}
 
-		_, _, err := resolveNode(ctx, reader, "team", "a/b/c")
+		_, _, _, err := resolveNode(ctx, reader, "team", "a/b/c")
 		assert.ErrorIs(t, err, domain.ErrNodeNotFound)
 	})
 
@@ -140,7 +148,7 @@ func TestResolveNode_PathPassthrough(t *testing.T) {
 			"team/svc/user": svcUser,
 		}}
 
-		got, remainder, err := resolveNode(ctx, reader, "team", "svc/user")
+		got, remainder, _, err := resolveNode(ctx, reader, "team", "svc/user")
 		require.NoError(t, err)
 		assert.Equal(t, svcUser, got)
 		assert.Empty(t, remainder)
@@ -177,7 +185,7 @@ func TestResolveNode_OverlappingNodes(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			node, remainder, err := resolveNode(ctx, reader, "vika", c.path)
+			node, remainder, _, err := resolveNode(ctx, reader, "vika", c.path)
 			if c.wantNotFound {
 				assert.ErrorIs(t, err, domain.ErrNodeNotFound)
 				return

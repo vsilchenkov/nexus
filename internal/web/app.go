@@ -96,6 +96,7 @@ type App struct {
 	// §94.5: чистка журнала отказов по сроку хранения.
 	rejectedHousekeepingDone <-chan struct{}
 	shipperDone              <-chan struct{} // §51: done-канал шиппера служебных логов
+	statusMigrationDone      <-chan struct{} // §101.6: перенос ключей исхода узлов
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
@@ -709,7 +710,17 @@ func (a *App) Start(ctx context.Context) error {
 	// ВАЖНО: тип переменной — интерфейс, иначе typed-nil попал бы в non-nil интерфейс.
 	var nodeStatusReader webport.NodeStatusReader
 	if a.redis != nil {
-		nodeStatusReader = rediscache.NewNodeStatusReaderRedis(a.redis, a.logger)
+		statusRedis := rediscache.NewNodeStatusReaderRedis(a.redis, a.logger)
+		nodeStatusReader = statusRedis
+		// §101.6: исходы узлов переехали на ключи по id. Старые ключи по пути
+		// переносятся один раз и в фоне — старт Web не ждёт SCAN по Redis.
+		migration := usecase.NewNodeStatusMigration(statusRedis, nodeRepo, a.logger)
+		a.statusMigrationDone = safego.Go(a.logger, "web.nodeStatusMigration", func() {
+			if err := migration.Run(ctx); err != nil {
+				a.logger.Warn("node status migration failed; idle nodes show no outcome until their next call",
+					a.logger.Err(err))
+			}
+		})
 	}
 	metricsUC := usecase.NewMetricsUsecase(promMetrics, nodeLogMetrics, nodeRepo, appSettingsRepo, nodeStatusReader, a.logger,
 		// §79.5.1: порог точной формы графика — рычаг оператора на больших таблицах.
@@ -717,14 +728,17 @@ func (a *App) Start(ctx context.Context) error {
 		// §86.4: сквозной скоуп «Все команды» + кеш агрегата шапки. Без членств
 		// режим просто недоступен, поведение одной команды не меняется.
 		usecase.WithMetricsTeams(teamRepo),
+		// §101.9: ряды Prometheus до обновления (без метки team) приписываются
+		// узлу только при однозначном во всём инстансе пути.
+		usecase.WithMetricsNodeKeys(nodeRepo),
 		usecase.WithTotalsCacheTTL(usecase.DefaultTotalsCacheTTL))
 	metricsHandler := httpadapter.NewMetricsHandler(metricsUC, a.logger)
 
 	// Мониторинг Kafka (§4 spec): Prometheus (throughput/lag/KPI/top-узлы) +
 	// Kafka Admin (топики/брокеры/ping, только при заданных брокерах) + Redis-кеш
 	// метаданных (TTL 30с). Все источники опциональны — usecase деградирует.
-	// §98.2: nodeRepo здесь — резолвер «путь → id», чтобы строки top-узлов вели
-	// на журнал узла. Метрики Prometheus несут только путь (метка node).
+	// §98.2/§101.9: nodeRepo здесь — резолвер узлов по путям со слогом команды:
+	// строка top-узлов ведёт на журнал узла по точной паре меток (team, node).
 	kafkaUC := usecase.NewKafkaMonitorUsecase(
 		promMetrics, kafkaAdmin, rediscache.NewKafkaCacheRedis(a.redis, 30*time.Second),
 		nodeRepo, kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
@@ -737,7 +751,7 @@ func (a *App) Start(ctx context.Context) error {
 	// отложенных сообщений paused-узлов. Вкладка «Очередь» показывает оба,
 	// иначе бэклог паузы исчезает из UI, а «Очистить все ожидающие» его не находит.
 	asyncQueueUC := usecase.NewAsyncQueueUsecase(
-		asyncPeeker, queueCancel, failedPurger, nodeRepo, auditUC,
+		asyncPeeker, queueCancel, failedPurger, nodeRepo, nodeRepo, auditUC,
 		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
 		a.cfg.Kafka.PausedGroup(), a.cfg.Kafka.PausedTopic,
 		dlqRetention, 0, a.logger,
@@ -767,7 +781,7 @@ func (a *App) Start(ctx context.Context) error {
 	nodeRuntimeHandler := httpadapter.NewNodeRuntimeHandler(
 		usecase.NewNodeRuntimeUsecase(
 			nodeRepo,
-			usecase.NewLastOutcomeResolver(nodeStatusReader, promMetrics, a.logger),
+			usecase.NewLastOutcomeResolver(nodeStatusReader, promMetrics, teamRepo, a.logger),
 			clock.System(),
 			a.logger,
 		), a.logger)
@@ -908,6 +922,7 @@ func (a *App) Stop(ctx context.Context) error {
 	safego.Await(awaitCtx, a.housekeepingDone, a.logger, "web.housekeeping")
 	safego.Await(awaitCtx, a.rejectedHousekeepingDone, a.logger, "web.rejectedHousekeeping")
 	safego.Await(awaitCtx, a.shipperDone, a.logger, "web.logShipper")
+	safego.Await(awaitCtx, a.statusMigrationDone, a.logger, "web.nodeStatusMigration")
 	awaitCancel()
 	if a.chMgr != nil {
 		closeCtx, cancelClose := context.WithTimeout(ctx, 5*time.Second)

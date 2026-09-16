@@ -8,7 +8,7 @@ import (
 )
 
 // NodeKPI — сводные показатели одного узла за окно (§21, вкладки
-// «Обзор»/«Метрики»). Считаются из Prometheus по per-node счётчикам Sender'а.
+// «Обзор»/«Метрики»). Считаются из ClickHouse-логов узла (NodeLogMetrics).
 type NodeKPI struct {
 	Total     uint64  // всего исходящих вызовов (nexus_requests_total)
 	Delivered uint64  // успешно доставленных (status 2xx) = total - errors
@@ -51,6 +51,22 @@ type LatencyPoint struct {
 	Attempts uint64
 }
 
+// MethodStat — одна строка рейтинга «Запросы по методам» (§102).
+//
+// Method — значение колонки `method`: у passthrough-узла (§39) это хвост пути
+// запроса, у обычного узла оно пусто. Пустое значение — законная группа, а не
+// «нет данных»: выброси её — и Σ по методам перестанет сходиться с
+// NodeKPI.Total, на чём держится расчёт строки «Остальные» (§102.3).
+//
+// Единица — ЗАПИСЬ, как у NodeKPI (§79.5): те же выражения уникальности,
+// разложенные по группам. Поэтому Total/Delivered складываются с полями KPI, а
+// с LatencyPoint.Attempts (попытки) — нет.
+type MethodStat struct {
+	Method    string
+	Total     uint64
+	Delivered uint64
+}
+
 // GlobalTotals — кросс-сервисные счётчики за окно (из Prometheus).
 // Incoming — принято Receiver'ом; Outgoing — доставлено Sender'ом во внешний
 // URL; Errors — внешние ответы с ошибкой (status 0/4xx/5xx) у Sender'а.
@@ -60,7 +76,18 @@ type GlobalTotals struct {
 	Errors   float64
 }
 
-// NodeThroughput — per-node счётчики за окно (из Prometheus, sum by node).
+// NodeKey — ключ per-node ряда Prometheus (§101.9): слог команды и путь узла.
+//
+// Путь уникален лишь внутри команды, поэтому одного пути мало: одноимённые
+// узлы разных команд складывались бы в один ряд. Team пуст у рядов, собранных
+// до §101 (метки team не было), и у запросов, не дошедших до узла: Path ==
+// metrics.NodeUnresolved — обращение к несуществующему узлу (§94.8).
+type NodeKey struct {
+	Team string
+	Path string
+}
+
+// NodeThroughput — per-node счётчики за окно (из Prometheus, sum by team, node).
 type NodeThroughput struct {
 	In     float64
 	Out    float64
@@ -148,6 +175,21 @@ type NodeLogMetrics interface {
 	// stepSec обязан совпадать с ChartQuery.StepSec: два графика стоят друг под
 	// другом и сопоставляются глазом только в одинаковых столбцах.
 	NodeLatencyChart(ctx context.Context, q LogQuery, stepSec int64) ([]LatencyPoint, error)
+
+	// NodeMethodStats — рейтинг значений колонки `method` под теми же фильтрами
+	// (§102). Не более limit строк, по убыванию Total, при равенстве — по Method
+	// (детерминизм: без второго ключа порядок одинаковых счётчиков плавает от
+	// запроса к запросу, и строки на экране переставляются на каждом поллинге).
+	//
+	// truncated сообщает, что методов БОЛЬШЕ, чем вернулось строк. Флаг считает
+	// адаптер (он запрашивает на строку больше и лишнюю отбрасывает), а не
+	// вызывающий по «пришло ровно limit»: при РОВНО limit методах такой признак
+	// объявил бы несуществующий хвост (§102.4).
+	//
+	// approx — та же настройка точности, что у NodeKPI (§44-perf). Вызывающий
+	// обязан передать сюда ТО ЖЕ значение, что и в NodeKPI одного запроса:
+	// разные режимы дают разные оценки, и Σ по методам разъедется с KPI.
+	NodeMethodStats(ctx context.Context, q LogQuery, approx bool, limit int) (stats []MethodStat, truncated bool, err error)
 }
 
 // PromMetrics — глобальные и кросс-сервисные метрики из Prometheus
@@ -155,47 +197,35 @@ type NodeLogMetrics interface {
 // при пустом prometheus.url в app.go провайдер не создаётся (nil), и
 // MetricsUsecase отдаёт деградацию (prometheus_available=false), не падая.
 type PromMetrics interface {
-	// GlobalTotals — суммарные incoming/outgoing/errors за окно.
-	GlobalTotals(ctx context.Context, window time.Duration) (GlobalTotals, error)
+	// GlobalTotals — суммарные incoming/outgoing/errors за окно. team — слог
+	// команды (§101.9): непустой сужает сумму до её рядов, пустой — весь инстанс.
+	GlobalTotals(ctx context.Context, window time.Duration, team string) (GlobalTotals, error)
 
 	// KafkaQueue — суммарный consumer lag всех партиций (мгновенное значение).
 	KafkaQueue(ctx context.Context) (float64, error)
 
 	// NodeThroughput — per-node in/out/errors за период (since, until], ключ —
-	// path узла (метка node в nexus_requests_total). Произвольный период (§28
-	// Пункт 4): окно = until-since, запрос вычисляется на момент until.
-	NodeThroughput(ctx context.Context, since, until time.Time) (map[string]NodeThroughput, error)
+	// пара меток (team, node) в nexus_requests_total (§101.9). Произвольный
+	// период (§28 Пункт 4): окно = until-since, запрос вычисляется на момент until.
+	NodeThroughput(ctx context.Context, since, until time.Time) (map[NodeKey]NodeThroughput, error)
 
 	// NodeErrors — per-node число «незавершённых» вызовов (done=0) за окно
-	// из nexus_request_incomplete_total. Ключ — path узла (метка node).
+	// из nexus_request_incomplete_total. Ключ — пара (team, node).
 	// Используется планировщиком Telegram-алертов (§22) вместо ClickHouse.
-	NodeErrors(ctx context.Context, window time.Duration) (map[string]float64, error)
+	NodeErrors(ctx context.Context, window time.Duration) (map[NodeKey]float64, error)
 
 	// NodeLastErrors — per-node исход ПОСЛЕДНЕГО исходящего вызова (instant
 	// gauge nexus_node_last_request_error на момент at): 0/отсутствует = ok
 	// (2xx), 1 = degraded (ответил не-2xx <500), 2 = down (транспортная ошибка
 	// или 5xx) — §52; маппинг в usecase через domain.OutcomeFromGaugeValue.
-	// Ключ — path узла. Fallback-источник бейджа узла в Overview (§41),
+	// Ключ — пара (team, node). Fallback-источник бейджа узла в Overview (§41),
 	// независим от окна.
-	NodeLastErrors(ctx context.Context, at time.Time) (map[string]float64, error)
+	NodeLastErrors(ctx context.Context, at time.Time) (map[NodeKey]float64, error)
 
 	// NodeSeries — спарклайн входящего трафика per-node: range-запрос за период
 	// (since, until], разбитый на buckets точек (один запрос на весь список,
-	// §22/§28). Ключ — path узла; длина слайса == buckets (недостающие — нули).
-	NodeSeries(ctx context.Context, since, until time.Time, buckets int) (map[string][]float64, error)
-
-	// NodeKPI — сводка одного узла (total/delivered/errors/p95/p99) за период
-	// (since, until]. node — path узла (метка node счётчиков Sender'а).
-	// Источник вкладки «Метрики» узла (§21) вместо ClickHouse: total/errors из
-	// nexus_requests_total / nexus_request_incomplete_total, перцентили — из
-	// histogram_quantile по nexus_request_duration_seconds_bucket.
-	NodeKPI(ctx context.Context, node string, since, until time.Time) (NodeKPI, error)
-
-	// NodeChart — временной ряд графика одного узла за период (since, until],
-	// разбитый на buckets равных бакетов (ASC по времени, недостающие — нули,
-	// длина результата == buckets). Count — все исходящие вызовы, Errors —
-	// «незавершённые» (non-2xx). node — path узла.
-	NodeChart(ctx context.Context, node string, since, until time.Time, buckets int) ([]SeriesPoint, error)
+	// §22/§28). Ключ — пара (team, node); точки — те, что вернул Prometheus.
+	NodeSeries(ctx context.Context, since, until time.Time, buckets int) (map[NodeKey][]float64, error)
 
 	// KafkaOverview — сводка Kafka-трафика за период (since, until] для §4.1
 	// spec: produced/consumed/failed/lag/in-flight/p95. Источник — Prometheus
@@ -233,8 +263,22 @@ type PromMetrics interface {
 // бейджа; Prometheus остаётся fallback'ом. Реализуется adapter/out/redis.
 // Может быть nil (нет Redis) → applyLastOutcomes деградирует на Prometheus.
 type NodeStatusReader interface {
-	// GetLastOutcomes возвращает исход последнего вызова (ok/degraded/down) для
-	// указанных путей узлов. Узлы без записи в Redis либо с нераспознанным
-	// значением в карту НЕ попадают (вызывающий добивает их из Prometheus).
-	GetLastOutcomes(ctx context.Context, nodePaths []string) (map[string]domain.NodeOutcome, error)
+	// GetLastOutcomes возвращает исход последнего вызова (ok/degraded/down) по
+	// id узлов (§101.6), карта — тоже по id. Узлы без записи в Redis либо с
+	// нераспознанным значением в карту НЕ попадают (вызывающий добивает их из
+	// Prometheus).
+	GetLastOutcomes(ctx context.Context, nodeIDs []string) (map[string]domain.NodeOutcome, error)
+}
+
+// NodeStatusMigrator — перенос исходов узлов со старых ключей Redis по пути на
+// ключи по id (§101.6). Реализуется adapter/out/redis поверх platform/nodestatus.
+type NodeStatusMigrator interface {
+	// LegacyMigrated — перенос уже выполнен.
+	LegacyMigrated(ctx context.Context) (bool, error)
+	// LegacyOutcomePaths — пути узлов, у которых остался ключ исхода по пути.
+	LegacyOutcomePaths(ctx context.Context) ([]string, error)
+	// MigrateLegacyOutcomes переносит исходы для пар «путь → id», не трогая уже
+	// записанные ключи по id, отмечает перенос выполненным и возвращает число
+	// перенесённых ключей.
+	MigrateLegacyOutcomes(ctx context.Context, idsByPath map[string]string) (int, error)
 }

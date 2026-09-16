@@ -158,11 +158,9 @@ func (h *Handler) handleAuto(c *gin.Context, rest string) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
 	}
-	// Метка node — как в handleSync/handleAsync: путь узла без слога команды.
-	// Ставится до резолва, чтобы 404 по короткому адресу метился так же, как
-	// 404 по legacy-адресу того же пути.
-	c.Set(metrics.NodeLabelKey, nodePath)
-	root, err := h.route.NodeRootMethod(c.Request.Context(), teamSlug, nodePath)
+	// §101.3: метки узла ставит наблюдатель резолва, а не адрес; 404 метится
+	// <unresolved> в markRejected — так же, как по legacy-адресу того же пути.
+	root, err := h.route.NodeRootMethod(c.Request.Context(), teamSlug, nodePath, nodeLabelSetter(c))
 	if err != nil {
 		c.Set(metrics.RootMethodLabelKey, metrics.RootMethodShortURL)
 		h.replyDomainError(c, err, nodePath, "receiver.auto")
@@ -223,9 +221,6 @@ func (h *Handler) handleSync(c *gin.Context, rest string) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "empty node path"})
 		return
 	}
-	// Метка node для метрик — чистый путь узла (без слога команды), чтобы
-	// совпадать с меткой Sender и корректно мёрджить in/out на дашборде (§21).
-	c.Set(metrics.NodeLabelKey, nodePath)
 	// §78.2: метка method больше не выводится из c.FullPath() — он один на все
 	// формы адреса. Значение прежнее, поэтому ряды Prometheus не разъезжаются и
 	// трафик по короткому адресу виден в существующих панелях.
@@ -250,6 +245,8 @@ func (h *Handler) handleSync(c *gin.Context, rest string) {
 		Query:    c.Request.URL.Query(),
 		Body:     body,
 		ClientIP: clientIP(c.Request),
+		// §101.3: метки узла — только из резолва, см. nodeLabelSetter.
+		OnNodeResolved: nodeLabelSetter(c),
 	}
 	out, err := h.route.Route(c.Request.Context(), in)
 	if err != nil {
@@ -263,7 +260,7 @@ func (h *Handler) handleSync(c *gin.Context, rest string) {
 			// потеряно молча.
 			if len(in.Body) > asyncLimit {
 				h.logger.Warn("sync request to paused node exceeds async body limit",
-					h.logger.Str("node", nodePath),
+					h.logger.Str("node", nodeForLog(c, nodePath)),
 					h.logger.Int("body_len", len(in.Body)),
 					h.logger.Int("limit", asyncLimit))
 				replyReadBodyError(c, errBodyTooLargeForQueue)
@@ -380,8 +377,9 @@ func (h *Handler) handleAsync(c *gin.Context, rest string) {
 // RouteInput. Вызывается как из /v1/requestAsync, так и из sync-handler'а,
 // когда узел в paused (§3.6).
 func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
-	// Метка node для метрик — чистый путь узла (см. handleSync).
-	c.Set(metrics.NodeLabelKey, in.NodePath)
+	// §101.3: метки узла ставит наблюдатель резолва. У paused-sync (§3.6) он уже
+	// сработал в Route и сработает второй раз с теми же значениями.
+	in.OnNodeResolved = nodeLabelSetter(c)
 	res, err := h.routeAsync.RouteAsync(c.Request.Context(), in)
 	if err != nil {
 		// §3, #7: async-ошибка → {"result":false,"message":...}.
@@ -393,7 +391,7 @@ func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
 	// уже написан в usecase; метрика — единственный внешний признак, по которому
 	// видно, что интеграция получает НЕ тот ответ, которого ждёт.
 	if res.AckDegraded != "" && h.metrics != nil {
-		h.metrics.IncAckRenderFailed(in.NodePath, res.AckDegraded)
+		h.metrics.IncAckRenderFailed(metrics.NodeLabelsFromGin(c), res.AckDegraded)
 	}
 
 	// §83: собственный ответ узла — вместо обеих штатных форм ниже.
@@ -577,10 +575,12 @@ func classifyDomainError(err error) (status int, message string, reason domain.R
 // replyDomainError — sync-ответ об ошибке: {"error": <msg>}.
 func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op string) {
 	status, msg, reason, internal := classifyDomainError(err)
+	errNode := nodeForErrorLog(c, nodePath)
+	nodePath = nodeForLog(c, nodePath)
 	h.markRejected(c, err, reason, internal)
 	if internal {
 		h.logger.ErrorWithOp("receiver routing failed", err, op,
-			h.logger.Str("node", nodePath))
+			h.logger.Str("node", errNode))
 	} else {
 		// §51.9: 4xx раньше уходили молча — «почему клиенту 404/401?» было
 		// невосстановимо. Debug, чтобы не шуметь на проде на каждый скан.
@@ -598,6 +598,52 @@ func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op strin
 	c.JSON(status, gin.H{"error": msg})
 }
 
+// nodeLabelSetter — наблюдатель резолва для RouteInput.OnNodeResolved (§101.3):
+// кладёт в контекст метки метрик НАЙДЕННОГО узла. Из адреса метки не выводятся:
+// у passthrough-узла хвост адреса несёт секреты и не ограничен, а слог в
+// legacy-адресе может оказаться частью пути. Путь — без слога команды, как у
+// меток Sender'а (иначе in/out одного узла разъезжаются на дашборде, §21).
+func nodeLabelSetter(c *gin.Context) func(teamSlug, nodePath string) {
+	return func(teamSlug, nodePath string) {
+		c.Set(metrics.NodeLabelKey, nodePath)
+		c.Set(metrics.TeamLabelKey, teamSlug)
+	}
+}
+
+// nodeForLog — путь узла для строк лога: путь найденного узла, если резолв уже
+// состоялся, иначе путь из адреса. Ошибки после резолва уходят и в Sentry, а
+// хвост passthrough-адреса несёт секреты; путь из адреса остаётся только у
+// отказов до резолва — там он и нужен («почему 404»).
+func nodeForLog(c *gin.Context, fromURL string) string {
+	if v := resolvedNodeLabel(c); v != "" {
+		return v
+	}
+	return fromURL
+}
+
+// nodeForErrorLog — путь узла для error-строки лога (§101.13). Она уходит и в
+// Sentry, а до резолва путь задал клиент: у passthrough-адреса за путём узла
+// идут секреты (токены ботов). Поэтому без резолва в строке остаётся только
+// первый сегмент адреса — по нему видно, куда стучались, но не хвост.
+func nodeForErrorLog(c *gin.Context, fromURL string) string {
+	if v := resolvedNodeLabel(c); v != "" {
+		return v
+	}
+	if first, _, more := strings.Cut(fromURL, "/"); more {
+		return first + "/…"
+	}
+	return fromURL
+}
+
+// resolvedNodeLabel — путь найденного узла из метки; пусто, пока резолв не
+// состоялся.
+func resolvedNodeLabel(c *gin.Context) string {
+	if v := c.GetString(metrics.NodeLabelKey); v != metrics.NodeUnresolved {
+		return v
+	}
+	return ""
+}
+
 // markRejected размечает отказ для наблюдаемости (§94): кладёт код причины в
 // контекст — оттуда его берёт RejectLogMiddleware — и подменяет метку узла,
 // когда узла не существует.
@@ -605,17 +651,20 @@ func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op strin
 // internal-ошибки (502) не размечаются: это сбой шины, а не отказ клиенту, и в
 // журнале отказов ему делать нечего.
 //
-// Подмена метки касается ТОЛЬКО ErrNodeNotFound: путь в этом случае задал
-// клиент, и метка node у nexus_requests_total росла бы новым рядом на каждый
-// мусорный путь (§94.8). У §82.3 (ErrNodeNotAsyncIngress) узел существует, и
-// его путь в метке остаётся — там ряд ограничен числом узлов.
+// Подмена метки касается ТОЛЬКО ErrNodeNotFound без резолва: путь в этом
+// случае задал клиент, и метка node у nexus_requests_total росла бы новым
+// рядом на каждый мусорный путь (§94.8). Узел, который найден, но отвечает
+// «узла нет» (не тот тип за sync-адресом, pull-узел по короткому адресу), метку
+// своего узла сохраняет (§101.3) — как и §82.3 (ErrNodeNotAsyncIngress): ряд
+// ограничен числом узлов, а оператор видит, в какой узел стучатся не так.
 func (h *Handler) markRejected(c *gin.Context, err error, reason domain.RejectReason, internal bool) {
 	if internal {
 		return
 	}
 	SetRejectReason(c, reason)
-	if errors.Is(err, domain.ErrNodeNotFound) {
+	if errors.Is(err, domain.ErrNodeNotFound) && c.GetString(metrics.NodeLabelKey) == "" {
 		c.Set(metrics.NodeLabelKey, metrics.NodeUnresolved)
+		c.Set(metrics.TeamLabelKey, "")
 	}
 }
 
@@ -637,10 +686,12 @@ func (h *Handler) onLoopDetected(c *gin.Context, mode, nodePath string) {
 // единообразно читал result/message и в успехе, и в ошибке.
 func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string) {
 	status, msg, reason, internal := classifyDomainError(err)
+	errNode := nodeForErrorLog(c, nodePath)
+	nodePath = nodeForLog(c, nodePath)
 	h.markRejected(c, err, reason, internal)
 	if internal {
 		h.logger.ErrorWithOp("receiver async routing failed", err, op,
-			h.logger.Str("node", nodePath))
+			h.logger.Str("node", errNode))
 	} else {
 		// §51.9: см. replyDomainError — отказы клиенту видны на debug.
 		h.logger.Debug("receiver async request rejected",
@@ -658,7 +709,7 @@ func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string
 		// §82.3: клиент видит только 404 «node not found», поэтому счётчик —
 		// единственный внешний признак рассинхронизации настроек. Warn с
 		// root_method и IP пишет RouteAsync: там известен сам узел.
-		h.metrics.IncAsyncIngressRejected(nodePath)
+		h.metrics.IncAsyncIngressRejected(metrics.NodeLabelsFromGin(c))
 	}
 	c.JSON(status, gin.H{"result": false, "message": msg})
 }

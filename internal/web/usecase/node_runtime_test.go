@@ -27,7 +27,7 @@ func runtimeUC(status *fakeNodeStatus, prom *fakeProm, node *domain.Node) *NodeR
 	var pm = interfaceOrNilProm(prom)
 	return NewNodeRuntimeUsecase(
 		&fakeNodeRepo{node: node},
-		NewLastOutcomeResolver(st, pm, log),
+		NewLastOutcomeResolver(st, pm, slugDirectory(map[string]string{"team-a": "alpha", "team-b": "beta"}), log),
 		clock.NewFake(time.Unix(1786114275, 0).UTC()),
 		log,
 	)
@@ -50,14 +50,15 @@ func interfaceOrNilProm(p *fakeProm) port.PromMetrics {
 func TestNodeRuntimeUsecase_State(t *testing.T) {
 	t.Parallel()
 	node := &domain.Node{ID: "n1", Path: "acs_sigur", TeamID: "team-a"}
+	own := port.NodeKey{Team: "alpha", Path: "acs_sigur"}
 
 	t.Run("Redis приоритетнее Prometheus", func(t *testing.T) {
 		t.Parallel()
 		// Redis говорит degraded, Prometheus — down (гаудж 2). Побеждает Redis:
 		// он персистентный и переживает рестарт Sender'а (§46).
 		uc := runtimeUC(
-			&fakeNodeStatus{m: map[string]domain.NodeOutcome{"acs_sigur": domain.NodeOutcomeDegraded}},
-			&fakeProm{lastErrs: map[string]float64{"acs_sigur": 2}},
+			&fakeNodeStatus{m: map[string]domain.NodeOutcome{"n1": domain.NodeOutcomeDegraded}},
+			&fakeProm{lastErrs: map[port.NodeKey]float64{own: 2}},
 			node,
 		)
 		got, err := uc.State(context.Background(), "n1", "team-a")
@@ -69,7 +70,7 @@ func TestNodeRuntimeUsecase_State(t *testing.T) {
 
 	t.Run("без Redis работает Prometheus", func(t *testing.T) {
 		t.Parallel()
-		uc := runtimeUC(nil, &fakeProm{lastErrs: map[string]float64{"acs_sigur": 2}}, node)
+		uc := runtimeUC(nil, &fakeProm{lastErrs: map[port.NodeKey]float64{own: 2}}, node)
 		got, err := uc.State(context.Background(), "n1", "team-a")
 		require.NoError(t, err)
 		require.True(t, got.Available)
@@ -92,7 +93,7 @@ func TestNodeRuntimeUsecase_State(t *testing.T) {
 		t.Parallel()
 		uc := runtimeUC(
 			&fakeNodeStatus{m: map[string]domain.NodeOutcome{"другой": domain.NodeOutcomeDown}},
-			&fakeProm{lastErrs: map[string]float64{"другой": 2}},
+			&fakeProm{lastErrs: map[port.NodeKey]float64{{Team: "alpha", Path: "другой"}: 2}},
 			node,
 		)
 		got, err := uc.State(context.Background(), "n1", "team-a")
@@ -100,12 +101,32 @@ func TestNodeRuntimeUsecase_State(t *testing.T) {
 		require.False(t, got.Available, "молчание источников про этот узел — не ok")
 	})
 
+	// §101.9: до §101 гаудж ключевался путём, и одноимённый узел соседней
+	// команды красил бейдж этого узла своим исходом.
+	t.Run("гаудж одноимённого узла другой команды не подменяет исход", func(t *testing.T) {
+		t.Parallel()
+		uc := runtimeUC(nil, &fakeProm{lastErrs: map[port.NodeKey]float64{{Team: "beta", Path: "acs_sigur"}: 2}}, node)
+		got, err := uc.State(context.Background(), "n1", "team-a")
+		require.NoError(t, err)
+		require.False(t, got.Available)
+	})
+
+	// §101.9: гаудж старого процесса Sender (без team) пропадает с его
+	// рестартом; приписывать исход по одному пути нельзя.
+	t.Run("гаудж без команды не приписывается узлу", func(t *testing.T) {
+		t.Parallel()
+		uc := runtimeUC(nil, &fakeProm{lastErrs: map[port.NodeKey]float64{{Path: "acs_sigur"}: 2}}, node)
+		got, err := uc.State(context.Background(), "n1", "team-a")
+		require.NoError(t, err)
+		require.False(t, got.Available)
+	})
+
 	// Ошибка источника не должна ронять запрос: она лишь исключает источник.
 	t.Run("ошибка Redis деградирует на Prometheus, а не в 500", func(t *testing.T) {
 		t.Parallel()
 		uc := runtimeUC(
 			&fakeNodeStatus{err: errors.New("redis down")},
-			&fakeProm{lastErrs: map[string]float64{"acs_sigur": 1}},
+			&fakeProm{lastErrs: map[port.NodeKey]float64{own: 1}},
 			node,
 		)
 		got, err := uc.State(context.Background(), "n1", "team-a")
@@ -135,8 +156,8 @@ func TestNodeRuntimeUsecase_State(t *testing.T) {
 // Там у бейджа нет пустого состояния: каждая строка таблицы обязана иметь тон.
 func TestLastOutcomeResolver_UnknownIsOKForOverview(t *testing.T) {
 	t.Parallel()
-	r := NewLastOutcomeResolver(nil, nil, logging.NewNoop())
-	got := r.Resolve(context.Background(), time.Now(), []string{"a", "b"})
+	r := NewLastOutcomeResolver(nil, nil, nil, logging.NewNoop())
+	got := r.Resolve(context.Background(), time.Now(), []NodeRef{{ID: "a", Path: "a"}, {ID: "b", Path: "b"}})
 	require.Len(t, got, 2)
 	for _, p := range []string{"a", "b"} {
 		require.False(t, got[p].Known)
@@ -145,8 +166,22 @@ func TestLastOutcomeResolver_UnknownIsOKForOverview(t *testing.T) {
 	}
 }
 
+// §101.6: узел без id в карту не попадает — ключа Redis у него нет, а по пути
+// одноимённые узлы разных команд неразличимы.
+func TestLastOutcomeResolver_SkipsNodeWithoutID(t *testing.T) {
+	t.Parallel()
+	st := &fakeNodeStatus{m: map[string]domain.NodeOutcome{"n1": domain.NodeOutcomeDown}}
+	r := NewLastOutcomeResolver(st, nil, nil, logging.NewNoop())
+	got := r.Resolve(context.Background(), time.Now(),
+		[]NodeRef{{ID: "n1", Path: "telegram"}, {Path: "telegram"}})
+	require.Equal(t, map[string]Outcome{
+		"n1": {Outcome: domain.NodeOutcomeDown, Source: OutcomeSourceRedis, Known: true},
+	}, got)
+	require.Equal(t, []string{"n1"}, st.asked)
+}
+
 func TestLastOutcomeResolver_EmptyPaths(t *testing.T) {
 	t.Parallel()
-	r := NewLastOutcomeResolver(nil, nil, logging.NewNoop())
+	r := NewLastOutcomeResolver(nil, nil, nil, logging.NewNoop())
 	require.Empty(t, r.Resolve(context.Background(), time.Now(), nil))
 }

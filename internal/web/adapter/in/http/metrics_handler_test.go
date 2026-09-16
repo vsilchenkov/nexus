@@ -3,8 +3,11 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -34,7 +37,15 @@ type captureNodeLogs struct {
 	// мьютексом, иначе -race красит тест, а не код.
 	latencyStep int64
 	latencyErr  error
-	mu          sync.Mutex
+
+	// §102: рейтинг методов — та же конкурентная группа.
+	methods      []port.MethodStat
+	methodsCut   bool
+	methodsErr   error
+	methodsCalls int
+	methodsLim   int
+
+	mu sync.Mutex
 }
 
 func (c *captureNodeLogs) NodeKPI(_ context.Context, q port.LogQuery, _ bool) (port.NodeKPI, error) {
@@ -59,6 +70,15 @@ func (c *captureNodeLogs) NodeLatencyChart(_ context.Context, _ port.LogQuery, s
 		return nil, err
 	}
 	return []port.LatencyPoint{{TsMs: 1, P50ms: 5, P95ms: 30, Attempts: 2}}, nil
+}
+
+func (c *captureNodeLogs) NodeMethodStats(_ context.Context, _ port.LogQuery, _ bool, limit int) ([]port.MethodStat, bool, error) {
+	c.mu.Lock()
+	c.methodsCalls++
+	c.methodsLim = limit
+	rows, cut, err := c.methods, c.methodsCut, c.methodsErr
+	c.mu.Unlock()
+	return rows, cut, err
 }
 
 // metricsNodeRepo — port.NodeRepo с одним узлом.
@@ -135,4 +155,130 @@ func TestNodeMetrics_AutoStepUnchanged(t *testing.T) {
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/metrics/nodes/n1?range=24h", nil))
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.EqualValues(t, 1800, logs.chart.StepSec)
+}
+
+// TestNodeMetrics_MethodsFlag — §102: рейтинг методов приезжает только по
+// требованию, и только его флаг отвечает за деградацию разбивки.
+func TestNodeMetrics_MethodsFlag(t *testing.T) {
+	t.Parallel()
+
+	type methodsResp struct {
+		Methods []struct {
+			Method    string `json:"method"`
+			Total     uint64 `json:"total"`
+			Delivered uint64 `json:"delivered"`
+		} `json:"methods"`
+		Available bool `json:"methods_available"`
+		Truncated bool `json:"methods_truncated"`
+	}
+
+	t.Run("без флага порт не зовётся, разбивки в ответе нет", func(t *testing.T) {
+		t.Parallel()
+		logs := &captureNodeLogs{kpi: port.NodeKPI{Total: 42, Delivered: 40}}
+		r := newMetricsRouter(t, logs)
+
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/metrics/nodes/n1?range=24h", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+
+		assert.Zero(t, logs.methodsCalls, "вкладка «Обзор» ходит тем же эндпоинтом — лишний запрос к CH")
+		var resp methodsResp
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.False(t, resp.Available)
+		assert.Empty(t, resp.Methods)
+	})
+
+	t.Run("with_methods=1 — рейтинг в ответе, лимит задаёт сервер", func(t *testing.T) {
+		t.Parallel()
+		logs := &captureNodeLogs{
+			kpi: port.NodeKPI{Total: 42, Delivered: 40},
+			methods: []port.MethodStat{
+				{Method: "v1/GetParcelsInfo", Total: 30, Delivered: 29},
+				{Method: "", Total: 12, Delivered: 11},
+			},
+			methodsCut: true,
+		}
+		r := newMetricsRouter(t, logs)
+
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/metrics/nodes/n1?range=24h&with_methods=1", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+
+		assert.Equal(t, 1, logs.methodsCalls)
+		assert.Equal(t, usecase.MethodsLimit, logs.methodsLim, "размер выдачи не берётся из запроса (§102.4)")
+
+		var resp methodsResp
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		require.Len(t, resp.Methods, 2)
+		assert.Equal(t, "v1/GetParcelsInfo", resp.Methods[0].Method)
+		assert.EqualValues(t, 30, resp.Methods[0].Total)
+		assert.Empty(t, resp.Methods[1].Method, "записи без подпути — законная строка рейтинга, а не пропуск")
+		assert.True(t, resp.Available)
+		assert.True(t, resp.Truncated)
+	})
+
+	t.Run("пустой рейтинг — массив, а не null", func(t *testing.T) {
+		t.Parallel()
+		r := newMetricsRouter(t, &captureNodeLogs{kpi: port.NodeKPI{Total: 1}})
+
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/metrics/nodes/n1?with_methods=1", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+
+		var raw map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+		assert.JSONEq(t, "[]", string(raw["methods"]), "клиенту не должно приходиться различать два «нет данных»")
+	})
+
+	t.Run("ошибка рейтинга гасит только его", func(t *testing.T) {
+		t.Parallel()
+		logs := &captureNodeLogs{kpi: port.NodeKPI{Total: 5}, methodsErr: errors.New("memory limit exceeded")}
+		r := newMetricsRouter(t, logs)
+
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/metrics/nodes/n1?with_methods=1", nil))
+		require.Equal(t, http.StatusOK, w.Code, "деградация разбивки — не 500")
+
+		var resp struct {
+			methodsResp
+			ChartAvailable bool `json:"chart_available"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.False(t, resp.Available)
+		assert.True(t, resp.ChartAvailable, "KPI и график обязаны пережить деградацию рейтинга")
+	})
+}
+
+// TestNodeMetricsResponse_CoversActualBody — страж дрейфа swagger-модели.
+//
+// Ответ собирается gin.H, а swagger описан по структуре NodeMetricsResponse:
+// swagger-drift-check сравнивает docs/ с аннотациями и такого расхождения не
+// видит. Так поля §84.5 (latency/latency_available) полтора раздела жили в
+// ответе, но отсутствовали в документации. Тест сверяет НАБОР ключей.
+func TestNodeMetricsResponse_CoversActualBody(t *testing.T) {
+	t.Parallel()
+
+	logs := &captureNodeLogs{kpi: port.NodeKPI{Total: 1}, methods: []port.MethodStat{{Method: "a", Total: 1}}}
+	r := newMetricsRouter(t, logs)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/metrics/nodes/n1?with_methods=1", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+
+	documented := map[string]bool{}
+	for f := range reflect.TypeFor[NodeMetricsResponse]().Fields() {
+		tag, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if tag != "" && tag != "-" {
+			documented[tag] = true
+		}
+	}
+	for key := range body {
+		assert.True(t, documented[key], "поле ответа %q не описано в NodeMetricsResponse — swagger отдаёт неполную модель", key)
+	}
+	for key := range documented {
+		_, ok := body[key]
+		assert.True(t, ok, "NodeMetricsResponse обещает поле %q, которого в ответе нет", key)
+	}
 }

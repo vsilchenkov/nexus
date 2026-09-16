@@ -1,0 +1,145 @@
+# Юнит-тесты правил алертов группы nexus.nodes (§101.11).
+#
+# Запуск: `make check-alerts` (promtool из образа Prometheus, та же версия, что в
+# docker-compose). Файл в rule_files Prometheus НЕ подключается — это вход для
+# `promtool test rules`, путь к правилам ниже считается от каталога этого файла.
+#
+# Что проверяется: путь узла уникален лишь внутри команды, и одноимённые узлы
+# разных команд обязаны давать СВОИ алерты. До §101 правила агрегировали
+# `by (node)`, и получалось два дефекта сразу:
+#   * склейка — два лежащих узла давали один алерт без команды;
+#   * маскировка — `max by (node)` у DOWN одной команды прятал DEGRADED другой,
+#     а сумма трафика соседа размывала error rate до «нормы».
+# Каждая группа ниже ловит хотя бы один из них.
+
+rule_files:
+  - prometheus.alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  # Гауж исхода: у messengers узел лежит, у webhook — отвечает ошибками. По
+  # одному пути `max by (node)` видел только двойку, и DEGRADED не срабатывал.
+  - name: "last request error: DOWN и DEGRADED одноимённых узлов не маскируют друг друга"
+    interval: 1m
+    input_series:
+      - series: 'nexus_node_last_request_error{service="sender",team="messengers",node="telegram"}'
+        values: '2x25'
+      - series: 'nexus_node_last_request_error{service="sender",team="webhook",node="telegram"}'
+        values: '1x25'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NexusNodeDown
+        exp_alerts:
+          - exp_labels: { severity: critical, service: sender, team: messengers, node: telegram }
+            exp_annotations:
+              summary: "Node messengers/telegram is DOWN (transport error or 5xx)"
+              description: "Sender's last outbound request to the node keeps failing with a transport error or 5xx for 5 minutes."
+      - eval_time: 20m
+        alertname: NexusNodeDegraded
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender, team: webhook, node: telegram }
+            exp_annotations:
+              summary: "Node webhook/telegram is degraded (non-2xx responses)"
+              description: "Node answers with 3xx/4xx for 15 minutes; upstream misconfiguration or auth issue is likely."
+
+  # Error rate: messengers — 1 rps и все неуспешны; webhook — 10 rps без ошибок.
+  # По одному пути выходило 1/11 ≈ 9% — ниже порога, и алерт молчал.
+  - name: "error rate: трафик соседней команды не размывает долю ошибок"
+    interval: 1m
+    input_series:
+      - series: 'nexus_requests_total{service="sender",method="request",team="messengers",node="telegram",status="500"}'
+        values: '0+60x30'
+      - series: 'nexus_request_incomplete_total{service="sender",method="request",team="messengers",node="telegram"}'
+        values: '0+60x30'
+      - series: 'nexus_requests_total{service="sender",method="request",team="webhook",node="telegram",status="200"}'
+        values: '0+600x30'
+      - series: 'nexus_request_incomplete_total{service="sender",method="request",team="webhook",node="telegram"}'
+        values: '0+0x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: NexusNodeHighErrorRate
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender, team: messengers, node: telegram }
+            exp_annotations:
+              summary: "Node messengers/telegram error rate > 20% for 10m"
+              description: "More than 20% of outbound requests to the node are non-2xx (traffic guard: >0.05 rps)."
+
+  # Pull-узлы RabbitMQ: два одноимённых узла без соединения — два алерта;
+  # очередь копится только у messengers — алерт только у неё.
+  - name: "RMQ pull-узлы: алерт на каждую команду"
+    interval: 1m
+    input_series:
+      - series: 'nexus_rmq_connection_state{service="receiver",team="messengers",node="orders"}'
+        values: '0x25'
+      - series: 'nexus_rmq_connection_state{service="receiver",team="webhook",node="orders"}'
+        values: '0x25'
+      - series: 'nexus_rmq_queue_depth{service="receiver",team="messengers",node="orders"}'
+        values: '20000x25'
+      - series: 'nexus_rmq_queue_depth{service="receiver",team="webhook",node="orders"}'
+        values: '100x25'
+      - series: 'nexus_node_degraded{service="receiver",team="messengers",node="orders",reason="consumer_stalled"}'
+        values: '1x25'
+      - series: 'nexus_node_degraded{service="receiver",team="webhook",node="orders",reason="consumer_stalled"}'
+        values: '1x25'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NexusRMQNodeDisconnected
+        exp_alerts:
+          - exp_labels: { severity: critical, service: receiver, team: messengers, node: orders }
+            exp_annotations:
+              summary: "RMQ connection for node messengers/orders is down"
+              description: "Receiver cannot connect to the node's RabbitMQ for 5 minutes; pulled messages are not flowing."
+          - exp_labels: { severity: critical, service: receiver, team: webhook, node: orders }
+            exp_annotations:
+              summary: "RMQ connection for node webhook/orders is down"
+              description: "Receiver cannot connect to the node's RabbitMQ for 5 minutes; pulled messages are not flowing."
+      - eval_time: 15m
+        alertname: NexusRMQQueueBacklog
+        exp_alerts:
+          - exp_labels: { severity: warning, service: receiver, team: messengers, node: orders }
+            exp_annotations:
+              summary: "RMQ queue for node messengers/orders > 10k messages"
+              description: "Queue depth is above 10k for 10 minutes; check consumer count and pull errors."
+      - eval_time: 15m
+        alertname: NexusPullNodeDegraded
+        exp_alerts:
+          - exp_labels: { severity: warning, service: receiver, team: messengers, node: orders, reason: consumer_stalled }
+            exp_annotations:
+              summary: "Pull node messengers/orders degraded (consumer_stalled)"
+              description: "RabbitMQAsync pull node is marked degraded for 10 minutes."
+          - exp_labels: { severity: warning, service: receiver, team: webhook, node: orders, reason: consumer_stalled }
+            exp_annotations:
+              summary: "Pull node webhook/orders degraded (consumer_stalled)"
+              description: "RabbitMQAsync pull node is marked degraded for 10 minutes."
+
+  # DLQ: повтор падает у обеих команд — два алерта; сообщения потеряны только у
+  # messengers — потеря данных приписывается ей, а не пути вообще.
+  - name: "DLQ reprocess: исходы по командам"
+    interval: 1m
+    input_series:
+      - series: 'nexus_dlq_reprocess_total{service="sender",team="messengers",node="telegram",result="failed"}'
+        values: '0+1x30'
+      - series: 'nexus_dlq_reprocess_total{service="sender",team="webhook",node="telegram",result="failed"}'
+        values: '0+1x30'
+      - series: 'nexus_dlq_reprocess_total{service="sender",team="messengers",node="telegram",result="dropped"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: NexusDLQReprocessFailing
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender, team: messengers, node: telegram }
+            exp_annotations:
+              summary: "DLQ reprocess keeps failing for node messengers/telegram"
+              description: "DLQ messages for the node fail redelivery for 10+ minutes; they will eventually hit TTL."
+          - exp_labels: { severity: warning, service: sender, team: webhook, node: telegram }
+            exp_annotations:
+              summary: "DLQ reprocess keeps failing for node webhook/telegram"
+              description: "DLQ messages for the node fail redelivery for 10+ minutes; they will eventually hit TTL."
+      - eval_time: 15m
+        alertname: NexusDLQMessagesLost
+        exp_alerts:
+          - exp_labels: { severity: critical, service: sender, team: messengers, node: telegram, result: dropped }
+            exp_annotations:
+              summary: "DLQ messages dropped for node messengers/telegram (dropped)"
+              description: "Async messages were permanently dropped from the DLQ; data loss for this node."

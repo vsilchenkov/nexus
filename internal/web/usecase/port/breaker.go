@@ -28,10 +28,13 @@ type BreakerState struct {
 //
 // Порт опционален: без Redis реализации нет, и usecase отвечает
 // ErrBreakerUnavailable.
+//
+// Узел адресуется по id (§101.6): breaker по пути делили бы одноимённые узлы
+// разных команд.
 type NodeBreaker interface {
-	State(ctx context.Context, nodePath string) (BreakerState, error)
+	State(ctx context.Context, nodeID string) (BreakerState, error)
 	// Reset возвращает состояние ДО сброса — оно уходит в аудит (§81.4.2).
-	Reset(ctx context.Context, nodePath string) (BreakerState, error)
+	Reset(ctx context.Context, nodeID string) (BreakerState, error)
 }
 
 // NodeStatusResetter — снятие персистентного исхода последнего вызова узла
@@ -41,5 +44,5 @@ type NodeBreaker interface {
 // потребители, а интерфейс должен перечислять только то, что вызывающий
 // действительно зовёт (CLAUDE.md §2, ISP).
 type NodeStatusResetter interface {
-	ClearLastOutcome(ctx context.Context, nodePath string) error
+	ClearLastOutcome(ctx context.Context, nodeID string) error
 }

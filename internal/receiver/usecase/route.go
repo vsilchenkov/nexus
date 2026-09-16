@@ -55,6 +55,19 @@ type RouteInput struct {
 	// очередь — там root_method как раз request) и §16 (callback, у которого
 	// свой гейт — обязательная HMAC-подпись).
 	ExternalAsync bool
+	// OnNodeResolved (§101.3) — наблюдатель резолва: usecase сообщает ему слог
+	// команды, в которой узел НАЙДЕН, и путь узла сразу после резолва — до
+	// проверок, способных отказать. Handler ставит по ним метки метрик: из адреса
+	// их брать нельзя (хвост passthrough-адреса несёт секреты, а слог в
+	// legacy-адресе может оказаться частью пути). nil — не вызывается.
+	OnNodeResolved func(teamSlug, nodePath string)
+}
+
+// notifyResolved зовёт наблюдатель резолва, если он задан.
+func (in RouteInput) notifyResolved(teamSlug, nodePath string) {
+	if in.OnNodeResolved != nil {
+		in.OnNodeResolved(teamSlug, nodePath)
+	}
 }
 
 // RouteOutput — что Receiver вернёт клиенту.
@@ -87,16 +100,18 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		return nil, domain.ErrLoopDetected
 	}
 
-	node, remainder, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
+	node, remainder, teamSlug, err := resolveNode(ctx, u.nodes, in.TeamSlug, in.NodePath)
 	if err != nil {
 		return nil, err
 	}
+	in.notifyResolved(teamSlug, node.Path)
 	// §51.9: маршрутизация невосстановима постфактум — на debug видно, какой
 	// узел выбран и какой хвост пути уйдёт дальше.
 	u.logger.Debug("route: node resolved",
 		u.logger.Str("team", in.TeamSlug),
 		u.logger.Str("path", in.NodePath),
 		u.logger.Str("node", node.Path),
+		u.logger.Str("node_team", teamSlug),
 		u.logger.Str("node_id", node.ID),
 		u.logger.Str("remainder", remainder),
 		u.logger.Str("status", string(node.Status)),
@@ -106,7 +121,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 		return nil, err
 	}
 
-	req, err := u.buildSendRequest(node, in, remainder, hop)
+	req, err := u.buildSendRequest(node, in, teamSlug, remainder, hop)
 	if err != nil {
 		return nil, err
 	}
@@ -125,10 +140,17 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 //
 // Резолв тот же и с тем же порядком интерпретаций, что у Route/RouteAsync,
 // поэтому повторный вызов внутри выбранной ветки бьёт в L1/Redis-кеш узла.
-func (u *RouteUsecase) NodeRootMethod(ctx context.Context, teamSlug, nodePath string) (domain.RootMethod, error) {
-	node, _, err := resolveNode(ctx, u.nodes, teamSlug, nodePath)
+//
+// onResolved — наблюдатель резолва (см. RouteInput.OnNodeResolved), nil допустим.
+// Зовётся и для выключенного узла: отказ по нему метится путём узла так же, как
+// по legacy-адресу.
+func (u *RouteUsecase) NodeRootMethod(ctx context.Context, teamSlug, nodePath string, onResolved func(teamSlug, nodePath string)) (domain.RootMethod, error) {
+	node, _, foundIn, err := resolveNode(ctx, u.nodes, teamSlug, nodePath)
 	if err != nil {
 		return "", err
+	}
+	if onResolved != nil {
+		onResolved(foundIn, node.Path)
 	}
 	if node.Status == domain.NodeStatusDisabled {
 		// Наружу — «узла нет» (см. checkNodeAcceptsSync), но ошибка несёт
@@ -177,9 +199,11 @@ func checkNodeAcceptsSync(node *domain.Node, in RouteInput) error {
 
 // buildSendRequest собирает gRPC-запрос к Sender: исходящая авторизация,
 // целевой URL с хвостом path-passthrough и query, forward-заголовки.
+// teamSlug — слог команды, в которой узел найден (§101.4).
 func (u *RouteUsecase) buildSendRequest(
 	node *domain.Node,
 	in RouteInput,
+	teamSlug string,
 	remainder string,
 	hop int,
 ) (*senderv1.SendRequest, error) {
@@ -229,6 +253,7 @@ func (u *RouteUsecase) buildSendRequest(
 		Id:                 uuid.NewString(),
 		NodePath:           node.Path,
 		NodeId:             node.ID,
+		TeamSlug:           teamSlug, // §101.4: sync-путь узел в Sender не ищет — слог несёт запрос
 		TargetUrl:          finalURL,
 		Method:             EffectiveOutgoingMethod(node, in.Method),
 		RequestPath:        remainder,
