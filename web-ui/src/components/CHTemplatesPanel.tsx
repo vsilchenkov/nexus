@@ -228,7 +228,9 @@ function TemplateEditor(props: {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label className="space-y-1">
           <span className="text-xs text-fg-muted">{t("settings.clickhouse.templates.name")}</span>
+          {/* §90.3: поля формы настроек — без автозаполнения браузера. */}
           <input
+            autoComplete="off"
             className={`${inp} ${nameErr ? "border-err focus:border-err" : ""}`}
             value={e.name}
             onChange={(ev) => setEditor({ ...e, name: ev.target.value })}
@@ -238,6 +240,7 @@ function TemplateEditor(props: {
         <label className="space-y-1">
           <span className="text-xs text-fg-muted">{t("settings.clickhouse.templates.description")}</span>
           <input
+            autoComplete="off"
             className={`${inp} ${descErr ? "border-err focus:border-err" : ""}`}
             value={e.description}
             onChange={(ev) => setEditor({ ...e, description: ev.target.value })}
@@ -253,6 +256,7 @@ function TemplateEditor(props: {
         <label className="space-y-1">
           <span className="text-xs text-fg-muted">{t("settings.clickhouse.templates.order_by")}</span>
           <input
+            autoComplete="off"
             className={`${inp} font-mono`}
             value={e.spec.order_by.join(", ")}
             onChange={(ev) => patchSpec({ order_by: ev.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
@@ -286,7 +290,7 @@ function TemplateEditor(props: {
             }}>
               {LOG_COLUMNS.map((col) => <option key={col} value={col}>{col}</option>)}
             </select>
-            <input className={`${inp} font-mono`} value={c.codec} placeholder="ZSTD(3)" onChange={(ev) => {
+            <input autoComplete="off" className={`${inp} font-mono`} value={c.codec} placeholder="ZSTD(3)" onChange={(ev) => {
               const next = [...codecs]; next[i] = { ...c, codec: ev.target.value }; patchSpec({ column_overrides: next });
             }} />
             <button type="button" className="text-err" onClick={() => patchSpec({ column_overrides: codecs.filter((_, j) => j !== i) })}>
@@ -306,7 +310,7 @@ function TemplateEditor(props: {
         </div>
         {indexes.map((idx, i) => (
           <div key={i} className="grid grid-cols-[1fr_1fr_1fr_80px_32px] gap-2">
-            <input className={inp} value={idx.name} placeholder="idx_name" onChange={(ev) => {
+            <input autoComplete="off" className={inp} value={idx.name} placeholder="idx_name" onChange={(ev) => {
               const next = [...indexes]; next[i] = { ...idx, name: ev.target.value }; patchSpec({ indexes: next });
             }} />
             <select className={inp} value={idx.expr} onChange={(ev) => {
@@ -314,7 +318,7 @@ function TemplateEditor(props: {
             }}>
               {LOG_COLUMNS.map((col) => <option key={col} value={col}>{col}</option>)}
             </select>
-            <input className={`${inp} font-mono`} value={idx.type} placeholder="minmax" onChange={(ev) => {
+            <input autoComplete="off" className={`${inp} font-mono`} value={idx.type} placeholder="minmax" onChange={(ev) => {
               const next = [...indexes]; next[i] = { ...idx, type: ev.target.value }; patchSpec({ indexes: next });
             }} />
             <input type="number" className={inp} value={idx.granularity} onChange={(ev) => {

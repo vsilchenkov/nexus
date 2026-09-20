@@ -142,7 +142,9 @@ export function ApiTokensPanel() {
               ))}
             </select>
           </label>
+          {/* §90.3: поле формы настроек — без автозаполнения. */}
           <input
+            autoComplete="off"
             placeholder={t("settings.tokens.name_placeholder")}
             value={name}
             onChange={(e) => setName(e.target.value)}

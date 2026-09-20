@@ -8,6 +8,7 @@ import { useConfirm } from "../../lib/confirm";
 import type { Role } from "../../lib/roles";
 import { MY_TEAMS_KEY } from "../../lib/teams";
 import { SearchInput } from "../../components/ui";
+import { PASSWORD_MANAGER_OFF } from "../../lib/secretMask";
 
 // TeamBrief — команда пользователя для колонки «Команды» (§44.G).
 type TeamBrief = { id: string; slug: string; name: string; role: string };
@@ -745,7 +746,12 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.name")}
             </label>
+            {/* §90.3: имя и почта здесь — ЧУЖИЕ (администратор заводит
+                учётку другому человеку), а Chrome предлагает в такие поля
+                данные владельца браузера — рядом ещё и поле пароля, из-за
+                которого форма опознаётся как регистрационная. */}
             <input
+              {...PASSWORD_MANAGER_OFF}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={t("settings.users.field.name_placeholder")}
@@ -760,10 +766,11 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.login")}
             </label>
-            {/* autoComplete="off": иначе Chrome вписывает сюда сохранённый
-                логин браузера (поле пароля идёт следом в create-режиме). */}
+            {/* §90.3/§98.7: иначе Chrome вписывает сюда сохранённый логин
+                браузера (поле пароля идёт следом в create-режиме), а сторонние
+                менеджеры паролей ищут по своим меткам — нужен весь набор. */}
             <input
-              autoComplete="off"
+              {...PASSWORD_MANAGER_OFF}
               value={login}
               onChange={(e) => setLogin(e.target.value)}
               disabled={mode === "edit"}
@@ -779,8 +786,12 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.email")}
             </label>
+            {/* Тип остаётся email (клавиатура и семантика поля важнее):
+                адресный автозаполнитель Chrome этим набором глушится не всегда,
+                но подстановку в пару с паролем он снимает. */}
             <input
               type="email"
+              {...PASSWORD_MANAGER_OFF}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="user@example.com"
@@ -800,9 +811,12 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
                 {t("settings.users.field.password")}
               </label>
               <div className="flex gap-2">
+                {/* §90.3: пароль здесь ВИДИМЫЙ (type="text"), парой к логину
+                    менеджер его не считает, но метки всё равно нужны — по ним
+                    решают 1Password и LastPass. */}
                 <input
                   type="text"
-                  autoComplete="off"
+                  {...PASSWORD_MANAGER_OFF}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="min 8 chars"
@@ -963,9 +977,10 @@ function PasswordDialog({ user, onClose, onSaved }: PasswordDialogProps) {
             {t("settings.users.password_dialog.new_password")}
           </label>
           <div className="flex gap-2">
+            {/* §90.3: видимый пароль — метки менеджеров, см. форму создания. */}
             <input
               type="text"
-              autoComplete="off"
+              {...PASSWORD_MANAGER_OFF}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="min 8 chars"

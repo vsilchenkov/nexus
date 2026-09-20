@@ -2,6 +2,7 @@ import { Command as CommandPrimitive } from "cmdk";
 import { Search } from "lucide-react";
 import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from "react";
 
+import { useCmdkInputType } from "../../lib/cmdkInput";
 import { cn } from "../../lib/cn";
 
 // Command — обёртка над cmdk, стилизованная под UI-kit (§23/§24). Используется
@@ -20,21 +21,36 @@ export const Command = forwardRef<
   );
 });
 
+// type в пропсах cmdk нет (он его ставит сам) — возвращаем его себе: §90.3
+// требует search, а полю с собственной обработкой Escape нужен text.
+type CommandInputProps = ComponentPropsWithoutRef<typeof CommandPrimitive.Input> & {
+  type?: string;
+};
+
 export const CommandInput = forwardRef<
   ElementRef<typeof CommandPrimitive.Input>,
-  ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
->(function CommandInput({ className, ...rest }, ref) {
+  CommandInputProps
+>(function CommandInput({ className, type = "search", ...rest }, ref) {
+  const applyType = useCmdkInputType(type, ref);
+
   return (
     <div className="flex h-9 items-center gap-2 border-b border-line px-3">
       <Search size={15} className="shrink-0 text-fg-subtle" />
       {/* §90.3: cmdk сам ставит autocomplete="off", но этого мало — Chrome
           игнорирует его для полей, которые счёл контактными, а часть наших
-          списков ищет по логину и email. Добавляем остальные признаки: имя без
-          семантики и метки сторонних менеджеров паролей. Тип оставляем
-          текстовым — Escape здесь закрывает попап, а search-поле Chrome по
-          Escape очищает само. */}
+          списков ищет по логину и email. Нужен весь набор признаков «это
+          поиск, а не поле формы», тот же, что у SearchInput: тип search
+          (адресный автозаполнитель их не трогает), имя без семантики и метки
+          сторонних менеджеров паролей. Одних только имени и меток не хватило —
+          в выборе участника команды Chrome всё равно разворачивал поверх
+          списка попап с сохранёнными адресами.
+
+          Escape при этом продолжает закрывать попап: очистка search-поля —
+          действие по умолчанию, слушатели Radix получают событие раньше. Если
+          поле когда-нибудь само начнёт обрабатывать Escape (как фильтр логов
+          §77.3), ему передают type="text" — остальная защита сохраняется. */}
       <CommandPrimitive.Input
-        ref={ref}
+        ref={applyType}
         name="q"
         data-1p-ignore
         data-lpignore="true"
