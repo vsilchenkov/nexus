@@ -293,7 +293,10 @@ function TeamDialog({ mode, initial, onClose, onSaved }: TeamDialogProps) {
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.teams.field.slug")}
             </label>
+            {/* §90.3: поля формы настроек — без автозаполнения: браузер
+                предлагает сюда организацию и адреса из своего профиля. */}
             <input
+              autoComplete="off"
               value={slug}
               onChange={(e) => setSlug(e.target.value.toLowerCase())}
               disabled={mode === "edit"}
@@ -312,6 +315,7 @@ function TeamDialog({ mode, initial, onClose, onSaved }: TeamDialogProps) {
               {t("settings.teams.field.name")}
             </label>
             <input
+              autoComplete="off"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={mode === "create" ? "Acme Corp" : ""}
@@ -326,6 +330,7 @@ function TeamDialog({ mode, initial, onClose, onSaved }: TeamDialogProps) {
               {t("settings.teams.field.external_url")}
             </label>
             <input
+              autoComplete="off"
               value={externalUrl}
               onChange={(e) => setExternalUrl(e.target.value)}
               placeholder="https://gw.example.com/nexus"

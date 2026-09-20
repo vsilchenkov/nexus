@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { useCmdkInputType } from "../lib/cmdkInput";
 import { cn } from "../lib/cn";
 import {
   loadGlobalSearchQ,
@@ -42,6 +43,7 @@ export function GlobalSearch() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchTypeRef = useCmdkInputType("search", inputRef);
 
   const [q, setQ] = useState(() => loadGlobalSearchQ());
   const [debouncedQ, setDebouncedQ] = useState(q);
@@ -117,10 +119,11 @@ export function GlobalSearch() {
             )}
           >
             <Search size={15} className="shrink-0 text-fg-subtle" />
-            {/* §90.3: те же признаки «это поиск», что у CommandInput. Тип
-                текстовый — Escape закрывает выпадающий список результатов. */}
+            {/* §90.3: те же признаки «это поиск», что у CommandInput —
+                поле здесь своё (CommandPrimitive.Input напрямую), поэтому и
+                тип ставится тем же ref-хелпером: пропсом cmdk его затирает. */}
             <CommandPrimitive.Input
-              ref={inputRef}
+              ref={searchTypeRef}
               name="q"
               autoComplete="off"
               data-1p-ignore
