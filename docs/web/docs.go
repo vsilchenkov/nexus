@@ -3160,7 +3160,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "поиск по path или target_url",
+                        "description": "поиск подстроки в path, target_url или comment (§103)",
                         "name": "search",
                         "in": "query"
                     },
@@ -5818,7 +5818,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "§62: ILIKE по path/target_url в пределах членств пользователя. Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе). Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список (не ошибка).",
+                "description": "§62: ILIKE по path/target_url/comment (§103) в пределах членств пользователя. Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе). Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список (не ошибка).",
                 "produces": [
                     "application/json"
                 ],
@@ -8320,6 +8320,9 @@ const docTemplate = `{
         "internal_web_adapter_in_http.NodeSearchItem": {
             "type": "object",
             "properties": {
+                "comment": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },

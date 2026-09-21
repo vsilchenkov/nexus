@@ -16,6 +16,7 @@ import (
 	"nexus/internal/platform/logging"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
 	"nexus/internal/web/usecase"
+	"nexus/internal/web/usecase/port"
 )
 
 // TestNodeSearch_AcrossTeams_E2E — §62: глобальный поиск узлов возвращает только
@@ -109,4 +110,93 @@ func TestNodeSearch_AcrossTeams_E2E(t *testing.T) {
 	empty, err := nodeUC.SearchAcrossTeams(ctx, u.ID, "p", 0)
 	require.NoError(t, err)
 	assert.Empty(t, empty)
+}
+
+// TestNodeSearch_CommentMatch_E2E — §103: комментарий ищется наравне с путём и
+// адресом, без учёта регистра (кириллица на PG 12), во всех трёх потребителях
+// одного SQL: глобальный поиск, список команды и сквозной режим. Узел чужой
+// команды с тем же комментарием не утекает; узел без совпадения не попадает.
+func TestNodeSearch_CommentMatch_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	cipher, err := crypto.NewCipher(testEncryptionKey)
+	require.NoError(t, err)
+	logger := logging.NewNoop()
+
+	teamRepo := pgrepo.NewTeamRepoPg(pool, logger)
+	nodeRepo := pgrepo.NewNodeRepoPg(pool, cipher, logger)
+	userRepo := pgrepo.NewUserRepoPg(pool, logger)
+	auditUC := usecase.NewAuditUsecase(pgrepo.NewAuditRepoPg(pool, logger), logger)
+	uow := pgrepo.NewUnitOfWorkPg(pool, cipher, logger)
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+	nodeUC := usecase.NewNodeUsecase(nodeRepo, nopCache{}, auditUC, uow, teamRepo,
+		nil, nil, time.Minute, 0, defaultTeam, nil, logger)
+
+	mkTeam := func(slug, name string) *domain.Team {
+		tm := &domain.Team{Slug: slug, Name: name, CHDatabase: domain.CHDatabaseForSlug(slug)}
+		require.NoError(t, teamRepo.Create(ctx, tm))
+		return tm
+	}
+	teamA := mkTeam("logistics", "Логистика")
+	teamC := mkTeam("stranger", "Чужие")
+
+	u := &domain.User{Login: "comment_user", Role: domain.UserRoleViewer, Active: true, Lang: domain.UserLangRU}
+	require.NoError(t, userRepo.Create(ctx, u))
+	require.NoError(t, teamRepo.AddMember(ctx, u.ID, teamA.ID, domain.TeamRoleMember))
+
+	mkNode := func(team *domain.Team, path, comment string) {
+		n := &domain.Node{
+			Path:            path,
+			RootMethod:      domain.RootMethodRequest,
+			URLMode:         domain.URLModeStatic,
+			TargetURL:       "https://api.example.com/" + path,
+			TeamID:          team.ID,
+			ClickHouseTable: "logs",
+			Comment:         comment,
+		}
+		require.NoError(t, nodeUC.Create(ctx, usecase.SystemActor(), n))
+	}
+	// Ни путь, ни адрес не содержат «сдэк» — совпасть может только комментарий.
+	mkNode(teamA, "svc/orders", "Интеграция со СДЭК,\nтикет NX-41")
+	mkNode(teamA, "svc/health", "проверка живости")
+	mkNode(teamC, "svc/orders-hidden", "Тоже про СДЭК")
+
+	paths := func(nodes []*domain.Node) []string {
+		out := make([]string, 0, len(nodes))
+		for _, n := range nodes {
+			out = append(out, n.Path)
+		}
+		return out
+	}
+
+	for _, q := range []string{"сдэк", "СДЭК", "Сдэк"} {
+		hits, err := nodeUC.SearchAcrossTeams(ctx, u.ID, q, 0)
+		require.NoError(t, err)
+		require.Len(t, hits, 1, "глобальный поиск %q: только узел своей команды", q)
+		assert.Equal(t, "svc/orders", hits[0].Node.Path)
+		assert.Contains(t, hits[0].Node.Comment, "СДЭК", "комментарий едет в выдаче для сниппета")
+
+		list, err := nodeUC.List(ctx, port.ListNodesFilter{TeamID: teamA.ID, Search: q})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"svc/orders"}, paths(list), "список команды %q", q)
+
+		across, err := nodeUC.ListAcrossTeams(ctx, u.ID, port.ListNodesFilter{Search: q})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"svc/orders"}, paths(across), "сквозной режим %q: чужая команда скрыта", q)
+	}
+
+	// Совпадение на второй строке многострочного комментария — ILIKE ищет в
+	// сыром тексте целиком, а не только в первой строке.
+	nl, err := nodeUC.SearchAcrossTeams(ctx, u.ID, "тикет nx", 0)
+	require.NoError(t, err)
+	require.Len(t, nl, 1)
+
+	// Узел без совпадения ни в одном из трёх полей не попадает.
+	none, err := nodeUC.SearchAcrossTeams(ctx, u.ID, "грузовик", 0)
+	require.NoError(t, err)
+	assert.Empty(t, none)
 }
