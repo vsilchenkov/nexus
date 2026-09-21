@@ -6354,9 +6354,30 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 ### 4.88 §103 — поиск узла по комментарию: одно условие на три поля и сниппет «почему в выдаче»
 
 Раздел [103-node-search-comment.md](sections/103-node-search-comment.md). Ветка
-`feature/search-usage-clients` (общая с §104 и §105). Статус ◐ — блоки 103.1… в работе.
+`feature/search-usage-clients` (общая с §104 и §105). Статус ✅ по коду — блоки 103.1–103.3; стендовый прогон — в общем блоке сдачи ветки.
 
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §103 | ✅ Phase 103.1 | [sections/103-node-search-comment.md](sections/103-node-search-comment.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); §62.6 и §29.6 ссылаются на §103 |
 | SQL поиска: `comment` третьим полем, один параметр; `comment` в выдаче `/api/search/nodes`; swagger | ✅ Phase 103.2 | [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) `List`, [port/node_repo.go](../internal/web/usecase/port/node_repo.go) `ListNodesFilter.Search`, [node_handler.go](../internal/web/adapter/in/http/node_handler.go) `NodeSearchItem.Comment`, [docs/web/](../docs/web/); тесты [node_search_test.go](../tests/integration/node_search_test.go) `TestNodeSearch_CommentMatch_E2E` (PG 12, кириллица в трёх регистрах, три потребителя, чужая команда), [node_search_handler_test.go](../internal/web/adapter/in/http/node_search_handler_test.go) |
+| Сниппет «совпадение в комментарии»: шапка, таблица и карточки «Узлов» | ✅ Phase 103.3 | [commentSnippet.ts](../web-ui/src/lib/commentSnippet.ts) (`commentSnippet`, `commentOnlyHit`, `containsFolded`) + [тест](../web-ui/src/lib/commentSnippet.test.ts), [CommentSnippet.tsx](../web-ui/src/components/CommentSnippet.tsx), [GlobalSearch.tsx](../web-ui/src/components/GlobalSearch.tsx) + [GlobalSearch.test.tsx](../web-ui/src/components/GlobalSearch.test.tsx), [searchHistory.ts](../web-ui/src/lib/searchHistory.ts) (`NodeSearchResp.q`), [Overview.tsx](../web-ui/src/pages/Overview.tsx) (`snippets`), [Overview.clickzone.test.tsx](../web-ui/src/pages/Overview.clickzone.test.tsx), плейсхолдеры `search.placeholder`/`overview.search_placeholder`, ключ `search.comment_match` |
+
+- **Одно условие на три поля и ОДИН параметр.** `path ILIKE $n OR target_url ILIKE $n OR comment ILIKE $n`
+  (`%[1]d` в `Sprintf`). Правка в `NodeRepoPg.List` — единственная точка: этим SQL пользуются
+  глобальный поиск §62, поле «Поиск» на «Узлах» §54 и сквозной режим §86. Вводить отдельный
+  «поиск по комментарию» значило бы получить два поиска с разной семантикой.
+- **Сниппет считается на клиенте, но по правилам PostgreSQL.** ILIKE сворачивает регистр
+  посимвольно (`towlower`). Поэтому `fold()` идёт по кодпоинтам и строит карту «единица UTF-16
+  свёрнутой строки → кодпоинт исходной»: `"İ".toLowerCase()` даёт две единицы, и без карты
+  индекс совпадения в `"İİİ сдэк"` съезжал на три символа (тест). Свёртка всей строки разом дала
+  бы контекстную финальную сигму, которой у PG нет; `toLocaleLowerCase` в турецкой локали
+  ломает `I`. Где правила всё же расходятся — `null`: пропадает подсказка, а не узел.
+- **Сниппет строится по строке, ушедшей на сервер.** В шапке выдача держится
+  `keepPreviousData`, и пока едет ответ на «сдэк», на экране выдача по «сд». Поэтому `queryFn`
+  кладёт в данные свою строку (`NodeSearchResp.q`), а сниппет берёт её, а не текст поля. На
+  «Узлах» строка берётся из URL-параметра `q` — того же, что в ключе запроса списка.
+- **Таблица: сниппет внутри ссылки, карточка: вне подъёма.** В ячейке пути сниппет — второй
+  поднятый (`relative z-[1]`) элемент ссылки, как текст пути (§100): строка остаётся одной
+  ссылкой, текст выделяется. В карточке сниппет стоит отдельной строкой над адресом и НЕ
+  поднят: клик по нему должен открывать узел, иначе в карточке появилась бы мёртвая зона.
+  Тест держит оба контракта (`expectStretchedTo` при сниппете, отсутствие `ABOVE_STRETCH`).

@@ -97,7 +97,8 @@
     "unavailable": "Team “{{slug}}” is unavailable: it does not exist or you are not a member. Staying in the current team."
   },
   "search": {
-    "placeholder": "Search nodes across all teams…",
+    "placeholder": "Search nodes in all teams: path, URL, comment…",
+    "comment_match": "Match in comment",
     "no_results": "Nothing found",
     "hint_min_chars": "Type at least 2 characters",
     "history": "Recent searches",
@@ -118,7 +119,7 @@
     "refresh": "Refresh",
     "autorefresh_on": "Auto",
     "autorefresh_off": "Paused",
-    "search_placeholder": "Search by path or URL…",
+    "search_placeholder": "Search by path, URL or comment…",
     "kpi": {
       "incoming": "Incoming",
       "outgoing": "Outgoing",
