@@ -248,6 +248,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/allowed-hosts/{id}/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Узлы команд, где пользователь состоит, — списком (до 500, по path); узлы остальных команд — только числом hidden. url_mode строки показывает, действует ли привязка: Receiver проверяет allowlist только при from_request. Только session-cookie, любая роль.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "allowed-hosts"
+                ],
+                "summary": "Узлы, к которым привязан разрешённый хост (§104).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id разрешённого хоста",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.CatalogNodesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "API-токен",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "хоста нет или id не UUID",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/audit": {
             "get": {
                 "security": [
@@ -1265,6 +1317,58 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/headers/{id}/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Узлы команд, где пользователь состоит, — списком (до 500, по path); узлы остальных команд — только числом hidden. Имя в forward_headers узла сравнивается без учёта регистра, как в usage_count. Только session-cookie, любая роль.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "headers"
+                ],
+                "summary": "Узлы, пробрасывающие заголовок (§104).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id заголовка",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.CatalogNodesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "API-токен",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "заголовка нет или id не UUID",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -3126,6 +3230,58 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/node-groups/{id}/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Узлы команд, где пользователь состоит, — списком (до 500, по path); узлы остальных команд — только числом hidden. total считается тем же предикатом, что usage_count группы. Только session-cookie, любая роль.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "node-groups"
+                ],
+                "summary": "Узлы группы (§104).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id группы",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.CatalogNodesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "API-токен",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "группы нет или id не UUID",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -7197,6 +7353,62 @@ const docTemplate = `{
                 },
                 "ok": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.CatalogNodeItem": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "root_method": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "target_url": {
+                    "type": "string"
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "team_name": {
+                    "type": "string"
+                },
+                "team_slug": {
+                    "type": "string"
+                },
+                "url_mode": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.CatalogNodesResponse": {
+            "type": "object",
+            "properties": {
+                "hidden": {
+                    "description": "Hidden — узлы команд, где пользователя нет: только число.",
+                    "type": "integer"
+                },
+                "items": {
+                    "description": "Items — узлы команд-членств, не больше 500, по path.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.CatalogNodeItem"
+                    }
+                },
+                "total": {
+                    "description": "Total — узлы всех команд тем же предикатом, что usage_count справочника.",
+                    "type": "integer"
+                },
+                "visible": {
+                    "description": "Visible — все узлы команд-членств; больше len(items) — список усечён.",
+                    "type": "integer"
                 }
             }
         },

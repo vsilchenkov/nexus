@@ -29,7 +29,8 @@ type Handlers struct {
 	HeaderCatalog *HeaderCatalogHandler
 	NodeGroup     *NodeGroupHandler // §99: справочник групп узлов
 	RequestField  *RequestFieldCatalogHandler
-	LogMask       *LogMaskHandler // §95: справочник маскирования логов узлов
+	CatalogUsage  *CatalogUsageHandler // §104: узлы, использующие элемент справочника
+	LogMask       *LogMaskHandler      // §95: справочник маскирования логов узлов
 	RMQTest       *RMQTestHandler
 	Kafka         *KafkaHandler
 	AsyncQueue    *AsyncQueueHandler
@@ -175,6 +176,15 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// manager (создание из формы узла) ниже.
 		if h.RequestField != nil {
 			authed.GET("/request-fields", h.RequestField.Search)
+		}
+
+		// §104: узлы, использующие элемент справочника (диалог за счётчиком
+		// «узлов: N» в Настройках). Любая роль, но только session-cookie:
+		// выдача строится по членствам пользователя, как у /search/nodes (§62).
+		if h.CatalogUsage != nil {
+			authed.GET("/node-groups/:id/nodes", RequireSessionOnly(), h.CatalogUsage.GroupNodes)
+			authed.GET("/headers/:id/nodes", RequireSessionOnly(), h.CatalogUsage.HeaderNodes)
+			authed.GET("/allowed-hosts/:id/nodes", RequireSessionOnly(), h.CatalogUsage.HostNodes)
 		}
 
 		// Логи узла (§7.4): snapshot + SSE live-tail.
