@@ -6397,6 +6397,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Диалог «узлы элемента» (§104.5) | ✅ Phase 104.4 | [components/CatalogNodesDialog.tsx](../web-ui/src/components/CatalogNodesDialog.tsx) (строки — `<Link>` с растянутой ссылкой §100, «не действует» у хоста при `url_mode ≠ from_request`, hidden / all_hidden / truncated, фильтр при > 8 строк, «Показать на рабочем столе» только у групп, 404 и расхождение `total` со счётчиком перечитывают таблицу); [lib/catalogUsage.ts](../web-ui/src/lib/catalogUsage.ts) (URL, ключи, `invalidateCatalogUsage`, `groupDesktopHref`); типы `CatalogNode` / `CatalogNodesResp` в [api/client.ts](../web-ui/src/api/client.ts); i18n `catalog_nodes.*` и `settings.*.delete_in_use_tip`; `catalog-nodes` в `TEAM_INDEPENDENT_KEYS` |
 | Кнопка-счётчик в Настройках (§104.5) | ✅ Phase 104.5 | [components/CatalogUsageCell.tsx](../web-ui/src/components/CatalogUsageCell.tsx) («узлов: N» — `<button aria-haspopup="dialog">`, «не используется» — текст); диалог на уровне страницы в [NodeGroups.tsx](../web-ui/src/pages/settings/NodeGroups.tsx), [Headers.tsx](../web-ui/src/pages/settings/Headers.tsx), [AllowedHosts.tsx](../web-ui/src/pages/settings/AllowedHosts.tsx); подсказка заблокированного удаления — `delete_in_use_tip`; тесты [NodeGroups.test.tsx](../web-ui/src/pages/settings/NodeGroups.test.tsx), [CatalogUsage.settings.test.tsx](../web-ui/src/pages/settings/CatalogUsage.settings.test.tsx) |
 | Актуальность счётчиков (§104.6) | ✅ Phase 104.6 | `invalidateCatalogUsage` после привязки и отвязки хоста в [AllowedHostsField.tsx](../web-ui/src/components/node/AllowedHostsField.tsx), сохранения узла в [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx), удаления в [DeleteNodeDialog.tsx](../web-ui/src/components/node/DeleteNodeDialog.tsx), копирования в [NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) (копия переносит и привязки хостов, `copyHostLinks`); тест [AllowedHostsField.test.tsx](../web-ui/src/components/node/AllowedHostsField.test.tsx) |
+| Окна — модальные диалоги; вход стирает состояние прежней сессии (§104.8) | ✅ Phase 104.7 | [ui/DialogFrame.tsx](../web-ui/src/components/ui/DialogFrame.tsx) — `role="dialog"`, `aria-modal`, обязательный `labelledBy`, фокус в окно и назад на источник, Tab по кругу (порталы не трогает), Esc; на нём [ui/Modal.tsx](../web-ui/src/components/ui/Modal.tsx) (имя — заголовок, описание — подзаголовок, подпись у крестика) и самописные окна [Teams.tsx](../web-ui/src/pages/settings/Teams.tsx), [Users.tsx](../web-ui/src/pages/settings/Users.tsx), [OrphanTablesPanel.tsx](../web-ui/src/components/OrphanTablesPanel.tsx). [lib/userSession.ts](../web-ui/src/lib/userSession.ts) `resetUserSessionState` (зеркала §54 `clearFilters`, §62 строка поиска, §86 `resetTeamScope` — и память модуля, и хранилище) зовёт [Login.tsx](../web-ui/src/pages/Login.tsx) при монтировании. Тесты: [Modal.test.tsx](../web-ui/src/components/ui/Modal.test.tsx) (роль/имя/описание, крестик и Esc, фокус туда и обратно, autoFocus, Tab по кругу, середина окна не перехватывается), [Users.role.test.tsx](../web-ui/src/pages/settings/Users.role.test.tsx) (самописное окно — диалог с именем), [Login.test.tsx](../web-ui/src/pages/Login.test.tsx) (сброс трёх зеркал и режима; `localStorage` не тронут) — регрессионные красные на старом коде |
 
 **Неочевидности §104.**
 
@@ -6431,6 +6432,23 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 - **22P02 → «не найдено».** Сканеры заголовков и хостов 22P02 не ловят (их `Get` на не-UUID даёт
   500); общий запрос ловит сам. Скоуп команд из членств — всегда валидные UUID, так что 22P02
   относится только к `id` элемента.
+- **Сброс состояния сессии — на странице входа, а не в «Выйти».** Конец сессии бывает трёх видов:
+  выход (переход без перезагрузки), 401 (перезагрузка на `/login` из интерцептора axios) и ручной
+  заход на `/login`. Общее у них одно — страница входа; сброс в обработчике «Выйти» пропустил бы
+  истёкшую сессию. Режим «Все команды» (§86) держит копию в памяти модуля — после выхода без
+  перезагрузки одного `sessionStorage.removeItem` мало, поэтому `resetTeamScope` пишет зеркало и
+  оповещает подписчиков. **Граница:** вход другим логином в соседней вкладке меняет общую куку, а в
+  эту вкладку страница входа не приходит — её зеркала остаются (данные чужой сессии при этом не
+  видны: выдачу строит сервер).
+- **`DialogFrame` без Radix Dialog.** `@radix-ui/react-dialog` в зависимостях нет, а новая
+  зависимость требует согласования (CLAUDE.md §12). Нужные правила — роль, имя, фокус, Tab —
+  укладываются в небольшой компонент. Ловушка Tab вмешивается только на краях окна: выпадающие
+  списки внутри окна живут в портале (React всплывает событие по своему дереву), и там фокус ведёт
+  браузер. Стенд подтвердил: Tab в поиске фильтра «Клиент» внутри «Повтора за период» остаётся в
+  выпадающем списке.
+- **Playwright-локатор кнопки под подложкой.** `getByRole('button', {name:'7д'}).first()` находит
+  одноимённую кнопку страницы под окном, и клик упирается в подложку. В стендовых сценариях
+  ограничивать локатор окном: `getByRole('dialog').getByRole(...)` — теперь это возможно.
 
 ### 4.90 §105 — клиент запроса в логах: фильтр по IP вместо «Хоста клиента»
 
@@ -6502,6 +6520,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   первая запись через 8 минут после прошлой (L1 = 5 минут) записалась с именем, до §105 там был
   бы `""`.
 
-Найдено по дороге, к ветке не относится (было до неё): общий `Modal` без `role="dialog"`; фильтры
-рабочего стола из sessionStorage (§54) переживают выход и вход другого пользователя в той же
-вкладке.
+Найдено по дороге и было до ветки: общий `Modal` без `role="dialog"`; фильтры рабочего стола из
+sessionStorage (§54) переживали выход и вход другого пользователя в той же вкладке. По просьбе
+пользователя исправлено в той же ветке — §104.8, Phase 104.7 (строка в таблице §4.89 и
+неочевидности там же).

@@ -8,6 +8,7 @@ export { SecretInput } from "./SecretInput";
 export { SearchInput } from "./SearchInput";
 export { Card, SectionHead } from "./surfaces";
 export { Modal } from "./Modal";
+export { DialogFrame } from "./DialogFrame";
 export { ConfirmProvider } from "./ConfirmProvider";
 export { Chip, Pill, Kpi, KpiRow, Seg, Hint } from "./data";
 export type { SegOption } from "./data";

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
@@ -13,6 +13,7 @@ import {
   PopoverContent,
   PopoverTrigger,
   SearchInput,
+  DialogFrame,
 } from "../../components/ui";
 import { cn } from "../../lib/cn";
 import { useConfirm } from "../../lib/confirm";
@@ -230,6 +231,7 @@ type TeamDialogProps = {
 
 function TeamDialog({ mode, initial, onClose, onSaved }: TeamDialogProps) {
   const { t } = useTranslation();
+  const titleId = useId();
   // §70.8: префикс имени БД приходит с сервера ("nexus_" либо "nexus_<id>_") —
   // на ноде с идентификатором склеенный на клиенте литерал показывал бы чужое имя.
   const chPrefix = useCHDatabasePrefix();
@@ -267,10 +269,10 @@ function TeamDialog({ mode, initial, onClose, onSaved }: TeamDialogProps) {
     (mode === "edit" || /^[a-z][a-z0-9_]{0,31}$/.test(slug));
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} labelledBy={titleId}>
       <div className="space-y-4 w-[420px] max-w-full">
         <header>
-          <h3 className="text-lg font-semibold">
+          <h3 id={titleId} className="text-lg font-semibold">
             {mode === "create"
               ? t("settings.teams.dialog.new_title")
               : t("settings.teams.dialog.edit_title", { slug: initial?.slug })}
@@ -378,6 +380,7 @@ type MembersDialogProps = {
 
 function MembersDialog({ team, onClose }: MembersDialogProps) {
   const { t } = useTranslation();
+  const titleId = useId();
   const qc = useQueryClient();
 
   const members = useQuery({
@@ -434,10 +437,10 @@ function MembersDialog({ team, onClose }: MembersDialogProps) {
   );
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} labelledBy={titleId}>
       <div className="space-y-4 w-[520px] max-w-full">
         <header>
-          <h3 className="text-lg font-semibold">
+          <h3 id={titleId} className="text-lg font-semibold">
             {t("settings.teams.members.title", { name: team.name })}
           </h3>
           <p className="text-xs text-fg-muted mt-1 font-mono">
@@ -642,21 +645,20 @@ function UserCombobox({
 }
 
 // Закрытие ТОЛЬКО явным действием (Esc / «Отмена», §21): клик по подложке не
-// закрывает — случайный клик мимо окна терял введённые данные формы.
-function Modal({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
+// закрывает — случайный клик мимо окна терял введённые данные формы. Семантику
+// диалога и Esc даёт DialogFrame (§104.8); labelledBy — id заголовка окна.
+function Modal({
+  onClose,
+  labelledBy,
+  children,
+}: {
+  onClose: () => void;
+  labelledBy: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl max-h-[calc(100vh-4rem)] overflow-y-auto">
-        {children}
-      </div>
-    </div>
+    <DialogFrame onClose={onClose} labelledBy={labelledBy} className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl max-h-[calc(100vh-4rem)] overflow-y-auto">
+      {children}
+    </DialogFrame>
   );
 }
