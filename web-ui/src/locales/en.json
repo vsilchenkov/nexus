@@ -1213,6 +1213,27 @@
     "empty_paused": "Nothing queued yet — while the node is paused, new requests pile up here.",
     "empty_paused_pull": "Empty — everything accepted before the pause has been processed. New messages wait in the RabbitMQ queue while the node is paused."
   },
+  "catalog_nodes": {
+    "title": {
+      "group": "Nodes in group “{{name}}”",
+      "header": "Nodes forwarding {{name}}",
+      "host": "Nodes allowed to call {{name}}"
+    },
+    "open": "Show nodes",
+    "summary": "Nodes in total: {{total}} · in your teams: {{visible}}",
+    "filter": "Filter by path…",
+    "no_match": "No nodes with this path",
+    "hidden_one": "{{count}} more node in teams you are not a member of",
+    "hidden_other": "{{count}} more nodes in teams you are not a member of",
+    "all_hidden": "All nodes are in teams you are not a member of: {{count}}",
+    "truncated": "Showing the first {{shown}} of {{total}}",
+    "unused": "No nodes use this item anymore",
+    "deleted": "The item has been deleted",
+    "url_from_request": "URL from request",
+    "not_effective": "not in effect",
+    "not_effective_tip": "The node takes its URL from its configuration, not from the request: the host is not checked for it, but the binding blocks deleting the pattern. To detach it, temporarily switch the node to “URL from request” and remove the host.",
+    "to_desktop": "Show on the dashboard"
+  },
   "settings": {
     "title": "Settings",
     "general": {
@@ -1281,6 +1302,7 @@
       "used": "{{count}} node(s)",
       "not_used": "not used",
       "in_use_tip": "used by nodes — detach first",
+      "delete_in_use_tip": "Used by nodes — detach first. Click the node count to see which",
       "confirm_delete": "Delete pattern {{pattern}}?",
       "col": { "pattern": "Pattern", "kind": "Kind", "description": "Description", "usage": "Usage" },
       "kind": { "exact": "Exact", "wildcard": "Wildcard", "regex": "Regex" },
@@ -1302,6 +1324,7 @@
       "used": "{{count}} node(s)",
       "not_used": "not used",
       "in_use_tip": "the group is used by nodes — remove the nodes from it first",
+      "delete_in_use_tip": "The group is used by nodes — remove the nodes from it first. Click the node count to see which",
       "name_length": "Name must be 1 to 100 characters",
       "order_hint": "lower goes higher in the list",
       "order_range": "Order must be an integer between 0 and 100000",
@@ -1326,6 +1349,7 @@
       "used": "{{count}} node(s)",
       "not_used": "not used",
       "in_use_tip": "used by nodes — remove from forwarding first",
+      "delete_in_use_tip": "Used by nodes — remove from forwarding first. Click the node count to see which",
       "name_format": "Name must be a valid RFC 7230 token (letters, digits and !#$%&'*+.^_`|~-, no spaces), 1–100 chars",
       "confirm_delete": "Delete header {{name}}?",
       "col": { "name": "Name", "description": "Description", "usage": "Usage" },

@@ -6392,6 +6392,7 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | ТЗ §104 | ✅ Phase 104.1 | [sections/104-catalog-usage.md](sections/104-catalog-usage.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); ссылки из §23.4, §24.4, §99.9 |
 | Порт и SQL-адаптер (§104.2, §104.4) | ✅ Phase 104.2 | порт [port/catalog_usage.go](../internal/web/usecase/port/catalog_usage.go) (`CatalogNodeLister`); общий запрос [postgres/catalog_usage.go](../internal/web/adapter/out/postgres/catalog_usage.go); предикаты `groupNodeMatch` / `headerNodeMatch` / `hostNodeMatch` и методы `NodesUsing` в [node_group_repo.go](../internal/web/adapter/out/postgres/node_group_repo.go), [header_catalog_repo.go](../internal/web/adapter/out/postgres/header_catalog_repo.go), [host_allowlist_repo.go](../internal/web/adapter/out/postgres/host_allowlist_repo.go); integration [catalog_usage_test.go](../tests/integration/catalog_usage_test.go) (группа `test-int-catalog`) |
 | Usecase, API, маршруты (§104.3, §104.4) | ✅ Phase 104.3 | [usecase/catalog_usage.go](../internal/web/usecase/catalog_usage.go) (`CatalogUsageUsecase`, карта «вид → lister», `hidden = max(0, total − visible)`, потолок 500); `TeamMembershipLister` переехал в [team_scope.go](../internal/web/usecase/team_scope.go), `teamScope` принимает его вместо `port.TeamRepo`; handler [catalog_usage_handler.go](../internal/web/adapter/in/http/catalog_usage_handler.go) (`GroupNodes` / `HeaderNodes` / `HostNodes`, 404 — ключи `node_group.not_found` / `header.not_found` / `host.not_found`); маршруты `GET /api/{node-groups,headers,allowed-hosts}/:id/nodes` под `RequireSessionOnly` в [routes.go](../internal/web/adapter/in/http/routes.go); сборка в [app.go](../internal/web/app.go); тесты: usecase, handler, [routes_role_test.go](../internal/web/adapter/in/http/routes_role_test.go) (все роли ≠403 и ≠404, API-токен → 403) |
+| Диалог «узлы элемента» (§104.5) | ✅ Phase 104.4 | [components/CatalogNodesDialog.tsx](../web-ui/src/components/CatalogNodesDialog.tsx) (строки — `<Link>` с растянутой ссылкой §100, «не действует» у хоста при `url_mode ≠ from_request`, hidden / all_hidden / truncated, фильтр при > 8 строк, «Показать на рабочем столе» только у групп, 404 и расхождение `total` со счётчиком перечитывают таблицу); [lib/catalogUsage.ts](../web-ui/src/lib/catalogUsage.ts) (URL, ключи, `invalidateCatalogUsage`, `groupDesktopHref`); типы `CatalogNode` / `CatalogNodesResp` в [api/client.ts](../web-ui/src/api/client.ts); i18n `catalog_nodes.*` и `settings.*.delete_in_use_tip`; `catalog-nodes` в `TEAM_INDEPENDENT_KEYS` |
 
 **Неочевидности §104.**
 
@@ -6404,6 +6405,17 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 - **У хостов `usage_count` — колонка с триггером, а не выражение.** Список считает `total` по той же
   таблице `node_allowed_hosts`, которую ведёт триггер (в том числе при каскадном удалении узла),
   поэтому числа совпадают; integration-тест сверяет `total` с `Get().UsageCount` для всех трёх видов.
+- **`catalog-nodes` — в `TEAM_INDEPENDENT_KEYS`**, как `node-search`: ответ зависит от членств, а
+  не от текущей команды. План предлагал обратное, но смена команды ничего в ответе не меняет, а
+  диалог и так перечитывает список при каждом открытии (`staleTime: 0`, `refetchOnMount: "always"`).
+- **Ссылка «Показать на рабочем столе» вынесена в `GroupDesktopLink`.** Guard-тест
+  `interactiveNesting.guard.test.ts` ищет `<Button` в пределах 200 символов после `<Link`, не
+  разбирая закрывающий тег. Соседство ссылки и кнопки «Закрыть» в футере давало ложное
+  срабатывание; guard не ослабляли.
+- **Грабля vitest: `beforeEach(() => mock.mockReset())` без фигурных скобок.** Функция,
+  возвращённая из `beforeEach`, для vitest — teardown, а `mockReset()` возвращает сам мок. После
+  теста vitest вызывает мок, и в тесте с отклонённым промисом (404) тест падает ошибкой
+  `{response:{status:404}}` уже ПОСЛЕ всех зелёных проверок.
 - **Тест маршрутов проверяет «≠404», а не только «≠403».** Handler'ы в `roleEngine` нулевые, и
   разрешённый маршрут отвечает 500 (паника, пойманная Recovery). Незарегистрированный маршрут
   отвечает 404, и одно «≠403» его пропуск не заметило бы. API-токен эмулируется
