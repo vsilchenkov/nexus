@@ -2,10 +2,11 @@
 //
 // Заполняет колонку client_host CH-логов: IP клиента → hostname из PTR-записи
 // корпоративного DNS. Контракт Lookup — НОЛЬ I/O на вызывающем пути: значение
-// берётся только из L1-кеша в памяти; промах немедленно возвращает "" и
-// планирует ФОНОВЫЙ резолв (Redis-кеш → PTR-lookup), так что имя получат
-// следующие записи этого IP. Путь доставки запроса никогда не ждёт ни DNS,
-// ни Redis.
+// берётся только из L1-кеша в памяти. Промах НОВОГО IP немедленно возвращает ""
+// и планирует ФОНОВЫЙ резолв (Redis-кеш → PTR-lookup), так что имя получат
+// следующие записи этого IP. Протухшая запись L1 отдаёт прежнее имя и так же
+// обновляется в фоне (stale-while-revalidate, §105.5). Путь доставки запроса
+// никогда не ждёт ни DNS, ни Redis.
 //
 // Кеш двухуровневый: Redis (nexus:rdns:<ip>, общий для реплик Sender'а,
 // переживает рестарты; TTL через EX) + L1 map в памяти с коротким TTL —
@@ -108,9 +109,12 @@ func New(ctx context.Context, redis *goredis.Client, cfg Config, logger logging.
 	return r
 }
 
-// Lookup возвращает PTR-имя IP из L1-кеша или "" немедленно; ни DNS, ни Redis
-// на этом пути не вызываются. Промах планирует фоновый резолв. Не-IP значения
-// (rabbitmq://… у pull-узлов §27.10, пустые строки) сразу дают "".
+// Lookup возвращает PTR-имя IP из L1-кеша немедленно; ни DNS, ни Redis на этом
+// пути не вызываются. Промах нового IP даёт "" и планирует фоновый резолв.
+// Протухшая запись отдаёт прежнее имя и тоже планирует фоновое обновление
+// (§105.5): иначе первая запись после каждого истечения L1 теряла имя, и её не
+// находил ни один фильтр. Не-IP значения (rabbitmq://… у pull-узлов §27.10,
+// пустые строки) сразу дают "".
 //
 // Loopback/unspecified тоже не резолвятся: «имя клиента» для 127.0.0.1 — это
 // сам хост Нексуса, а не отправитель; на дев-машинах системный резолвер к тому
@@ -122,20 +126,27 @@ func (r *Resolver) Lookup(ip string) string {
 		return ""
 	}
 	r.mu.Lock()
-	if e, ok := r.l1[ip]; ok && time.Now().Before(e.expiresAt) {
+	e, cached := r.l1[ip]
+	if cached && time.Now().Before(e.expiresAt) {
 		r.mu.Unlock()
 		return e.host
 	}
 	// Промах/протухло. Один фоновый резолв на IP: pending не даёт плодить
 	// горутины под нагрузкой, пока первый резолв не завершился.
-	if _, inFlight := r.pending[ip]; !inFlight {
+	_, inFlight := r.pending[ip]
+	if !inFlight {
 		r.pending[ip] = struct{}{}
-		r.mu.Unlock()
-		safego.Go(r.logger, "sender.rdns", func() { r.resolve(ip) })
-		return ""
 	}
 	r.mu.Unlock()
-	return ""
+	if !inFlight {
+		if cached {
+			// §51.9: раз в обновление, а не на каждый запрос — pending выше.
+			r.logger.Debug("rdns: serving stale host, refresh scheduled",
+				r.logger.Str("ip", ip), r.logger.Str("host", e.host))
+		}
+		safego.Go(r.logger, "sender.rdns", func() { r.resolve(ip) })
+	}
+	return e.host // "" у промаха: нулевое значение l1entry
 }
 
 // resolve — фоновый резолв одного IP: Redis-кеш → PTR-lookup → Redis SET + L1.
@@ -224,8 +235,9 @@ func (r *Resolver) resolveOnce(ip string) string {
 }
 
 // l1Set кладёт значение в L1 с TTL = min(cfg TTL, l1TTLCap). При переполнении
-// сначала выбрасываются протухшие записи, затем (крайний случай) кеш
-// сбрасывается целиком — кардинальность реальных клиентских IP мала, ветка
+// сначала выбрасываются протухшие записи (после §105.5 они ещё отдают имя «по
+// старой памяти», но потерять их дешевле, чем свежие), затем (крайний случай)
+// кеш сбрасывается целиком — кардинальность реальных клиентских IP мала, ветка
 // защитная.
 func (r *Resolver) l1Set(ip, host string, positive bool) {
 	ttl := r.cfg.CacheTTL
