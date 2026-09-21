@@ -46,6 +46,7 @@ export type LogsInitialFilter = {
   qCase?: boolean;
   qWord?: boolean;
   qRegex?: boolean;
+  clientIp?: string; // §105.4: фильтр «Клиент»
   clientHost?: string;
 };
 
@@ -120,6 +121,8 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // §48: поля ip/host убраны из UI (API их по-прежнему принимает); добавлены
   // method и режимы поиска qCase/qWord/qRegex (кнопки Aa / ab| / .*).
   // §67: clientHost — фильтр по PTR-имени клиента (колонка client_host).
+  // §105.4: ip вернулся в UI как значение фильтра «Клиент» (clientIp), имя
+  // стало подписью; clientHost остался для значений без IP и старых ссылок.
   // §79.4: форма панели и её сравнение переехали в LogsAdvancedFilters — панель
   // теперь общая с вкладкой «Метрики», а два экземпляра одной разметки неминуемо
   // разъехались бы.
@@ -129,6 +132,7 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
     to: initialFilter?.to ?? "",
     // §102.6: фильтры, приехавшие ссылкой из «Метрик».
     method: initialFilter?.method ?? "",
+    clientIp: initialFilter?.clientIp ?? "",
     clientHost: initialFilter?.clientHost ?? "",
     q: initialFilter?.q ?? "",
     qCase: !!initialFilter?.qCase,

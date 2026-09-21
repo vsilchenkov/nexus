@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  advFormClientWindow,
+  advFormEqual,
+  clientWindowKind,
+  emptyAdvForm,
   isLogOK,
   logsFilterParams,
   logsFilterSearch,
@@ -17,6 +21,7 @@ const empty: LogsFilterState = {
   qWord: false,
   qRegex: false,
   method: "",
+  clientIp: "",
   clientHost: "",
   from: "",
   to: "",
@@ -42,6 +47,8 @@ describe("logsFilterParams", () => {
     { name: "done=done → done=yes", patch: { done: "done" }, want: { done: "yes" } },
     { name: "method", patch: { method: "v1/orders" }, want: { method: "v1/orders" } },
     { name: "clientHost → client_host", patch: { clientHost: "srv-1c" }, want: { client_host: "srv-1c" } },
+    // §105.4: фильтр «Клиент» выбирает по IP — серверный параметр ip.
+    { name: "clientIp → ip", patch: { clientIp: "192.168.2.5" }, want: { ip: "192.168.2.5" } },
     { name: "поиск без режимов", patch: { q: "boom" }, want: { q: "boom" } },
     {
       name: "поиск с режимами Aa / ab| / .*",
@@ -107,4 +114,26 @@ describe("isLogOK", () => {
   for (const r of rows) {
     it(r.name, () => expect(isLogOK(r.row)).toBe(r.want));
   }
+});
+
+describe("фасет «Клиент» (§105.4)", () => {
+  it("смена клиента — это смена формы (иначе коммит считался бы повтором)", () => {
+    expect(advFormEqual(emptyAdvForm, { ...emptyAdvForm, clientIp: "10.0.0.1" })).toBe(false);
+  });
+
+  it("окно из полей дат: ключ по строкам, границы в мс", () => {
+    const w = advFormClientWindow({ from: "2026-07-21T10:00", to: "" });
+    expect(w.key).toBe("2026-07-21T10:00|");
+    expect(w.get()).toEqual({ from: new Date("2026-07-21T10:00").getTime(), to: undefined });
+    expect(advFormClientWindow({ from: "", to: "" }).get()).toEqual({ from: undefined, to: undefined });
+  });
+
+  it.each([
+    { w: { from: 1, to: 2 }, want: "period" },
+    { w: { from: 1 }, want: "period" },
+    { w: { to: 2 }, want: "day_until" },
+    { w: {}, want: "last_day" },
+  ] as const)("подпись окна $want", ({ w, want }) => {
+    expect(clientWindowKind(w)).toBe(want);
+  });
 });

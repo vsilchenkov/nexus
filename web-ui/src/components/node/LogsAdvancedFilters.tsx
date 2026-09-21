@@ -2,9 +2,14 @@ import { useTranslation } from "react-i18next";
 
 import { DateTimeField, LabelHint, SearchInput } from "../ui";
 import { LogMethodFilter } from "./LogMethodFilter";
-import { LogClientHostFilter } from "./LogClientHostFilter";
+import { LogClientFilter } from "./LogClientFilter";
 
-import { emptyAdvForm, type LogsAdvForm } from "../../lib/logsQuery";
+import {
+  advFormClientWindow,
+  emptyAdvForm,
+  type ClientWindow,
+  type LogsAdvForm,
+} from "../../lib/logsQuery";
 
 // LogsAdvancedFilters — панель расширенных фильтров (§48/§67), вынесенная из
 // LogsTab без изменения поведения: §79.4 подключает её ещё и на вкладку
@@ -26,6 +31,7 @@ export function LogsAdvancedFilters({
   showDates = true,
   dateRange,
   onOpenDate,
+  clientWindow,
 }: {
   nodeId: string;
   draft: LogsAdvForm;
@@ -38,6 +44,9 @@ export function LogsAdvancedFilters({
   showDates?: boolean;
   dateRange?: { min: number; max: number } | null;
   onOpenDate?: () => void;
+  /** §105.4: окно фасета «Клиент» — период экрана. Не задано — поля «Дата
+   * с/по» применённого фильтра журнала. */
+  clientWindow?: ClientWindow;
 }) {
   const { t } = useTranslation();
   const minDate = dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined;
@@ -156,12 +165,13 @@ export function LogsAdvancedFilters({
         )}
         <div className="w-[240px] space-y-1">
           <label className="text-[10px] uppercase tracking-wider text-fg-muted">
-            {t("logs.advanced.client_host")}
+            {t("logs.advanced.client")}
           </label>
-          <LogClientHostFilter
+          <LogClientFilter
             nodeId={nodeId}
-            value={draft.clientHost}
-            onChange={(h) => onCommit({ ...draft, clientHost: h })}
+            value={{ ip: draft.clientIp, host: draft.clientHost }}
+            facetWindow={clientWindow ?? advFormClientWindow(applied)}
+            onChange={(v) => onCommit({ ...draft, clientIp: v.ip, clientHost: v.host })}
           />
         </div>
         {/* §77.3: кнопки «Применить» больше нет — фильтры применяются по
