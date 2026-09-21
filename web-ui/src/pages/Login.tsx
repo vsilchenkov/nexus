@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeftRight } from "lucide-react";
 
 import { api } from "../api/client";
+import { resetUserSessionState } from "../lib/userSession";
 import { Button, Card, ErrorAlert, Field, Input } from "../components/ui";
 import { ForgotPasswordDialog } from "./ForgotPasswordDialog";
 
@@ -45,6 +46,11 @@ export default function Login() {
   useEffect(() => {
     if (devMode && !touched.current && login === "") setLogin(DEV_PREFILL_LOGIN);
   }, [devMode, login]);
+
+  // §104.8: новая сессия начинается с чистого листа. Сюда приводит любой конец
+  // прежней — выход, 401, ручной заход на /login, — и без сброса следующий
+  // пользователь вкладки получил бы фильтры и строку поиска предыдущего.
+  useEffect(() => resetUserSessionState(), []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();

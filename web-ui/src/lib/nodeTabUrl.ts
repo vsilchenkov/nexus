@@ -36,6 +36,9 @@ const TAB_PARAM = "tab";
 // обещал число, посчитанное ПОД ними, а журнал открывался без них и показывал
 // другое. Ключи названы так же, как параметры API (logsFilterParams), чтобы
 // адрес читался рядом с сетевым запросом без словаря соответствий.
+//
+// §105.4: ip — значение фильтра «Клиент». client_host остаётся: его ставит
+// значение без IP (внешние таблицы §64) и несут старые ссылки.
 const LOG_WINDOW_PARAMS = [
   "from",
   "to",
@@ -47,6 +50,7 @@ const LOG_WINDOW_PARAMS = [
   "q_word",
   "q_regex",
   "client_host",
+  "ip",
 ] as const;
 
 // §84.2: ключи вида вкладки «Метрики» — период и шаг графика.
@@ -100,6 +104,7 @@ export type LogsLinkFilter = {
   qCase?: boolean;
   qWord?: boolean;
   qRegex?: boolean;
+  clientIp?: string;
   clientHost?: string;
 };
 
@@ -115,6 +120,7 @@ function applyLogsFilter(next: URLSearchParams, f?: LogsLinkFilter): URLSearchPa
     else next.delete(key);
   };
   setOrDelete("method", f?.method ?? "");
+  setOrDelete("ip", f?.clientIp ?? "");
   setOrDelete("client_host", f?.clientHost ?? "");
   // Режимы поиска без самого запроса бессмысленны: «регистрозависимо» без
   // строки — это фильтр ни по чему, и в адресе он только вводит в заблуждение.
@@ -156,13 +162,15 @@ export function parseLogsInitialFilter(params: URLSearchParams): LogsInitialFilt
   const method = params.get("method") ?? "";
   const q = params.get("q") ?? "";
   const clientHost = params.get("client_host") ?? "";
-  if (!hasWindow && !status && !done && !method && !q && !clientHost) return null;
+  const clientIp = params.get("ip") ?? ""; // §105.4
+  if (!hasWindow && !status && !done && !method && !q && !clientHost && !clientIp) return null;
   return {
     ...(hasWindow ? { from: msToDatetimeLocal(from), to: msToDatetimeLocal(to) } : {}),
     status: status === "err" || status === "ok" ? status : "all",
     ...(done === "no" || done === "yes" ? { done } : {}),
     ...(method ? { method } : {}),
     ...(clientHost ? { clientHost } : {}),
+    ...(clientIp ? { clientIp } : {}),
     // Режимы поиска читаются только вместе с запросом — см. applyLogsFilter.
     ...(q
       ? {

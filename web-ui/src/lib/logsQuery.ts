@@ -8,6 +8,8 @@
 // остальные 30 ошибок. Теперь набор параметров один на все три запроса, и
 // разъехаться они не могут.
 
+import { periodKey, periodWindow, type Period } from "./period";
+
 export type LogsStatusFilter = "all" | "ok" | "err";
 export type LogsDoneFilter = "all" | "done" | "pending";
 
@@ -19,6 +21,11 @@ export type LogsFilterState = {
   qWord: boolean;
   qRegex: boolean;
   method: string;
+  // §105.4: клиент запроса. clientIp — значение фильтра «Клиент» (параметр ip);
+  // clientHost — прежний фильтр по PTR-имени (§67). Он остаётся для значений
+  // без IP (внешние таблицы §64) и старых ссылок. Фильтр «Клиент» ставит
+  // только одно из двух.
+  clientIp: string;
   clientHost: string;
   // from/to — значения полей даты в формате <input type="datetime-local">
   // (локальная зона); в параметры уходят как ISO-строки.
@@ -51,6 +58,7 @@ export function logsFilterParams(f: LogsFilterState): Record<string, string> {
     if (f.qRegex) p.q_regex = "1";
   }
   if (f.method) p.method = f.method;
+  if (f.clientIp) p.ip = f.clientIp; // §105.4
   if (f.clientHost) p.client_host = f.clientHost; // §67
   const from = isoOrNull(f.from);
   if (from) p.from = from;
@@ -88,6 +96,7 @@ export type LogsAdvForm = Omit<LogsFilterState, "status" | "done">;
 export const emptyAdvForm: LogsAdvForm = {
   q: "",
   method: "",
+  clientIp: "",
   clientHost: "",
   from: "",
   to: "",
@@ -102,6 +111,7 @@ export function advFormEqual(a: LogsAdvForm, b: LogsAdvForm): boolean {
   return (
     a.q === b.q &&
     a.method === b.method &&
+    a.clientIp === b.clientIp &&
     a.clientHost === b.clientHost &&
     a.from === b.from &&
     a.to === b.to &&
@@ -109,4 +119,45 @@ export function advFormEqual(a: LogsAdvForm, b: LogsAdvForm): boolean {
     a.qWord === b.qWord &&
     a.qRegex === b.qRegex
   );
+}
+
+// ClientWindow — окно фасета «Клиент» (§105.4). key идёт в queryKey, get даёт
+// границы в мс В МОМЕНТ ЗАПРОСА: у пресета метрик «последние N» отсчитывается
+// от «сейчас», и считать его на рендере значило бы менять ключ каждый рендер.
+// Незаданная граница не отправляется: без from сервер берёт 24 часа до to.
+export type ClientWindow = {
+  key: string;
+  get: () => { from?: number; to?: number };
+};
+
+function msOrUndefined(v: string): number | undefined {
+  const iso = isoOrNull(v);
+  return iso ? Date.parse(iso) : undefined;
+}
+
+/** advFormClientWindow — окно фасета из полей «Дата с/по» журнала (§105.4). */
+export function advFormClientWindow(f: Pick<LogsAdvForm, "from" | "to">): ClientWindow {
+  return {
+    key: `${f.from}|${f.to}`,
+    get: () => ({ from: msOrUndefined(f.from), to: msOrUndefined(f.to) }),
+  };
+}
+
+/** periodClientWindow — окно фасета из выбора периода: вкладка «Метрики» и
+ * диалог «Повтор за период» (§105.4). Ключ — по периоду, границы пресета
+ * считаются в момент запроса. */
+export function periodClientWindow(p: Period): ClientWindow {
+  return {
+    key: periodKey(p),
+    get: () => {
+      const w = periodWindow(p);
+      return { from: w.since, to: w.until };
+    },
+  };
+}
+
+/** clientWindowKind — как подписать окно фасета под списком (§105.4). */
+export function clientWindowKind(w: { from?: number; to?: number }): "period" | "day_until" | "last_day" {
+  if (w.from !== undefined) return "period";
+  return w.to !== undefined ? "day_until" : "last_day";
 }

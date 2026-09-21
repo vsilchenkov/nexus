@@ -23,7 +23,7 @@ type ListNodesFilter struct {
 	// СУЖАЕТ выдачу внутри уже заданного team-скоупа, а не заменяет его: иначе
 	// по списку id можно было бы вытащить узел чужой команды.
 	IDs        []string
-	Search     string // подстрока для path / target_url
+	Search     string // подстрока для path / target_url / comment (§103), без учёта регистра
 	RootMethod string // "" / "request" / "requestAsync"
 	Limit      int
 	Offset     int

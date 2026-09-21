@@ -40,6 +40,7 @@ import {
   advFormEqual,
   emptyAdvForm,
   logsFilterParams,
+  periodClientWindow,
   type LogsAdvForm,
   type LogsStatusFilter,
 } from "../../lib/logsQuery";
@@ -171,11 +172,14 @@ export function MetricsTab({
       qCase: applied.qCase,
       qWord: applied.qWord,
       qRegex: applied.qRegex,
+      clientIp: applied.clientIp,
       clientHost: applied.clientHost,
     }),
     [applied],
   );
   const links = useNodeTabTo();
+  // §105.4: фасет «Клиент» считает записи за период экрана.
+  const clientWindow = useMemo(() => periodClientWindow(period), [period]);
   // Клик по столбцу остаётся переходом-действием (сегменты столбца — не ссылки),
   // но адрес ему строит вкладка: только она знает свои применённые фильтры.
   const openLogsAt = useCallback(
@@ -288,6 +292,7 @@ export function MetricsTab({
             onDraft={setAdvForm}
             onCommit={commit}
             showDates={false}
+            clientWindow={clientWindow}
           />
           <div className="flex flex-wrap items-center gap-4 px-4 py-2">
             <Seg<LogsStatusFilter>

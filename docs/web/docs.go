@@ -248,6 +248,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/allowed-hosts/{id}/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Узлы команд, где пользователь состоит, — списком (до 500, по path); узлы остальных команд — только числом hidden. url_mode строки показывает, действует ли привязка: Receiver проверяет allowlist только при from_request. Только session-cookie, любая роль.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "allowed-hosts"
+                ],
+                "summary": "Узлы, к которым привязан разрешённый хост (§104).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id разрешённого хоста",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.CatalogNodesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "API-токен",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "хоста нет или id не UUID",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/audit": {
             "get": {
                 "security": [
@@ -1265,6 +1317,58 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/headers/{id}/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Узлы команд, где пользователь состоит, — списком (до 500, по path); узлы остальных команд — только числом hidden. Имя в forward_headers узла сравнивается без учёта регистра, как в usage_count. Только session-cookie, любая роль.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "headers"
+                ],
+                "summary": "Узлы, пробрасывающие заголовок (§104).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id заголовка",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.CatalogNodesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "API-токен",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "заголовка нет или id не UUID",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
@@ -2767,6 +2871,12 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "фильтр по IP клиента (фильтр «Клиент», §105.4)",
+                        "name": "ip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "ok | err (§72.1)",
                         "name": "status",
                         "in": "query"
@@ -3133,6 +3243,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/node-groups/{id}/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Узлы команд, где пользователь состоит, — списком (до 500, по path); узлы остальных команд — только числом hidden. total считается тем же предикатом, что usage_count группы. Только session-cookie, любая роль.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "node-groups"
+                ],
+                "summary": "Узлы группы (§104).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id группы",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.CatalogNodesResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "API-токен",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "группы нет или id не UUID",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes": {
             "get": {
                 "security": [
@@ -3160,7 +3322,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "поиск по path или target_url",
+                        "description": "поиск подстроки в path, target_url или comment (§103)",
                         "name": "search",
                         "in": "query"
                     },
@@ -4568,7 +4730,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "exact match по IP клиента (с §48 недоступно из UI, параметр API сохранён)",
+                        "description": "exact match по IP клиента (фильтр «Клиент», §105.4)",
                         "name": "ip",
                         "in": "query"
                     },
@@ -4692,6 +4854,61 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/nodes/{id}/logs/clients": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Пары «IP — имя» с числом записей (uniqExact(ID), как у /logs/count) за период, по убыванию числа. Имя — самое свежее непустое client_host IP за период, пустое — имя не определилось (нет PTR-записи). Записи без имени засчитываются к своему IP. Строки с пустым IP (внешние таблицы §64) группируются по client_host. Остальные фильтры журнала фасет не учитывает. Без from — 24 часа до to (или до текущего момента). До 200 значений, truncated=true — значений больше. Узел без clickhouse_table → 200 + logs_configured=false; CH недоступен → 200 + logs_available=false; внешняя таблица без колонки client_host → только IP.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Клиенты узла для фасета фильтра «Клиент» (§105.3).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "начало периода (RFC3339 или UnixMilli); без него — 24 часа до to",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "конец периода (RFC3339 или UnixMilli); без него — текущий момент",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogClientsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs/count": {
             "get": {
                 "security": [
@@ -4702,7 +4919,7 @@ const docTemplate = `{
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "count() из ClickHouse под ТЕМИ ЖЕ фильтрами, что и GET /logs (status, done, method, client_host, даты, полнотекст q) — счётчик «Показано N из M» шапки. before_id игнорируется (total по фильтрам, не по странице). Серверный таймаут 10с; его превышение/недоступность CH → 200 + logs_available=false (UI прячет «из M»). Плохой q → 400.",
+                "description": "count() из ClickHouse под ТЕМИ ЖЕ фильтрами, что и GET /logs (status, done, method, client_host, ip, даты, полнотекст q) — счётчик «Показано N из M» шапки. before_id игнорируется (total по фильтрам, не по странице). Серверный таймаут 10с; его превышение/недоступность CH → 200 + logs_available=false (UI прячет «из M»). Плохой q → 400.",
                 "produces": [
                     "application/json"
                 ],
@@ -4758,6 +4975,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "exact match по PTR-имени клиента (§67)",
                         "name": "client_host",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact match по IP клиента (фильтр «Клиент», §105.4)",
+                        "name": "ip",
                         "in": "query"
                     },
                     {
@@ -5129,6 +5352,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "exact match по PTR-имени клиента (§67)",
                         "name": "client_host",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact match по IP клиента (фильтр «Клиент», §105.4)",
+                        "name": "ip",
                         "in": "query"
                     },
                     {
@@ -5818,7 +6047,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "§62: ILIKE по path/target_url в пределах членств пользователя. Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе). Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список (не ошибка).",
+                "description": "§62: ILIKE по path/target_url/comment (§103) в пределах членств пользователя. Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе). Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список (не ошибка).",
                 "produces": [
                     "application/json"
                 ],
@@ -7200,6 +7429,62 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.CatalogNodeItem": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "root_method": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "target_url": {
+                    "type": "string"
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "team_name": {
+                    "type": "string"
+                },
+                "team_slug": {
+                    "type": "string"
+                },
+                "url_mode": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.CatalogNodesResponse": {
+            "type": "object",
+            "properties": {
+                "hidden": {
+                    "description": "Hidden — узлы команд, где пользователя нет: только число.",
+                    "type": "integer"
+                },
+                "items": {
+                    "description": "Items — узлы команд-членств, не больше 500, по path.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.CatalogNodeItem"
+                    }
+                },
+                "total": {
+                    "description": "Total — узлы всех команд тем же предикатом, что usage_count справочника.",
+                    "type": "integer"
+                },
+                "visible": {
+                    "description": "Visible — все узлы команд-членств; больше len(items) — список усечён.",
+                    "type": "integer"
+                }
+            }
+        },
         "internal_web_adapter_in_http.CopyNodeRequest": {
             "type": "object",
             "required": [
@@ -7865,6 +8150,20 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.LogClientDTO": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "ip": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.LogClientHostsResponse": {
             "type": "object",
             "properties": {
@@ -7878,6 +8177,26 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "logs_configured": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.LogClientsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.LogClientDTO"
+                    }
+                },
+                "logs_available": {
+                    "type": "boolean"
+                },
+                "logs_configured": {
+                    "type": "boolean"
+                },
+                "truncated": {
                     "type": "boolean"
                 }
             }
@@ -8320,6 +8639,9 @@ const docTemplate = `{
         "internal_web_adapter_in_http.NodeSearchItem": {
             "type": "object",
             "properties": {
+                "comment": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },

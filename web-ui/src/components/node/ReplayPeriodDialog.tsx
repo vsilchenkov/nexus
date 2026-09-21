@@ -15,7 +15,13 @@ import {
   type Period,
 } from "../ui";
 import { nodeLookbackMs } from "../../lib/nodeLookback";
-import { emptyAdvForm, logsFilterParams, type LogsAdvForm, type LogsStatusFilter } from "../../lib/logsQuery";
+import {
+  emptyAdvForm,
+  logsFilterParams,
+  periodClientWindow,
+  type LogsAdvForm,
+  type LogsStatusFilter,
+} from "../../lib/logsQuery";
 import { fmtBytes, fmtLogTs } from "../../lib/format";
 import { LogsAdvancedFilters } from "./LogsAdvancedFilters";
 
@@ -134,6 +140,8 @@ export function ReplayPeriodDialog({ node, onClose, onFinished }: {
     const { since, until } = periodWindow(period);
     return { from: new Date(since).toISOString(), to: new Date(until).toISOString() };
   }, [period]);
+  // §105.4: фасет «Клиент» считает записи за период диалога, а не за сутки.
+  const clientWindow = useMemo(() => periodClientWindow(period), [period]);
 
   async function doPlan() {
     setBusy(true);
@@ -255,6 +263,7 @@ export function ReplayPeriodDialog({ node, onClose, onFinished }: {
                 onDraft={setAdv}
                 onCommit={setAdv}
                 showDates={false}
+                clientWindow={clientWindow}
               />
               <div className="flex flex-wrap items-center gap-3 px-4 py-3">
                 <span className="text-[10px] uppercase tracking-wider text-fg-muted">

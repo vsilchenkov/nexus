@@ -391,6 +391,35 @@ func (u *LogsUsecase) ClientHosts(ctx context.Context, nodeID, teamID string) ([
 	return u.logs.DistinctClientHosts(ctx, n.ClickHouseTable, n.ID, 0)
 }
 
+// clientsDefaultWindow — окно фасета «Клиент» без from (§105.3). Фасет
+// читается на каждом раскрытии дропдауна: вся таблица узла стоила бы дорого
+// и ставила бы клиента полугодовой давности наравне с сегодняшним.
+const clientsDefaultWindow = 24 * time.Hour
+
+// Clients — фасет «Клиент» (§105.3): пары «IP — имя» узла с числом записей
+// за период [sinceMs, untilMs]. Без sinceMs окно — clientsDefaultWindow до
+// untilMs (или до текущего момента). Остальные фильтры экрана фасет не
+// учитывает. teamID — scope.
+func (u *LogsUsecase) Clients(ctx context.Context, nodeID, teamID string, sinceMs, untilMs int64) ([]port.LogClient, bool, error) {
+	n, err := u.resolveNode(ctx, nodeID, teamID)
+	if err != nil {
+		return nil, false, err
+	}
+	q := port.LogQuery{Table: n.ClickHouseTable, NodeID: n.ID, SinceMs: sinceMs, UntilMs: untilMs}
+	if q.SinceMs <= 0 {
+		end := q.UntilMs
+		if end <= 0 {
+			end = u.clock.Now().UnixMilli()
+		}
+		q.SinceMs = end - clientsDefaultWindow.Milliseconds()
+		u.logger.Debug("logs clients: no from, default window applied",
+			u.logger.Str("node_id", n.ID), u.logger.Any("since_ms", q.SinceMs),
+			u.logger.Any("until_ms", q.UntilMs))
+	}
+	u.applyDateCreateAligned(&q, n)
+	return u.logs.DistinctClients(ctx, q, 0)
+}
+
 // DateRange — min/max date_request узла в UnixMilli (§48.3, ограничение полей
 // дат фильтра). (0, 0) — записей нет, ограничения не ставятся. teamID — scope.
 func (u *LogsUsecase) DateRange(ctx context.Context, nodeID, teamID string) (int64, int64, error) {

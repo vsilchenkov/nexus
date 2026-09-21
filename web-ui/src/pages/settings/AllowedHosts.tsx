@@ -5,6 +5,8 @@ import { Plus, Pencil, Trash2, Check, X } from "lucide-react";
 
 import { api, type HostAllowlistEntry, type HostKind } from "../../api/client";
 import { Button, Chip, Input, Modal, SearchInput, Seg, type SegOption } from "../../components/ui";
+import { CatalogNodesDialog } from "../../components/CatalogNodesDialog";
+import { CatalogUsageCell } from "../../components/CatalogUsageCell";
 import { useConfirm } from "../../lib/confirm";
 
 type ListResp = { items: HostAllowlistEntry[] };
@@ -27,6 +29,9 @@ export function AllowedHostsPanel() {
   const [kind, setKind] = useState<"" | HostKind>("");
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState<HostAllowlistEntry | "new" | null>(null);
+  // §104: чей список узлов открыт. Имя хранится здесь, число — берётся из
+  // живой строки таблицы (диалог сверяет его с ответом).
+  const [usageOf, setUsageOf] = useState<{ id: string; name: string } | null>(null);
 
   const list = useQuery({
     queryKey: ["allowed-hosts", kind, q],
@@ -95,9 +100,12 @@ export function AllowedHostsPanel() {
                 </td>
                 <td className="px-2.5 py-2 text-fg-muted">{h.description || "—"}</td>
                 <td className="px-2.5 py-2 text-fg-muted">
-                  {h.usage_count > 0
-                    ? t("settings.allowed_hosts.used", { count: h.usage_count })
-                    : t("settings.allowed_hosts.not_used")}
+                  <CatalogUsageCell
+                    count={h.usage_count}
+                    usedLabel={t("settings.allowed_hosts.used", { count: h.usage_count })}
+                    notUsedLabel={t("settings.allowed_hosts.not_used")}
+                    onOpen={() => setUsageOf({ id: h.id, name: h.pattern })}
+                  />
                 </td>
                 <td className="whitespace-nowrap px-2.5 py-2 text-right">
                   <button
@@ -121,7 +129,7 @@ export function AllowedHostsPanel() {
                       }
                     }}
                     disabled={h.usage_count > 0}
-                    title={h.usage_count > 0 ? t("settings.allowed_hosts.in_use_tip") : t("common.delete")}
+                    title={h.usage_count > 0 ? t("settings.allowed_hosts.delete_in_use_tip") : t("common.delete")}
                     className="rounded p-1 text-err hover:bg-bg-3 disabled:cursor-not-allowed disabled:opacity-30"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -131,6 +139,16 @@ export function AllowedHostsPanel() {
             ))}
           </tbody>
         </table>
+      )}
+
+      {usageOf && (
+        <CatalogNodesDialog
+          kind="host"
+          id={usageOf.id}
+          name={usageOf.name}
+          usageCount={list.data?.items.find((h) => h.id === usageOf.id)?.usage_count ?? 0}
+          onClose={() => setUsageOf(null)}
+        />
       )}
 
       {editing && (

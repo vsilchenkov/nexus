@@ -68,6 +68,14 @@ export function setTeamScopeAll(all: boolean): void {
   listeners.forEach((l) => l());
 }
 
+// resetTeamScope — выключить режим и стереть зеркало при начале новой сессии
+// (§104.8, lib/userSession.ts). Зеркало стирается безусловно: setTeamScopeAll
+// при уже выключенном режиме ничего не пишет.
+export function resetTeamScope(): void {
+  writeMirror(false);
+  setTeamScopeAll(false);
+}
+
 // useAllTeamsScope — включён ли сквозной режим.
 export function useAllTeamsScope(): boolean {
   return useSyncExternalStore(subscribe, () => allTeamsScope, () => false);

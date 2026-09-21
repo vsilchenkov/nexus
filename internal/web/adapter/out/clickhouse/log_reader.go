@@ -1431,6 +1431,103 @@ func (r *LogReaderCH) DistinctClientHosts(ctx context.Context, table, nodeID str
 	return out, nil
 }
 
+// maxLogClients — кап значений фасета «Клиент» (§105.3), как
+// maxDistinctClientHosts.
+const maxLogClients = 200
+
+// clientsSQL — фасет «Клиент» (§105.3). Группировка по IP: имя производно от
+// IP и бывает пустым (нет PTR, холодный кеш резолвера), поэтому такие записи
+// засчитываются к своему IP, а подписью становится самое свежее непустое имя
+// за окно. k разделяет строки с пустым IP (внешние таблицы §64) по
+// client_host. %s — таблица и WHERE.
+const clientsSQL = `SELECT IP, if(IP = '', client_host, '') AS k,
+	argMaxIf(client_host, date_request, client_host != '') AS host,
+	uniqExact(ID) AS n
+FROM %s%s
+GROUP BY IP, k
+ORDER BY n DESC, IP, k
+LIMIT ?`
+
+// clientsNoHostSQL — тот же фасет для таблицы без колонки client_host (§64 до
+// ручного ALTER владельцем): только IP.
+const clientsNoHostSQL = `SELECT IP, '' AS k, '' AS host, uniqExact(ID) AS n
+FROM %s%s
+GROUP BY IP
+ORDER BY n DESC, IP
+LIMIT ?`
+
+// DistinctClients — фасет «Клиент» (§105.3), контракт — port.LogReader.
+// Условия — searchConds по запросу, урезанному до узла и периода: окно и
+// отсечение партиций §72.4 те же, что у списка и /logs/count. Потолок
+// длительности — countTimeout, как у count(): uniqExact по окну той же цены.
+func (r *LogReaderCH) DistinctClients(ctx context.Context, q port.LogQuery, limit int) ([]port.LogClient, bool, error) {
+	if !isSafeTableName(q.Table) {
+		return nil, false, fmt.Errorf("invalid table name: %q", q.Table)
+	}
+	if limit <= 0 || limit > maxLogClients {
+		limit = maxLogClients
+	}
+	cctx, cancel := context.WithTimeout(ctx, countTimeout)
+	defer cancel()
+
+	conds, args := r.searchConds(cctx, port.LogQuery{
+		Table: q.Table, NodeID: q.NodeID, SinceMs: q.SinceMs, UntilMs: q.UntilMs,
+		DateCreateAligned: q.DateCreateAligned,
+	})
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	args = append(args, limit+1) // лишняя строка — признак усечения
+	conn, err := r.liveConn()
+	if err != nil {
+		return nil, false, err
+	}
+	start := time.Now()
+	items, err := scanLogClients(cctx, conn, fmt.Sprintf(clientsSQL, q.Table, where), args)
+	if err != nil && isMissingColumnErr(err, "client_host") {
+		// §51.9: тихая деградация — фиксируем причину на debug-уровне.
+		r.logger.Debug("distinct clients: client_host column missing, ip only (external table §64)",
+			r.logger.Str("table", q.Table))
+		items, err = scanLogClients(cctx, conn, fmt.Sprintf(clientsNoHostSQL, q.Table, where), args)
+	}
+	if err != nil {
+		return nil, false, classifyCHErr("clickhouse distinct clients", err)
+	}
+	truncated := len(items) > limit
+	if truncated {
+		items = items[:limit]
+	}
+	r.logger.Debug("distinct clients: done",
+		r.logger.Str("table", q.Table), r.logger.Int("rows", len(items)),
+		r.logger.Any("truncated", truncated),
+		r.logger.Int("duration_ms", int(time.Since(start).Milliseconds())))
+	return items, truncated, nil
+}
+
+// scanLogClients выполняет запрос фасета «Клиент» и читает строки
+// (IP, k, host, n). k — только ключ группировки: у группы с пустым IP
+// argMaxIf и так возвращает её client_host.
+func scanLogClients(ctx context.Context, conn chdriver.Conn, query string, args []any) ([]port.LogClient, error) {
+	rows, err := conn.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []port.LogClient{}
+	for rows.Next() {
+		var (
+			c   port.LogClient
+			key string
+		)
+		if err := rows.Scan(&c.IP, &key, &c.Host, &c.Count); err != nil {
+			return nil, fmt.Errorf("scan client: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // DateRange — min/max date_request узла в UnixMilli (§48.3). count() в том же
 // запросе служит guard'ом: min() по пустому набору в CH возвращает epoch-1970,
 // а не NULL — при нуле строк отдаём (0, 0) («ограничений нет»).

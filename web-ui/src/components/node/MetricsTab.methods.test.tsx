@@ -79,7 +79,9 @@ beforeEach(() => {
     if (url.startsWith("/api/metrics/nodes/")) return Promise.resolve(metrics);
     if (url === "/api/settings/public") return Promise.resolve({ metrics_refetch_ms: 999_000 });
     if (url.includes("/logs/methods")) return Promise.resolve({ items: [LONG] });
-    if (url.includes("/logs/client-hosts")) return Promise.resolve({ items: [] });
+    if (url.includes("/logs/clients")) {
+      return Promise.resolve({ items: [{ ip: "192.168.2.5", host: "", count: 61 }], logs_available: true });
+    }
     return Promise.resolve({});
   });
 });
@@ -117,6 +119,21 @@ describe("MetricsTab: карточка «Запросы по методам» (�
     await waitFor(() => {
       const href = methodLinks()[0].getAttribute("href") ?? "";
       expect(new URLSearchParams(href.slice(href.indexOf("?"))).get("q")).toBe("inn");
+    });
+  });
+
+  // §105.4: ссылка на журнал переносит и клиента — рейтинг посчитан под ним.
+  it("ссылка несёт клиента (ip)", async () => {
+    renderTab();
+    await waitFor(() => expect(methodLinks()).toHaveLength(2));
+
+    fireEvent.click(screen.getByRole("button", { name: "logs.advanced.toggle_on" }));
+    fireEvent.click(screen.getByRole("button", { name: "logs.advanced.client_any" }));
+    fireEvent.click(await screen.findByText("192.168.2.5"));
+
+    await waitFor(() => {
+      const href = methodLinks()[0].getAttribute("href") ?? "";
+      expect(new URLSearchParams(href.slice(href.indexOf("?"))).get("ip")).toBe("192.168.2.5");
     });
   });
 

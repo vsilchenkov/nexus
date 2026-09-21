@@ -402,6 +402,7 @@ type methodStatDTO struct {
 // @Param    q_regex      query  string  false  "1 — режим регулярного выражения"
 // @Param    method       query  string  false  "фильтр по колонке method"
 // @Param    client_host  query  string  false  "фильтр по хосту клиента (§67)"
+// @Param    ip           query  string  false  "фильтр по IP клиента (фильтр «Клиент», §105.4)"
 // @Param    status       query  string  false  "ok | err (§72.1)"
 // @Param    done         query  string  false  "yes | no"
 // @Param    with_methods query  string  false  "1 — добавить рейтинг по колонке method (§102)"

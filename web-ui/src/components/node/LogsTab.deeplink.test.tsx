@@ -79,6 +79,15 @@ describe("LogsTab: фильтры дип-линка (§102.6)", () => {
     expect(first.client_host).toBe("app-01");
   });
 
+  // §105.4: клиент из ссылки — параметр ip, общий для списка и счётчика.
+  it("клиент из ссылки уходит как ip первым запросом", async () => {
+    renderTab({ clientIp: "192.168.2.5" });
+    await waitFor(() => expect(logsCalls.length).toBeGreaterThan(0));
+    expect(logsCalls[0].ip).toBe("192.168.2.5");
+    expect(logsCalls[0].client_host).toBeUndefined();
+    expect(screen.getByText("logs.advanced.toggle_off")).toBeTruthy();
+  });
+
   it("панель расширенных фильтров раскрыта — видно, чем отобран список", async () => {
     renderTab({ method: "v1/suggest" });
     await waitFor(() => expect(logsCalls.length).toBeGreaterThan(0));

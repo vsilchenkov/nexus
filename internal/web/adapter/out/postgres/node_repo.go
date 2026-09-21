@@ -203,9 +203,11 @@ func (r *NodeRepoPg) List(ctx context.Context, f port.ListNodesFilter) ([]*domai
 		args = append(args, f.RootMethod)
 	}
 	if f.Search != "" {
-		q += fmt.Sprintf(" AND (path ILIKE $%d OR target_url ILIKE $%d)", len(args)+1, len(args)+2)
-		like := "%" + f.Search + "%"
-		args = append(args, like, like)
+		// §103: комментарий ищется наравне с путём и адресом — одно условие и
+		// один параметр на все три поля, поэтому правка разом действует в шапке
+		// (§62), на «Узлах» (§54) и в сквозном режиме (§86).
+		q += fmt.Sprintf(" AND (path ILIKE $%[1]d OR target_url ILIKE $%[1]d OR comment ILIKE $%[1]d)", len(args)+1)
+		args = append(args, "%"+f.Search+"%")
 	}
 	q += " ORDER BY path"
 	if f.Limit > 0 {

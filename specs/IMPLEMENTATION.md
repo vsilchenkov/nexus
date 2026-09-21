@@ -6350,3 +6350,189 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
   БЕЗ колонки `method`: карточка сообщает «Разбивка по методам недоступна», KPI (253) и график
   живы, а в лог уходит DBG, не WRN (проверено поднятием уровня до debug на время прогона).
   Тестовые данные и узлы оставлены в стеке `services` по просьбе пользователя.
+
+### 4.88 §103 — поиск узла по комментарию: одно условие на три поля и сниппет «почему в выдаче»
+
+Раздел [103-node-search-comment.md](sections/103-node-search-comment.md). Ветка
+`feature/search-usage-clients` (общая с §104 и §105). Статус ✅ — блоки 103.1–103.3, ревизия и стенд
+пройдены при сдаче ветки (Phase 106.1, итог — в §4.90).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §103 | ✅ Phase 103.1 | [sections/103-node-search-comment.md](sections/103-node-search-comment.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); §62.6 и §29.6 ссылаются на §103 |
+| SQL поиска: `comment` третьим полем, один параметр; `comment` в выдаче `/api/search/nodes`; swagger | ✅ Phase 103.2 | [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go) `List`, [port/node_repo.go](../internal/web/usecase/port/node_repo.go) `ListNodesFilter.Search`, [node_handler.go](../internal/web/adapter/in/http/node_handler.go) `NodeSearchItem.Comment`, [docs/web/](../docs/web/); тесты [node_search_test.go](../tests/integration/node_search_test.go) `TestNodeSearch_CommentMatch_E2E` (PG 12, кириллица в трёх регистрах, три потребителя, чужая команда), [node_search_handler_test.go](../internal/web/adapter/in/http/node_search_handler_test.go) |
+| Сниппет «совпадение в комментарии»: шапка, таблица и карточки «Узлов» | ✅ Phase 103.3 | [commentSnippet.ts](../web-ui/src/lib/commentSnippet.ts) (`commentSnippet`, `commentOnlyHit`, `containsFolded`) + [тест](../web-ui/src/lib/commentSnippet.test.ts), [CommentSnippet.tsx](../web-ui/src/components/CommentSnippet.tsx), [GlobalSearch.tsx](../web-ui/src/components/GlobalSearch.tsx) + [GlobalSearch.test.tsx](../web-ui/src/components/GlobalSearch.test.tsx), [searchHistory.ts](../web-ui/src/lib/searchHistory.ts) (`NodeSearchResp.q`), [Overview.tsx](../web-ui/src/pages/Overview.tsx) (`snippets`), [Overview.clickzone.test.tsx](../web-ui/src/pages/Overview.clickzone.test.tsx), плейсхолдеры `search.placeholder`/`overview.search_placeholder`, ключ `search.comment_match` |
+
+- **Одно условие на три поля и ОДИН параметр.** `path ILIKE $n OR target_url ILIKE $n OR comment ILIKE $n`
+  (`%[1]d` в `Sprintf`). Правка в `NodeRepoPg.List` — единственная точка: этим SQL пользуются
+  глобальный поиск §62, поле «Поиск» на «Узлах» §54 и сквозной режим §86. Вводить отдельный
+  «поиск по комментарию» значило бы получить два поиска с разной семантикой.
+- **Сниппет считается на клиенте, но по правилам PostgreSQL.** ILIKE сворачивает регистр
+  посимвольно (`towlower`). Поэтому `fold()` идёт по кодпоинтам и строит карту «единица UTF-16
+  свёрнутой строки → кодпоинт исходной»: `"İ".toLowerCase()` даёт две единицы, и без карты
+  индекс совпадения в `"İİİ сдэк"` съезжал на три символа (тест). Свёртка всей строки разом дала
+  бы контекстную финальную сигму, которой у PG нет; `toLocaleLowerCase` в турецкой локали
+  ломает `I`. Где правила всё же расходятся — `null`: пропадает подсказка, а не узел.
+- **Сниппет строится по строке, ушедшей на сервер.** В шапке выдача держится
+  `keepPreviousData`, и пока едет ответ на «сдэк», на экране выдача по «сд». Поэтому `queryFn`
+  кладёт в данные свою строку (`NodeSearchResp.q`), а сниппет берёт её, а не текст поля. На
+  «Узлах» строка берётся из URL-параметра `q` — того же, что в ключе запроса списка.
+- **Таблица: сниппет внутри ссылки, карточка: вне подъёма.** В ячейке пути сниппет — второй
+  поднятый (`relative z-[1]`) элемент ссылки, как текст пути (§100): строка остаётся одной
+  ссылкой, текст выделяется. В карточке сниппет стоит отдельной строкой над адресом и НЕ
+  поднят: клик по нему должен открывать узел, иначе в карточке появилась бы мёртвая зона.
+  Тест держит оба контракта (`expectStretchedTo` при сниппете, отсутствие `ABOVE_STRETCH`).
+
+### 4.89 §104 — узлы, использующие элемент справочника: один предикат на счётчик и список
+
+Раздел [104-catalog-usage.md](sections/104-catalog-usage.md). Ветка
+`feature/search-usage-clients` (общая с §103 и §105). Статус ✅ — блоки 104.1–104.6, ревизия и
+стенд пройдены при сдаче ветки (Phase 106.1, итог — в §4.90).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §104 | ✅ Phase 104.1 | [sections/104-catalog-usage.md](sections/104-catalog-usage.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); ссылки из §23.4, §24.4, §99.9 |
+| Порт и SQL-адаптер (§104.2, §104.4) | ✅ Phase 104.2 | порт [port/catalog_usage.go](../internal/web/usecase/port/catalog_usage.go) (`CatalogNodeLister`); общий запрос [postgres/catalog_usage.go](../internal/web/adapter/out/postgres/catalog_usage.go); предикаты `groupNodeMatch` / `headerNodeMatch` / `hostNodeMatch` и методы `NodesUsing` в [node_group_repo.go](../internal/web/adapter/out/postgres/node_group_repo.go), [header_catalog_repo.go](../internal/web/adapter/out/postgres/header_catalog_repo.go), [host_allowlist_repo.go](../internal/web/adapter/out/postgres/host_allowlist_repo.go); integration [catalog_usage_test.go](../tests/integration/catalog_usage_test.go) (группа `test-int-catalog`) |
+| Usecase, API, маршруты (§104.3, §104.4) | ✅ Phase 104.3 | [usecase/catalog_usage.go](../internal/web/usecase/catalog_usage.go) (`CatalogUsageUsecase`, карта «вид → lister», `hidden = max(0, total − visible)`, потолок 500); `TeamMembershipLister` переехал в [team_scope.go](../internal/web/usecase/team_scope.go), `teamScope` принимает его вместо `port.TeamRepo`; handler [catalog_usage_handler.go](../internal/web/adapter/in/http/catalog_usage_handler.go) (`GroupNodes` / `HeaderNodes` / `HostNodes`, 404 — ключи `node_group.not_found` / `header.not_found` / `host.not_found`); маршруты `GET /api/{node-groups,headers,allowed-hosts}/:id/nodes` под `RequireSessionOnly` в [routes.go](../internal/web/adapter/in/http/routes.go); сборка в [app.go](../internal/web/app.go); тесты: usecase, handler, [routes_role_test.go](../internal/web/adapter/in/http/routes_role_test.go) (все роли ≠403 и ≠404, API-токен → 403) |
+| Диалог «узлы элемента» (§104.5) | ✅ Phase 104.4 | [components/CatalogNodesDialog.tsx](../web-ui/src/components/CatalogNodesDialog.tsx) (строки — `<Link>` с растянутой ссылкой §100, «не действует» у хоста при `url_mode ≠ from_request`, hidden / all_hidden / truncated, фильтр при > 8 строк, «Показать на рабочем столе» только у групп, 404 и расхождение `total` со счётчиком перечитывают таблицу); [lib/catalogUsage.ts](../web-ui/src/lib/catalogUsage.ts) (URL, ключи, `invalidateCatalogUsage`, `groupDesktopHref`); типы `CatalogNode` / `CatalogNodesResp` в [api/client.ts](../web-ui/src/api/client.ts); i18n `catalog_nodes.*` и `settings.*.delete_in_use_tip`; `catalog-nodes` в `TEAM_INDEPENDENT_KEYS` |
+| Кнопка-счётчик в Настройках (§104.5) | ✅ Phase 104.5 | [components/CatalogUsageCell.tsx](../web-ui/src/components/CatalogUsageCell.tsx) («узлов: N» — `<button aria-haspopup="dialog">`, «не используется» — текст); диалог на уровне страницы в [NodeGroups.tsx](../web-ui/src/pages/settings/NodeGroups.tsx), [Headers.tsx](../web-ui/src/pages/settings/Headers.tsx), [AllowedHosts.tsx](../web-ui/src/pages/settings/AllowedHosts.tsx); подсказка заблокированного удаления — `delete_in_use_tip`; тесты [NodeGroups.test.tsx](../web-ui/src/pages/settings/NodeGroups.test.tsx), [CatalogUsage.settings.test.tsx](../web-ui/src/pages/settings/CatalogUsage.settings.test.tsx) |
+| Актуальность счётчиков (§104.6) | ✅ Phase 104.6 | `invalidateCatalogUsage` после привязки и отвязки хоста в [AllowedHostsField.tsx](../web-ui/src/components/node/AllowedHostsField.tsx), сохранения узла в [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx), удаления в [DeleteNodeDialog.tsx](../web-ui/src/components/node/DeleteNodeDialog.tsx), копирования в [NodeDetail.tsx](../web-ui/src/pages/NodeDetail.tsx) (копия переносит и привязки хостов, `copyHostLinks`); тест [AllowedHostsField.test.tsx](../web-ui/src/components/node/AllowedHostsField.test.tsx) |
+| Окна — модальные диалоги; вход стирает состояние прежней сессии (§104.8) | ✅ Phase 104.7, 104.8 | [ui/DialogFrame.tsx](../web-ui/src/components/ui/DialogFrame.tsx) — `role="dialog"`, `aria-modal`, обязательный `labelledBy`, фокус в окно и назад на источник, Tab по кругу (порталы не трогает), Esc; на нём [ui/Modal.tsx](../web-ui/src/components/ui/Modal.tsx) (имя — заголовок, описание — подзаголовок, подпись у крестика) и самописные окна [Teams.tsx](../web-ui/src/pages/settings/Teams.tsx), [Users.tsx](../web-ui/src/pages/settings/Users.tsx), [OrphanTablesPanel.tsx](../web-ui/src/components/OrphanTablesPanel.tsx). [lib/userSession.ts](../web-ui/src/lib/userSession.ts) `resetUserSessionState` (зеркала §54 `clearFilters`, §62 строка поиска, §86 `resetTeamScope` — и память модуля, и хранилище) зовёт [Login.tsx](../web-ui/src/pages/Login.tsx) при монтировании. Тесты: [Modal.test.tsx](../web-ui/src/components/ui/Modal.test.tsx) (роль/имя/описание, крестик и Esc, фокус туда и обратно, autoFocus, Tab по кругу, середина окна не перехватывается; Esc, закрывший выпадающий список, окно не закрывает — Phase 104.8), [Users.role.test.tsx](../web-ui/src/pages/settings/Users.role.test.tsx) (самописное окно — диалог с именем), [Login.test.tsx](../web-ui/src/pages/Login.test.tsx) (сброс трёх зеркал и режима; `localStorage` не тронут) — регрессионные красные на старом коде |
+
+**Неочевидности §104.**
+
+- **Предикат ссылается на таблицу справочника по имени, а не через псевдоним.** `usage_count`
+  строится коррелированным подзапросом внутри `SELECT … FROM node_groups`, общий запрос §104 —
+  внутри `FROM node_groups CROSS JOIN LATERAL (…)`. В обоих местах `node_groups.id` видно из
+  подзапроса, поэтому одна константа работает без правки остальных SELECT'ов репозитория.
+- **Нет элемента → ноль строк, элемент без видимых узлов → одна строка с NULL.** Так один оператор
+  отличает 404 от пустого списка без второго запроса. Колонки узла сканируются в `*string`.
+- **У хостов `usage_count` — колонка с триггером, а не выражение.** Список считает `total` по той же
+  таблице `node_allowed_hosts`, которую ведёт триггер (в том числе при каскадном удалении узла),
+  поэтому числа совпадают; integration-тест сверяет `total` с `Get().UsageCount` для всех трёх видов.
+- **`catalog-nodes` — в `TEAM_INDEPENDENT_KEYS`**, как `node-search`: ответ зависит от членств, а
+  не от текущей команды. План предлагал обратное, но смена команды ничего в ответе не меняет, а
+  диалог и так перечитывает список при каждом открытии (`staleTime: 0`, `refetchOnMount: "always"`).
+- **Диалог держит страница, а не строка таблицы.** Диалог сам перечитывает таблицу (404 или
+  расхождение `total`). После этого строка может исчезнуть (элемент удалён) или смениться на
+  «не используется» (узлов не осталось), и диалог внутри строки закрылся бы, не показав почему.
+  Страница хранит `{id, name}`, а число берёт из живой строки (`?? 0`, если строки уже нет).
+- **Ссылка «Показать на рабочем столе» вынесена в `GroupDesktopLink`.** Guard-тест
+  `interactiveNesting.guard.test.ts` ищет `<Button` в пределах 200 символов после `<Link`, не
+  разбирая закрывающий тег. Соседство ссылки и кнопки «Закрыть» в футере давало ложное
+  срабатывание; guard не ослабляли.
+- **Грабля vitest: `beforeEach(() => mock.mockReset())` без фигурных скобок.** Функция,
+  возвращённая из `beforeEach`, для vitest — teardown, а `mockReset()` возвращает сам мок. После
+  теста vitest вызывает мок, и в тесте с отклонённым промисом (404) тест падает ошибкой
+  `{response:{status:404}}` уже ПОСЛЕ всех зелёных проверок.
+- **Тест маршрутов проверяет «≠404», а не только «≠403».** Handler'ы в `roleEngine` нулевые, и
+  разрешённый маршрут отвечает 500 (паника, пойманная Recovery). Незарегистрированный маршрут
+  отвечает 404, и одно «≠403» его пропуск не заметило бы. API-токен эмулируется
+  `newRoleEngine(role, true)`.
+- **22P02 → «не найдено».** Сканеры заголовков и хостов 22P02 не ловят (их `Get` на не-UUID даёт
+  500); общий запрос ловит сам. Скоуп команд из членств — всегда валидные UUID, так что 22P02
+  относится только к `id` элемента.
+- **Сброс состояния сессии — на странице входа, а не в «Выйти».** Конец сессии бывает трёх видов:
+  выход (переход без перезагрузки), 401 (перезагрузка на `/login` из интерцептора axios) и ручной
+  заход на `/login`. Общее у них одно — страница входа; сброс в обработчике «Выйти» пропустил бы
+  истёкшую сессию. Режим «Все команды» (§86) держит копию в памяти модуля — после выхода без
+  перезагрузки одного `sessionStorage.removeItem` мало, поэтому `resetTeamScope` пишет зеркало и
+  оповещает подписчиков. **Граница:** вход другим логином в соседней вкладке меняет общую куку, а в
+  эту вкладку страница входа не приходит — её зеркала остаются (данные чужой сессии при этом не
+  видны: выдачу строит сервер).
+- **`DialogFrame` без Radix Dialog.** `@radix-ui/react-dialog` в зависимостях нет, а новая
+  зависимость требует согласования (CLAUDE.md §12). Нужные правила — роль, имя, фокус, Tab —
+  укладываются в небольшой компонент. Ловушка Tab вмешивается только на краях окна: выпадающие
+  списки внутри окна живут в портале (React всплывает событие по своему дереву), и там фокус ведёт
+  браузер. Стенд подтвердил: Tab в поиске фильтра «Клиент» внутри «Повтора за период» остаётся в
+  выпадающем списке.
+- **Esc окна пропускает событие с `defaultPrevented` (Phase 104.8).** Обработчик Esc окна висит на
+  `window` (фаза всплытия), а Radix-слои (Popover, Select, Tooltip) ловят Esc раньше — в
+  capture-фазе на `document` — и, закрываясь, вызывают `preventDefault`. Без проверки один Esc
+  закрывал и список «Клиент», и всё окно «Повтор за период» с выбранными периодом и фильтрами;
+  нашёл стенд, юнит-тесты гоняли Esc без вложенных слоёв. Местная заплатка той же ошибки в окне
+  участников команды (`onEscapeKeyDown={(e) => e.stopPropagation()}` в
+  [Teams.tsx](../web-ui/src/pages/settings/Teams.tsx)) снята: правило теперь общее. **Граница:**
+  два наших окна друг над другом (`ConfirmProvider` поверх `Modal`) закрываются одним Esc оба —
+  их обработчики равноправны на `window`, и Radix тут ни при чём. Похожий обработчик у
+  `RejectedDrawer` (панель, не окно) не менялся: вложенных Radix-слоёв в ней нет.
+- **Playwright-локатор кнопки под подложкой.** `getByRole('button', {name:'7д'}).first()` находит
+  одноимённую кнопку страницы под окном, и клик упирается в подложку. В стендовых сценариях
+  ограничивать локатор окном: `getByRole('dialog').getByRole(...)` — теперь это возможно.
+
+### 4.90 §105 — клиент запроса в логах: фильтр по IP вместо «Хоста клиента»
+
+Раздел [105-log-client-filter.md](sections/105-log-client-filter.md). Ветка
+`feature/search-usage-clients`. Статус ✅ — блоки 105.1–105.4, сдача ветки — Phase 106.1.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §105 | ✅ Phase 105.1 | [sections/105-log-client-filter.md](sections/105-log-client-filter.md) (повод — разбор боевых узлов), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); пометка в §67.3 |
+| §105.5 резолвер: stale-while-revalidate | ✅ Phase 105.2 | [rdns/resolver.go](../internal/platform/rdns/resolver.go) `Lookup`: протухшая запись L1 отдаёт прежнее имя и ставит фоновое обновление под тем же `pending`-guard (одно на IP); `""` — только у промаха нового IP. Debug `rdns: serving stale host, refresh scheduled` пишется раз на обновление, а не на запрос. Тесты [resolver_test.go](../internal/platform/rdns/resolver_test.go) `TestResolver_Lookup_StaleWhileRevalidate` (16 вызовов → старое имя, ровно один lookup, затем новое; новый IP → `""`) и `…_StaleRefreshedToEmpty` (PTR исчез → имя честно обнуляется) — красные на старом коде. **Граница:** таймаут DNS при обновлении неотличим от NXDOMAIN и обнуляет имя на `negative_ttl_sec` — это закрывает фасет §105.3 (счёт по IP), а не резолвер |
+| §105.3 фасет «Клиент» `GET /api/nodes/{id}/logs/clients` | ✅ Phase 105.3 | Порт `LogReader.DistinctClients` + тип `LogClient` ([port/log_reader.go](../internal/web/usecase/port/log_reader.go)); адаптер [log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go) `DistinctClients` (`clientsSQL`: `GROUP BY IP, if(IP='', client_host, '')`, `argMaxIf` для имени, `uniqExact(ID)`, `LIMIT limit+1` → `truncated`; кап 200; потолок `countTimeout`); usecase [logs.go](../internal/web/usecase/logs.go) `Clients` (окно `clientsDefaultWindow` = 24 ч до `to`/«сейчас», `applyDateCreateAligned`); handler `Clients` + DTO `LogClientsResponse` ([dto_common.go](../internal/web/adapter/in/http/dto_common.go)), маршрут `RequireScope("logs:read")`, swagger (заодно `ip` в @Param у `/logs`, `/logs/count`, `/logs/stream`, `/metrics/nodes/{id}`). Тесты: integration [log_clients_test.go](../tests/integration/log_clients_test.go) (группа `test-int-ch` по `^TestLogReader`), unit `TestLogs_Clients`, handler `TestLogsClients` |
+| §105.4 фильтр «Клиент» | ✅ Phase 105.4 | [LogClientFilter.tsx](../web-ui/src/components/node/LogClientFilter.tsx) (замена удалённого `LogClientHostFilter`): строка — имя/«имя не определено», IP, число; выбор по IP (`{ip}`), у значения без IP — по имени (`{host}`), без обоих — неактивно; в поле имя из фасета, иначе IP; подпись окна и усечения — под списком (пункт «Любой» виден всегда, и `CommandEmpty` загрузку/недоступность не покажет). [logsQuery.ts](../web-ui/src/lib/logsQuery.ts): `clientIp` → параметр `ip`, `ClientWindow` (ключ + границы в момент запроса), `advFormClientWindow`, `clientWindowKind`. [nodeTabUrl.ts](../web-ui/src/lib/nodeTabUrl.ts): ключ `ip` в `LOG_WINDOW_PARAMS`, `LogsLinkFilter.clientIp`, `client_host` из старых ссылок читается. `LogsAdvancedFilters` (проп `clientWindow`: без полей дат обязателен по типам, с ними — даты журнала), `MetricsTab` и `ReplayPeriodDialog` (окно = период экрана через `periodClientWindow`; у вкладки ещё `clientIp` в ссылке), `LogsTab` (`initialFilter.clientIp`). i18n `logs.advanced.client*` вместо `client_host*`. Тесты: `LogClientFilter.test.tsx` (12), `logsQuery.test.ts` (`clientIp → ip`, окно), `nodeTabUrl.test.ts` (ip в ссылке, чистка, чтение), `LogsTab.deeplink` (ip первым запросом), `MetricsTab.filters` (ip в метриках, окно фасета = период), `MetricsTab.methods` (ip в ссылке рейтинга) |
+
+**Неочевидности §105.**
+
+- **Фасет строит WHERE общим `searchConds`, но по урезанному запросу** (`Table/NodeID/SinceMs/UntilMs/DateCreateAligned`).
+  Окно и отсечение партиций §72.4 поэтому совпадают со списком и `/logs/count` без копии кода, а фильтры экрана
+  (статус, `ip`, полнотекст) до фасета не доходят, даже если их передать. Иначе выбор клиента сужал бы свой же
+  дропдаун до одного значения.
+- **Проверка «нет колонки `client_host`» стоит ДО `classifyCHErr`.** `classifyCHErr` превращает missing
+  `client_host` в `ErrLogsBackendUnavailable` (§67, ради поллинга списка). Фасет обязан перехватить ошибку раньше и
+  повторить запрос без колонки (`clientsNoHostSQL`). Иначе на внешней таблице §64 до ручного ALTER UI показывал бы
+  «ClickHouse недоступен» вместо списка IP. Мутация «убрать fallback» роняет подтест integration-теста.
+- **Ключ `if(IP = '', client_host, '')`.** Без него все строки с пустым IP (внешние таблицы §64, которые пишет
+  посторонний сервис) слились бы в одну безымянную группу. С ним записи с IP группируются только по IP, а у строк
+  без IP значение задаёт имя.
+- **Без полей дат окно фасета передаётся явно, и это требуют типы.** У `LogsAdvancedFilters` проп
+  `clientWindow` обязателен при `showDates={false}` (объединение `DatesProps`). Запасной вариант
+  «поля "Дата с/по" применённого фильтра» на экранах без этих полей даёт пустое окно, и фасет
+  молча считает последние сутки. Так было в диалоге «Повтор за период» до ревизии (ниже).
+
+**Сдача ветки (Phase 106.1, 2026-09-21): ревизия и стенд по §103–§105.**
+
+Ревизия всего diff'а (`git diff dev...HEAD`) нашла:
+
+- **Регресс: фасет «Клиент» в диалоге «Повтор за период» (§85) всегда считал последние сутки.**
+  Диалог скрывает поля дат (`showDates={false}`) и окна не передавал, поэтому клиента, который слал
+  запросы три дня назад, нельзя было выбрать для повтора за неделю. До §105 диалог видел все имена
+  таблицы без окна. Исправлено: окно из периода диалога через общий хелпер `periodClientWindow`
+  ([logsQuery.ts](../web-ui/src/lib/logsQuery.ts), им же пользуется `MetricsTab`), проп
+  обязателен на уровне типов. Регресс-тест в
+  [ReplayPeriodDialog.test.tsx](../web-ui/src/components/node/ReplayPeriodDialog.test.tsx) (7 суток
+  в пикере → `to − from` запроса фасета = 7 суток), на старом коде красный.
+- **Диалог §104 после ошибки перечитывания показывал ошибку поверх прежнего списка.** Причина:
+  react-query при ошибке хранит прежние `data`. Сценарий: элемент удалили в другом окне, фокус
+  вернулся — «элемент удалён» и старые узлы одновременно. Исправлено: при ошибке данные не
+  рисуются. Тест в [CatalogNodesDialog.test.tsx](../web-ui/src/components/CatalogNodesDialog.test.tsx),
+  на старом коде красный.
+- Мелочи: удалены мёртвые ключи i18n (`settings.allowed_hosts.in_use_tip`,
+  `settings.groups.in_use_tip`, `catalog_nodes.open`; `settings.headers.in_use_tip` жив — его
+  показывает форма правки). Godoc `teamScope` больше не противоречит fail-closed-контракту
+  `CatalogNodeLister`. У `DistinctClients` появилась Debug-строка с исходом (строки, `truncated`,
+  длительность). В §105.4 и §105.6 записаны две границы: значение без IP фильтрует шире, чем
+  посчитал фасет; адрес с `ip` и `client_host` сразу применяет оба.
+
+Стенд (стек `services`, Playwright, бандл `index-*.js` новый) — всё сошлось с ТЗ:
+
+- §103: поиск «сдэк» в шапке и на «Узлах» (таблица и карточки) находит узел по комментарию
+  «…СДЭК…», сниппет с `<mark>`; Ctrl+клик по строке таблицы открывает новую вкладку.
+- §104: группа из 4 узлов — строки `<a href="/nodes/…">`, средняя кнопка открывает вкладку, при
+  открытии ровно один `GET …/nodes`; «Показать на рабочем столе» → `/?team=*&group=…`. Хост на
+  static-узле помечен «не действует». Отвязка хоста в форме узла сразу меняет «узлов: N» в
+  Настройках. Пользователь с одной командой видит «Всего узлов: 4 · в ваших командах: 1» и «Ещё 3
+  узла в командах, где вас нет»; в ответе API нет ни путей, ни id чужих узлов.
+- §105: запросы с `X-Forwarded-For` 8.8.8.8 / 192.168.86.246 / 10.255.255.1 / 127.0.0.1 —
+  в фасете все четыре, у IP без PTR «имя не определено» с числом (старый `/client-hosts` видел
+  только два имени). Выбор IP ставит `ip=` в список и `/logs/count`; дип-линк с `ip` раскрывает
+  панель; «Метрики» передают фасету окно ровно в период вкладки. Stale-while-revalidate живьём:
+  первая запись через 8 минут после прошлой (L1 = 5 минут) записалась с именем, до §105 там был
+  бы `""`.
+
+Найдено по дороге и было до ветки: общий `Modal` без `role="dialog"`; фильтры рабочего стола из
+sessionStorage (§54) переживали выход и вход другого пользователя в той же вкладке. По просьбе
+пользователя исправлено в той же ветке — §104.8, Phase 104.7 (строка в таблице §4.89 и
+неочевидности там же). Итоговый стендовый прогон ветки нашёл ещё один дефект, тоже бывший до
+ветки: Esc, закрывавший выпадающий список «Клиент» в «Повторе за период», закрывал и всё окно —
+исправлено в Phase 104.8.

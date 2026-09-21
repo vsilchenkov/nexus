@@ -54,6 +54,10 @@ func (stubLogReaderUnavailable) DistinctClientHosts(_ context.Context, _, _ stri
 	return nil, domain.ErrLogsBackendUnavailable
 }
 
+func (stubLogReaderUnavailable) DistinctClients(_ context.Context, _ port.LogQuery, _ int) ([]port.LogClient, bool, error) {
+	return nil, false, domain.ErrLogsBackendUnavailable
+}
+
 func (stubLogReaderUnavailable) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
 	return 0, 0, domain.ErrLogsBackendUnavailable
 }
@@ -81,6 +85,13 @@ func (stubLogReaderOK) DistinctClientHosts(_ context.Context, _, _ string, _ int
 	return []string{"srv-1c.vz78.vozovoz.ru"}, nil
 }
 
+func (stubLogReaderOK) DistinctClients(_ context.Context, _ port.LogQuery, _ int) ([]port.LogClient, bool, error) {
+	return []port.LogClient{
+		{IP: "192.168.2.5", Count: 61},
+		{IP: "192.168.86.246", Host: "SRV-P-1C-NODE3.vz78.vozovoz.ru", Count: 39},
+	}, true, nil
+}
+
 func (stubLogReaderOK) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
 	return 1_700_000_000_000, 1_800_000_000_000, nil
 }
@@ -95,6 +106,7 @@ func newLogsRouter(reader port.LogReader) *gin.Engine {
 	r.GET("/nodes/:id/logs/failed-count", h.CountFailed)
 	r.GET("/nodes/:id/logs/methods", h.Methods)
 	r.GET("/nodes/:id/logs/client-hosts", h.ClientHosts)
+	r.GET("/nodes/:id/logs/clients", h.Clients)
 	r.GET("/nodes/:id/logs/count", h.Count)
 	r.GET("/nodes/:id/logs/date-range", h.DateRange)
 	return r
@@ -504,4 +516,78 @@ func TestLogsBodyDownload_OK(t *testing.T) {
 	assert.Contains(t, w.Header().Get("Content-Disposition"), "attachment")
 	assert.Contains(t, w.Header().Get("Content-Disposition"), "response-l1.txt")
 	assert.Equal(t, "text/plain; charset=utf-8", w.Header().Get("Content-Type"))
+}
+
+// stubClientsCapture — фиксирует запрос фасета «Клиент» (§105.3).
+type stubClientsCapture struct {
+	stubLogReaderOK
+	last port.LogQuery
+}
+
+func (s *stubClientsCapture) DistinctClients(_ context.Context, q port.LogQuery, _ int) ([]port.LogClient, bool, error) {
+	s.last = q
+	return nil, false, nil
+}
+
+// TestLogsClients — §105.3: форма ответа (ip, host, count, truncated), период
+// из from/to, остальные фильтры журнала до фасета не доходят, деградации — как
+// у остальных фасетов.
+func TestLogsClients(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ok: пары ip-имя с числом записей", func(t *testing.T) {
+		t.Parallel()
+		w := httptest.NewRecorder()
+		newLogsRouter(stubLogReaderOK{}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/clients", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.JSONEq(t, `{
+			"items": [
+				{"ip": "192.168.2.5", "host": "", "count": 61},
+				{"ip": "192.168.86.246", "host": "SRV-P-1C-NODE3.vz78.vozovoz.ru", "count": 39}
+			],
+			"truncated": true, "logs_configured": true, "logs_available": true
+		}`, w.Body.String())
+	})
+
+	t.Run("пустой результат — items: []", func(t *testing.T) {
+		t.Parallel()
+		w := httptest.NewRecorder()
+		newLogsRouter(&stubClientsCapture{}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/clients", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), `"items":[]`)
+	})
+
+	t.Run("период из from/to, фильтры журнала не доходят", func(t *testing.T) {
+		t.Parallel()
+		stub := &stubClientsCapture{}
+		w := httptest.NewRecorder()
+		newLogsRouter(stub).ServeHTTP(w, httptest.NewRequest(http.MethodGet,
+			"/nodes/n1/logs/clients?from=1000&to=2000&ip=1.2.3.4&status=err&q=foo", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.EqualValues(t, 1000, stub.last.SinceMs)
+		assert.EqualValues(t, 2000, stub.last.UntilMs)
+		assert.Empty(t, stub.last.IP, "фасет считает по узлу и периоду")
+		assert.Empty(t, stub.last.Status)
+		assert.Empty(t, stub.last.Q)
+	})
+
+	t.Run("ch unavailable → 200 + logs_available=false", func(t *testing.T) {
+		t.Parallel()
+		w := httptest.NewRecorder()
+		newLogsRouter(stubLogReaderUnavailable{}).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/clients", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.JSONEq(t, `{"items": [], "truncated": false, "logs_configured": true, "logs_available": false}`, w.Body.String())
+	})
+
+	t.Run("узел без таблицы → 200 + logs_configured=false", func(t *testing.T) {
+		t.Parallel()
+		gin.SetMode(gin.TestMode)
+		uc := usecase.NewLogsUsecase(stubLogReaderOK{}, stubNodeRepoCH{node: &domain.Node{}}, logging.NewNoop())
+		r := gin.New()
+		r.GET("/nodes/:id/logs/clients", NewLogsHandler(uc, logging.NewNoop()).Clients)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/nodes/n1/logs/clients", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.JSONEq(t, `{"items": [], "truncated": false, "logs_configured": false, "logs_available": false}`, w.Body.String())
+	})
 }

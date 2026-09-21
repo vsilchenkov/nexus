@@ -39,7 +39,7 @@ func NewNodeHandler(uc *usecase.NodeUsecase, health RMQHealthReader, logger logg
 // @Tags     nodes
 // @Produce  json
 // @Param    scope        query  string  false  "all — узлы всех команд пользователя (§86)"
-// @Param    search       query  string  false  "поиск по path или target_url"
+// @Param    search       query  string  false  "поиск подстроки в path, target_url или comment (§103)"
 // @Param    root_method  query  string  false  "request | requestAsync"
 // @Param    limit        query  int     false  "лимит, max 500"
 // @Param    offset       query  int     false  "смещение"
@@ -425,6 +425,8 @@ func (h *NodeHandler) ResolveTeam(c *gin.Context) {
 
 // NodeSearchItem — один узел в выдаче глобального поиска (§62): минимум для
 // строки выпадающего списка + команда-владелец для бейджа и авто-переключения.
+// Comment (§103) — из него фронт строит сниппет, когда узел попал в выдачу
+// только благодаря комментарию.
 type NodeSearchItem struct {
 	ID         string `json:"id"`
 	Path       string `json:"path"`
@@ -434,6 +436,7 @@ type NodeSearchItem struct {
 	TeamID     string `json:"team_id"`
 	TeamSlug   string `json:"team_slug"`
 	TeamName   string `json:"team_name"`
+	Comment    string `json:"comment"`
 }
 
 // SearchNodesResponse — GET /api/search/nodes (§62).
@@ -443,7 +446,7 @@ type SearchNodesResponse struct {
 
 // SearchAcrossTeams godoc
 // @Summary  Глобальный поиск узлов по всем командам пользователя.
-// @Description  §62: ILIKE по path/target_url в пределах членств пользователя. Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе). Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список (не ошибка).
+// @Description  §62: ILIKE по path/target_url/comment (§103) в пределах членств пользователя. Каждый узел — с командой-владельцем (для бейджа и авто-переключения при выборе). Только session-cookie: API-токены однокомандные. q короче 2 рун → пустой список (не ошибка).
 // @Tags     nodes
 // @Produce  json
 // @Param    q      query  string  true   "поисковая строка (≥ 2 рун)"
@@ -480,6 +483,7 @@ func (h *NodeHandler) SearchAcrossTeams(c *gin.Context) {
 			TeamID:     hit.Node.TeamID,
 			TeamSlug:   hit.TeamSlug,
 			TeamName:   hit.TeamName,
+			Comment:    hit.Node.Comment,
 		})
 	}
 	c.JSON(http.StatusOK, SearchNodesResponse{Items: items})

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
@@ -7,7 +7,7 @@ import { generatePassword, passwordStrength } from "../../lib/password";
 import { useConfirm } from "../../lib/confirm";
 import type { Role } from "../../lib/roles";
 import { MY_TEAMS_KEY } from "../../lib/teams";
-import { SearchInput } from "../../components/ui";
+import { DialogFrame, SearchInput } from "../../components/ui";
 import { PASSWORD_MANAGER_OFF } from "../../lib/secretMask";
 
 // TeamBrief — команда пользователя для колонки «Команды» (§44.G).
@@ -441,6 +441,7 @@ type TeamListItem = { id: string; slug: string; name: string };
 // default-команда) — оно остаётся в диалоге участников команды.
 function UserTeamsDialog({ user, onClose }: { user: User; onClose: () => void }) {
   const { t } = useTranslation();
+  const titleId = useId();
   const qc = useQueryClient();
   const confirm = useConfirm();
 
@@ -521,10 +522,10 @@ function UserTeamsDialog({ user, onClose }: { user: User; onClose: () => void })
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} labelledBy={titleId}>
       <div className="space-y-4 w-[460px] max-w-full">
         <header>
-          <h3 className="text-lg font-semibold">
+          <h3 id={titleId} className="text-lg font-semibold">
             {t("settings.users.teams_dialog.title", { name: user.name || user.login })}
           </h3>
         </header>
@@ -659,6 +660,7 @@ type UserDialogProps = {
 
 function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: UserDialogProps) {
   const { t } = useTranslation();
+  const titleId = useId();
   const resetReady = usePasswordResetReady();
 
   const [login, setLogin] = useState(initial?.login ?? "");
@@ -716,13 +718,13 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
       : true;
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} labelledBy={titleId}>
       {/* §87.5: четвёртая роль добавила ряд карточек — без ограничения высоты
           форма создания выталкивала бы кнопки за нижний край на низких экранах
           (у Modal своей прокрутки нет). */}
       <div className="space-y-4 w-[460px] max-w-full max-h-[80vh] overflow-y-auto pr-1">
         <header>
-          <h3 className="text-lg font-semibold">
+          <h3 id={titleId} className="text-lg font-semibold">
             {mode === "create"
               ? t("settings.users.dialog.new_title")
               : t("settings.users.dialog.edit_title", { login: initial?.name || initial?.login })}
@@ -938,6 +940,7 @@ type PasswordDialogProps = {
 
 function PasswordDialog({ user, onClose, onSaved }: PasswordDialogProps) {
   const { t } = useTranslation();
+  const titleId = useId();
   const [password, setPassword] = useState("");
   const [mustChange, setMustChange] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -958,10 +961,10 @@ function PasswordDialog({ user, onClose, onSaved }: PasswordDialogProps) {
   const canSubmit = password.length >= 8 && !submit.isPending;
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} labelledBy={titleId}>
       <div className="space-y-4 w-[400px] max-w-full">
         <header>
-          <h3 className="text-lg font-semibold">
+          <h3 id={titleId} className="text-lg font-semibold">
             {t("settings.users.password_dialog.title", { login: user.name || user.login })}
           </h3>
         </header>
@@ -1045,21 +1048,20 @@ function PasswordMeter({ score, labelKey }: { score: 0 | 1 | 2 | 3 | 4; labelKey
 }
 
 // Закрытие ТОЛЬКО явным действием (Esc / «Отмена», §21): клик по подложке не
-// закрывает — случайный клик мимо окна терял введённые данные формы.
-function Modal({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
+// закрывает — случайный клик мимо окна терял введённые данные формы. Семантику
+// диалога и Esc даёт DialogFrame (§104.8); labelledBy — id заголовка окна.
+function Modal({
+  onClose,
+  labelledBy,
+  children,
+}: {
+  onClose: () => void;
+  labelledBy: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl">
-        {children}
-      </div>
-    </div>
+    <DialogFrame onClose={onClose} labelledBy={labelledBy} className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl">
+      {children}
+    </DialogFrame>
   );
 }
