@@ -44,9 +44,19 @@ export function DialogFrame({ onClose, labelledBy, describedBy, className, child
   );
 }
 
+// useEscapeClose — Esc закрывает окно, если его не обработал вложенный слой.
+//
+// Выпадающие списки и подсказки внутри окна (Radix: Popover, Select, Tooltip)
+// ловят Esc раньше — в capture-фазе на document — и, закрываясь, помечают
+// событие preventDefault. Без этой проверки один Esc закрывал и список, и всё
+// окно: в «Повторе за период» терялись выбранные период и фильтры (стенд §104.8).
+// Граница: два наших окна друг над другом (Confirm поверх Modal) по-прежнему
+// закрываются одним Esc оба — их обработчики равноправны на window.
 function useEscapeClose(onClose: () => void) {
   useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) onClose();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);

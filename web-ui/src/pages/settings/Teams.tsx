@@ -607,12 +607,8 @@ function UserCombobox({
         </button>
       </PopoverTrigger>
       {/* z-[60]: локальный Modal — fixed z-50, контент попапа обязан быть выше.
-          Esc гасим до window — иначе слушатель Modal закроет весь диалог. */}
-      <PopoverContent
-        align="start"
-        className="w-[360px] p-0 z-[60]"
-        onEscapeKeyDown={(e) => e.stopPropagation()}
-      >
+          Esc закрывает только список: окно его пропускает (DialogFrame, §104.8). */}
+      <PopoverContent align="start" className="w-[360px] p-0 z-[60]">
         <Command>
           <CommandInput placeholder={t("settings.teams.members.search_user")} />
           <CommandList>
