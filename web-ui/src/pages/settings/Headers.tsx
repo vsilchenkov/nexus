@@ -5,6 +5,8 @@ import { Plus, Pencil, Trash2 } from "lucide-react";
 
 import { api, type HeaderCatalogEntry } from "../../api/client";
 import { Button, Input, Modal, SearchInput } from "../../components/ui";
+import { CatalogNodesDialog } from "../../components/CatalogNodesDialog";
+import { CatalogUsageCell } from "../../components/CatalogUsageCell";
 import { useConfirm } from "../../lib/confirm";
 
 type ListResp = { items: HeaderCatalogEntry[] };
@@ -28,6 +30,9 @@ export function HeadersPanel() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState<HeaderCatalogEntry | "new" | null>(null);
+  // §104: чей список узлов открыт. Имя хранится здесь, число — берётся из
+  // живой строки таблицы (диалог сверяет его с ответом).
+  const [usageOf, setUsageOf] = useState<{ id: string; name: string } | null>(null);
 
   // Мутации трогают тот же справочник, что combobox формы узла (queryKey
   // ["headers"]) — инвалидируем оба ключа, чтобы автодополнение не устаревало.
@@ -87,9 +92,12 @@ export function HeadersPanel() {
                 <td className="px-2.5 py-2 font-mono text-xs">{h.name}</td>
                 <td className="px-2.5 py-2 text-fg-muted">{h.description || "—"}</td>
                 <td className="px-2.5 py-2 text-fg-muted">
-                  {h.usage_count > 0
-                    ? t("settings.headers.used", { count: h.usage_count })
-                    : t("settings.headers.not_used")}
+                  <CatalogUsageCell
+                    count={h.usage_count}
+                    usedLabel={t("settings.headers.used", { count: h.usage_count })}
+                    notUsedLabel={t("settings.headers.not_used")}
+                    onOpen={() => setUsageOf({ id: h.id, name: h.name })}
+                  />
                 </td>
                 <td className="whitespace-nowrap px-2.5 py-2 text-right">
                   <button
@@ -113,7 +121,7 @@ export function HeadersPanel() {
                       }
                     }}
                     disabled={h.usage_count > 0}
-                    title={h.usage_count > 0 ? t("settings.headers.in_use_tip") : t("common.delete")}
+                    title={h.usage_count > 0 ? t("settings.headers.delete_in_use_tip") : t("common.delete")}
                     className="rounded p-1 text-err hover:bg-bg-3 disabled:cursor-not-allowed disabled:opacity-30"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -123,6 +131,16 @@ export function HeadersPanel() {
             ))}
           </tbody>
         </table>
+      )}
+
+      {usageOf && (
+        <CatalogNodesDialog
+          kind="header"
+          id={usageOf.id}
+          name={usageOf.name}
+          usageCount={list.data?.items.find((h) => h.id === usageOf.id)?.usage_count ?? 0}
+          onClose={() => setUsageOf(null)}
+        />
       )}
 
       {editing && (
