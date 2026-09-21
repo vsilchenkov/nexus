@@ -20,11 +20,19 @@ type HostAllowlistRepoPg struct {
 	logger logging.Logger
 }
 
-var _ port.HostAllowlistRepo = (*HostAllowlistRepoPg)(nil)
+var (
+	_ port.HostAllowlistRepo = (*HostAllowlistRepoPg)(nil)
+	_ port.CatalogNodeLister = (*HostAllowlistRepoPg)(nil)
+)
 
 func NewHostAllowlistRepoPg(db DBTX, logger logging.Logger) *HostAllowlistRepoPg {
 	return &HostAllowlistRepoPg{db: db, logger: logger}
 }
+
+// hostNodeMatch — предикат «хост привязан к узлу n». usage_count хоста хранится
+// в колонке и ведётся триггером на той же таблице node_allowed_hosts, поэтому
+// список узлов (§104.2) и число совпадают по построению.
+const hostNodeMatch = `EXISTS (SELECT 1 FROM node_allowed_hosts nah WHERE nah.node_id = n.id AND nah.host_id = host_allowlist.id)`
 
 const hostAllowlistCols = `id, pattern, kind, description, usage_count, created_by, created_at, updated_at`
 
@@ -47,6 +55,14 @@ func (r *HostAllowlistRepoPg) scan(row rowScanner) (*domain.HostAllowlistEntry, 
 func (r *HostAllowlistRepoPg) Get(ctx context.Context, id string) (*domain.HostAllowlistEntry, error) {
 	return r.scan(r.db.QueryRow(ctx,
 		`SELECT `+hostAllowlistCols+` FROM host_allowlist WHERE id = $1::uuid`, id))
+}
+
+// NodesUsing — реализация port.CatalogNodeLister (§104): узлы, к которым
+// привязан хост, в том числе узлы со статическим URL, где привязка не
+// действует (§104.5).
+func (r *HostAllowlistRepoPg) NodesUsing(ctx context.Context, hostID string, teamIDs []string, limit int) (port.CatalogNodesPage, error) {
+	c := catalogUsage{db: r.db, table: "host_allowlist", match: hostNodeMatch, notFound: domain.ErrHostNotFound}
+	return c.nodesUsing(ctx, hostID, teamIDs, limit)
 }
 
 func (r *HostAllowlistRepoPg) GetByPattern(ctx context.Context, pattern string) (*domain.HostAllowlistEntry, error) {

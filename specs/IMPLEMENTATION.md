@@ -6390,3 +6390,19 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §104 | ✅ Phase 104.1 | [sections/104-catalog-usage.md](sections/104-catalog-usage.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); ссылки из §23.4, §24.4, §99.9 |
+| Порт и SQL-адаптер (§104.2, §104.4) | ✅ Phase 104.2 | порт [port/catalog_usage.go](../internal/web/usecase/port/catalog_usage.go) (`CatalogNodeLister`); общий запрос [postgres/catalog_usage.go](../internal/web/adapter/out/postgres/catalog_usage.go); предикаты `groupNodeMatch` / `headerNodeMatch` / `hostNodeMatch` и методы `NodesUsing` в [node_group_repo.go](../internal/web/adapter/out/postgres/node_group_repo.go), [header_catalog_repo.go](../internal/web/adapter/out/postgres/header_catalog_repo.go), [host_allowlist_repo.go](../internal/web/adapter/out/postgres/host_allowlist_repo.go); integration [catalog_usage_test.go](../tests/integration/catalog_usage_test.go) (группа `test-int-catalog`) |
+
+**Неочевидности §104.**
+
+- **Предикат ссылается на таблицу справочника по имени, а не через псевдоним.** `usage_count`
+  строится коррелированным подзапросом внутри `SELECT … FROM node_groups`, общий запрос §104 —
+  внутри `FROM node_groups CROSS JOIN LATERAL (…)`. В обоих местах `node_groups.id` видно из
+  подзапроса, поэтому одна константа работает без правки остальных SELECT'ов репозитория.
+- **Нет элемента → ноль строк, элемент без видимых узлов → одна строка с NULL.** Так один оператор
+  отличает 404 от пустого списка без второго запроса. Колонки узла сканируются в `*string`.
+- **У хостов `usage_count` — колонка с триггером, а не выражение.** Список считает `total` по той же
+  таблице `node_allowed_hosts`, которую ведёт триггер (в том числе при каскадном удалении узла),
+  поэтому числа совпадают; integration-тест сверяет `total` с `Get().UsageCount` для всех трёх видов.
+- **22P02 → «не найдено».** Сканеры заголовков и хостов 22P02 не ловят (их `Get` на не-UUID даёт
+  500); общий запрос ловит сам. Скоуп команд из членств — всегда валидные UUID, так что 22P02
+  относится только к `id` элемента.
