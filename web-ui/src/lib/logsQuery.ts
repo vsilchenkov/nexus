@@ -8,6 +8,8 @@
 // остальные 30 ошибок. Теперь набор параметров один на все три запроса, и
 // разъехаться они не могут.
 
+import { periodKey, periodWindow, type Period } from "./period";
+
 export type LogsStatusFilter = "all" | "ok" | "err";
 export type LogsDoneFilter = "all" | "done" | "pending";
 
@@ -138,6 +140,19 @@ export function advFormClientWindow(f: Pick<LogsAdvForm, "from" | "to">): Client
   return {
     key: `${f.from}|${f.to}`,
     get: () => ({ from: msOrUndefined(f.from), to: msOrUndefined(f.to) }),
+  };
+}
+
+/** periodClientWindow — окно фасета из выбора периода: вкладка «Метрики» и
+ * диалог «Повтор за период» (§105.4). Ключ — по периоду, границы пресета
+ * считаются в момент запроса. */
+export function periodClientWindow(p: Period): ClientWindow {
+  return {
+    key: periodKey(p),
+    get: () => {
+      const w = periodWindow(p);
+      return { from: w.since, to: w.until };
+    },
   };
 }
 

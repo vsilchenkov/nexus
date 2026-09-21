@@ -23,7 +23,6 @@ import {
   defaultStepFor,
   isStepTooFine,
   normalizeStepForPeriod,
-  periodKey,
   periodWindow,
   stepsForPeriod,
   type ChartStep,
@@ -41,7 +40,7 @@ import {
   advFormEqual,
   emptyAdvForm,
   logsFilterParams,
-  type ClientWindow,
+  periodClientWindow,
   type LogsAdvForm,
   type LogsStatusFilter,
 } from "../../lib/logsQuery";
@@ -179,19 +178,8 @@ export function MetricsTab({
     [applied],
   );
   const links = useNodeTabTo();
-  // §105.4: фасет «Клиент» считает записи за период экрана. Границы пресета
-  // («последние N») берутся в момент запроса, ключ — по периоду, а не по
-  // «сейчас», иначе он менялся бы каждый рендер.
-  const clientWindow: ClientWindow = useMemo(
-    () => ({
-      key: periodKey(period),
-      get: () => {
-        const w = periodWindow(period);
-        return { from: w.since, to: w.until };
-      },
-    }),
-    [period],
-  );
+  // §105.4: фасет «Клиент» считает записи за период экрана.
+  const clientWindow = useMemo(() => periodClientWindow(period), [period]);
   // Клик по столбцу остаётся переходом-действием (сегменты столбца — не ссылки),
   // но адрес ему строит вкладка: только она знает свои применённые фильтры.
   const openLogsAt = useCallback(

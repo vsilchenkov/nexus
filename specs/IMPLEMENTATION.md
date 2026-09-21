@@ -6354,7 +6354,8 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 ### 4.88 §103 — поиск узла по комментарию: одно условие на три поля и сниппет «почему в выдаче»
 
 Раздел [103-node-search-comment.md](sections/103-node-search-comment.md). Ветка
-`feature/search-usage-clients` (общая с §104 и §105). Статус ✅ по коду — блоки 103.1–103.3; стендовый прогон — в общем блоке сдачи ветки.
+`feature/search-usage-clients` (общая с §104 и §105). Статус ✅ — блоки 103.1–103.3, ревизия и стенд
+пройдены при сдаче ветки (Phase 106.1, итог — в §4.90).
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -6385,8 +6386,8 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 ### 4.89 §104 — узлы, использующие элемент справочника: один предикат на счётчик и список
 
 Раздел [104-catalog-usage.md](sections/104-catalog-usage.md). Ветка
-`feature/search-usage-clients` (общая с §103 и §105). Статус ✅ по коду (104.1–104.6); стенд — в
-блоке 106.
+`feature/search-usage-clients` (общая с §103 и §105). Статус ✅ — блоки 104.1–104.6, ревизия и
+стенд пройдены при сдаче ветки (Phase 106.1, итог — в §4.90).
 
 | Пункт | Статус | Где |
 |---|---|---|
@@ -6434,14 +6435,14 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 ### 4.90 §105 — клиент запроса в логах: фильтр по IP вместо «Хоста клиента»
 
 Раздел [105-log-client-filter.md](sections/105-log-client-filter.md). Ветка
-`feature/search-usage-clients`. Статус ◐ — блоки 105.1… в работе.
+`feature/search-usage-clients`. Статус ✅ — блоки 105.1–105.4, сдача ветки — Phase 106.1.
 
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §105 | ✅ Phase 105.1 | [sections/105-log-client-filter.md](sections/105-log-client-filter.md) (повод — разбор боевых узлов), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); пометка в §67.3 |
 | §105.5 резолвер: stale-while-revalidate | ✅ Phase 105.2 | [rdns/resolver.go](../internal/platform/rdns/resolver.go) `Lookup`: протухшая запись L1 отдаёт прежнее имя и ставит фоновое обновление под тем же `pending`-guard (одно на IP); `""` — только у промаха нового IP. Debug `rdns: serving stale host, refresh scheduled` пишется раз на обновление, а не на запрос. Тесты [resolver_test.go](../internal/platform/rdns/resolver_test.go) `TestResolver_Lookup_StaleWhileRevalidate` (16 вызовов → старое имя, ровно один lookup, затем новое; новый IP → `""`) и `…_StaleRefreshedToEmpty` (PTR исчез → имя честно обнуляется) — красные на старом коде. **Граница:** таймаут DNS при обновлении неотличим от NXDOMAIN и обнуляет имя на `negative_ttl_sec` — это закрывает фасет §105.3 (счёт по IP), а не резолвер |
 | §105.3 фасет «Клиент» `GET /api/nodes/{id}/logs/clients` | ✅ Phase 105.3 | Порт `LogReader.DistinctClients` + тип `LogClient` ([port/log_reader.go](../internal/web/usecase/port/log_reader.go)); адаптер [log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go) `DistinctClients` (`clientsSQL`: `GROUP BY IP, if(IP='', client_host, '')`, `argMaxIf` для имени, `uniqExact(ID)`, `LIMIT limit+1` → `truncated`; кап 200; потолок `countTimeout`); usecase [logs.go](../internal/web/usecase/logs.go) `Clients` (окно `clientsDefaultWindow` = 24 ч до `to`/«сейчас», `applyDateCreateAligned`); handler `Clients` + DTO `LogClientsResponse` ([dto_common.go](../internal/web/adapter/in/http/dto_common.go)), маршрут `RequireScope("logs:read")`, swagger (заодно `ip` в @Param у `/logs`, `/logs/count`, `/logs/stream`, `/metrics/nodes/{id}`). Тесты: integration [log_clients_test.go](../tests/integration/log_clients_test.go) (группа `test-int-ch` по `^TestLogReader`), unit `TestLogs_Clients`, handler `TestLogsClients` |
-| §105.4 фильтр «Клиент» | ✅ Phase 105.4 | [LogClientFilter.tsx](../web-ui/src/components/node/LogClientFilter.tsx) (замена удалённого `LogClientHostFilter`): строка — имя/«имя не определено», IP, число; выбор по IP (`{ip}`), у значения без IP — по имени (`{host}`), без обоих — неактивно; в поле имя из фасета, иначе IP; подпись окна и усечения — под списком (пункт «Любой» виден всегда, и `CommandEmpty` загрузку/недоступность не покажет). [logsQuery.ts](../web-ui/src/lib/logsQuery.ts): `clientIp` → параметр `ip`, `ClientWindow` (ключ + границы в момент запроса), `advFormClientWindow`, `clientWindowKind`. [nodeTabUrl.ts](../web-ui/src/lib/nodeTabUrl.ts): ключ `ip` в `LOG_WINDOW_PARAMS`, `LogsLinkFilter.clientIp`, `client_host` из старых ссылок читается. `LogsAdvancedFilters` (проп `clientWindow`, по умолчанию — даты журнала), `MetricsTab` (окно = период вкладки, `clientIp` в ссылке), `LogsTab` (`initialFilter.clientIp`). i18n `logs.advanced.client*` вместо `client_host*`. Тесты: `LogClientFilter.test.tsx` (12), `logsQuery.test.ts` (`clientIp → ip`, окно), `nodeTabUrl.test.ts` (ip в ссылке, чистка, чтение), `LogsTab.deeplink` (ip первым запросом), `MetricsTab.filters` (ip в метриках, окно фасета = период), `MetricsTab.methods` (ip в ссылке рейтинга) |
+| §105.4 фильтр «Клиент» | ✅ Phase 105.4 | [LogClientFilter.tsx](../web-ui/src/components/node/LogClientFilter.tsx) (замена удалённого `LogClientHostFilter`): строка — имя/«имя не определено», IP, число; выбор по IP (`{ip}`), у значения без IP — по имени (`{host}`), без обоих — неактивно; в поле имя из фасета, иначе IP; подпись окна и усечения — под списком (пункт «Любой» виден всегда, и `CommandEmpty` загрузку/недоступность не покажет). [logsQuery.ts](../web-ui/src/lib/logsQuery.ts): `clientIp` → параметр `ip`, `ClientWindow` (ключ + границы в момент запроса), `advFormClientWindow`, `clientWindowKind`. [nodeTabUrl.ts](../web-ui/src/lib/nodeTabUrl.ts): ключ `ip` в `LOG_WINDOW_PARAMS`, `LogsLinkFilter.clientIp`, `client_host` из старых ссылок читается. `LogsAdvancedFilters` (проп `clientWindow`: без полей дат обязателен по типам, с ними — даты журнала), `MetricsTab` и `ReplayPeriodDialog` (окно = период экрана через `periodClientWindow`; у вкладки ещё `clientIp` в ссылке), `LogsTab` (`initialFilter.clientIp`). i18n `logs.advanced.client*` вместо `client_host*`. Тесты: `LogClientFilter.test.tsx` (12), `logsQuery.test.ts` (`clientIp → ip`, окно), `nodeTabUrl.test.ts` (ip в ссылке, чистка, чтение), `LogsTab.deeplink` (ip первым запросом), `MetricsTab.filters` (ip в метриках, окно фасета = период), `MetricsTab.methods` (ip в ссылке рейтинга) |
 
 **Неочевидности §105.**
 
@@ -6456,3 +6457,51 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 - **Ключ `if(IP = '', client_host, '')`.** Без него все строки с пустым IP (внешние таблицы §64, которые пишет
   посторонний сервис) слились бы в одну безымянную группу. С ним записи с IP группируются только по IP, а у строк
   без IP значение задаёт имя.
+- **Без полей дат окно фасета передаётся явно, и это требуют типы.** У `LogsAdvancedFilters` проп
+  `clientWindow` обязателен при `showDates={false}` (объединение `DatesProps`). Запасной вариант
+  «поля "Дата с/по" применённого фильтра» на экранах без этих полей даёт пустое окно, и фасет
+  молча считает последние сутки. Так было в диалоге «Повтор за период» до ревизии (ниже).
+
+**Сдача ветки (Phase 106.1, 2026-09-21): ревизия и стенд по §103–§105.**
+
+Ревизия всего diff'а (`git diff dev...HEAD`) нашла:
+
+- **Регресс: фасет «Клиент» в диалоге «Повтор за период» (§85) всегда считал последние сутки.**
+  Диалог скрывает поля дат (`showDates={false}`) и окна не передавал, поэтому клиента, который слал
+  запросы три дня назад, нельзя было выбрать для повтора за неделю. До §105 диалог видел все имена
+  таблицы без окна. Исправлено: окно из периода диалога через общий хелпер `periodClientWindow`
+  ([logsQuery.ts](../web-ui/src/lib/logsQuery.ts), им же пользуется `MetricsTab`), проп
+  обязателен на уровне типов. Регресс-тест в
+  [ReplayPeriodDialog.test.tsx](../web-ui/src/components/node/ReplayPeriodDialog.test.tsx) (7 суток
+  в пикере → `to − from` запроса фасета = 7 суток), на старом коде красный.
+- **Диалог §104 после ошибки перечитывания показывал ошибку поверх прежнего списка.** Причина:
+  react-query при ошибке хранит прежние `data`. Сценарий: элемент удалили в другом окне, фокус
+  вернулся — «элемент удалён» и старые узлы одновременно. Исправлено: при ошибке данные не
+  рисуются. Тест в [CatalogNodesDialog.test.tsx](../web-ui/src/components/CatalogNodesDialog.test.tsx),
+  на старом коде красный.
+- Мелочи: удалены мёртвые ключи i18n (`settings.allowed_hosts.in_use_tip`,
+  `settings.groups.in_use_tip`, `catalog_nodes.open`; `settings.headers.in_use_tip` жив — его
+  показывает форма правки). Godoc `teamScope` больше не противоречит fail-closed-контракту
+  `CatalogNodeLister`. У `DistinctClients` появилась Debug-строка с исходом (строки, `truncated`,
+  длительность). В §105.4 и §105.6 записаны две границы: значение без IP фильтрует шире, чем
+  посчитал фасет; адрес с `ip` и `client_host` сразу применяет оба.
+
+Стенд (стек `services`, Playwright, бандл `index-*.js` новый) — всё сошлось с ТЗ:
+
+- §103: поиск «сдэк» в шапке и на «Узлах» (таблица и карточки) находит узел по комментарию
+  «…СДЭК…», сниппет с `<mark>`; Ctrl+клик по строке таблицы открывает новую вкладку.
+- §104: группа из 4 узлов — строки `<a href="/nodes/…">`, средняя кнопка открывает вкладку, при
+  открытии ровно один `GET …/nodes`; «Показать на рабочем столе» → `/?team=*&group=…`. Хост на
+  static-узле помечен «не действует». Отвязка хоста в форме узла сразу меняет «узлов: N» в
+  Настройках. Пользователь с одной командой видит «Всего узлов: 4 · в ваших командах: 1» и «Ещё 3
+  узла в командах, где вас нет»; в ответе API нет ни путей, ни id чужих узлов.
+- §105: запросы с `X-Forwarded-For` 8.8.8.8 / 192.168.86.246 / 10.255.255.1 / 127.0.0.1 —
+  в фасете все четыре, у IP без PTR «имя не определено» с числом (старый `/client-hosts` видел
+  только два имени). Выбор IP ставит `ip=` в список и `/logs/count`; дип-линк с `ip` раскрывает
+  панель; «Метрики» передают фасету окно ровно в период вкладки. Stale-while-revalidate живьём:
+  первая запись через 8 минут после прошлой (L1 = 5 минут) записалась с именем, до §105 там был
+  бы `""`.
+
+Найдено по дороге, к ветке не относится (было до неё): общий `Modal` без `role="dialog"`; фильтры
+рабочего стола из sessionStorage (§54) переживают выход и вход другого пользователя в той же
+вкладке.

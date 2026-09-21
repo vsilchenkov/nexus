@@ -1227,7 +1227,6 @@
       "header": "Nodes forwarding {{name}}",
       "host": "Nodes allowed to call {{name}}"
     },
-    "open": "Show nodes",
     "summary": "Nodes in total: {{total}} · in your teams: {{visible}}",
     "filter": "Filter by path…",
     "no_match": "No nodes with this path",
@@ -1309,7 +1308,6 @@
       "filter_all": "All",
       "used": "{{count}} node(s)",
       "not_used": "not used",
-      "in_use_tip": "used by nodes — detach first",
       "delete_in_use_tip": "Used by nodes — detach first. Click the node count to see which",
       "confirm_delete": "Delete pattern {{pattern}}?",
       "col": { "pattern": "Pattern", "kind": "Kind", "description": "Description", "usage": "Usage" },
@@ -1331,7 +1329,6 @@
       "empty": "No groups yet",
       "used": "{{count}} node(s)",
       "not_used": "not used",
-      "in_use_tip": "the group is used by nodes — remove the nodes from it first",
       "delete_in_use_tip": "The group is used by nodes — remove the nodes from it first. Click the node count to see which",
       "name_length": "Name must be 1 to 100 characters",
       "order_hint": "lower goes higher in the list",

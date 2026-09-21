@@ -54,7 +54,7 @@ function renderDialog(kind: CatalogKind, usageCount: number) {
   render(<CatalogNodesDialog kind={kind} id="x1" name="1С Обмен" usageCount={usageCount} onClose={() => {}} />, {
     wrapper,
   });
-  return { invalidate };
+  return { invalidate, qc };
 }
 
 const invalidatedKeys = (spy: { mock: { calls: unknown[][] } }) =>
@@ -168,5 +168,19 @@ describe("CatalogNodesDialog (§104.5)", () => {
     const { invalidate } = renderDialog("header", 1);
     expect(await screen.findByText("catalog_nodes.deleted")).toBeInTheDocument();
     await waitFor(() => expect(invalidatedKeys(invalidate)).toEqual(["headers-catalog", "headers"]));
+  });
+
+  // Ревизия §104: react-query при ошибке перечитывания хранит прежние data.
+  // Элемент удалили в другом окне, фокус вернулся — на экране были сразу
+  // «элемент удалён» и прежний список узлов.
+  it("ошибка перечитывания убирает прежний список", async () => {
+    apiGet.mockResolvedValueOnce(resp([node("a")]));
+    const { qc } = renderDialog("group", 1);
+    await screen.findByRole("link", { name: "svc/a" });
+
+    apiGet.mockImplementation(() => Promise.reject({ response: { status: 404 } }));
+    await qc.refetchQueries();
+    expect(await screen.findByText("catalog_nodes.deleted")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "svc/a" })).toBeNull();
   });
 });

@@ -21,6 +21,21 @@ import {
 // гасит mousedown (иначе blur поля успел бы запустить лишний запрос ПЕРЕД
 // сбросом).
 
+// DatesProps — откуда фильтр берёт окно. С полями «Дата с/по» (журнал) окно
+// фасета «Клиент» — эти поля. Без них (showDates=false: вкладка «Метрики»,
+// диалог «Повтор за период», §79.4) окно задаёт выбор периода экрана, и
+// передать его обязательно: запасной вариант по пустым полям дат молча считал
+// бы фасет за последние сутки, а не за период экрана (§105.4).
+type DatesProps =
+  | { showDates?: true; clientWindow?: undefined }
+  | {
+      /** showDates=false — два контрола, пишущих в одни границы, затирали бы
+       * друг друга. */
+      showDates: false;
+      /** Окно фасета «Клиент» — период экрана. */
+      clientWindow: ClientWindow;
+    };
+
 export function LogsAdvancedFilters({
   nodeId,
   draft,
@@ -39,15 +54,9 @@ export function LogsAdvancedFilters({
   onDraft: (f: LogsAdvForm) => void;
   onCommit: (f: LogsAdvForm) => void;
   badQuery?: boolean;
-  /** showDates=false — окно задаёт выбор периода экрана (вкладка «Метрики»,
-   * §79.4): два контрола, пишущих в одни границы, затирали бы друг друга. */
-  showDates?: boolean;
   dateRange?: { min: number; max: number } | null;
   onOpenDate?: () => void;
-  /** §105.4: окно фасета «Клиент» — период экрана. Не задано — поля «Дата
-   * с/по» применённого фильтра журнала. */
-  clientWindow?: ClientWindow;
-}) {
+} & DatesProps) {
   const { t } = useTranslation();
   const minDate = dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined;
   const maxDate = dateRange && dateRange.max > 0 ? new Date(dateRange.max) : undefined;

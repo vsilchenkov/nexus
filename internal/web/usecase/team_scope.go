@@ -28,9 +28,11 @@ type TeamMembershipLister interface {
 // стоит: она строится из того же ответа.
 //
 // Пустой список членств — НЕ ошибка: пользователь без команд просто ничего не
-// видит. Но и запрос с пустым набором уходить не должен — в адаптерах пустой
-// TeamIDs означает «фильтра нет», то есть выдачу всего инстанса. Проверку
-// делает вызывающий, здесь только резолв.
+// видит. Что делать с пустым набором, решает вызывающий по контракту своего
+// порта, здесь только резолв. В ListNodesFilter.TeamIDs пустой набор означает
+// «фильтра нет», то есть выдачу всего инстанса, — такой запрос уходить не
+// должен. У port.CatalogNodeLister (§104) пустой скоуп, наоборот,
+// fail-closed («видимых нет»), и запрос идёт: он нужен ради Total и 404.
 func teamScope(ctx context.Context, teams TeamMembershipLister, userID string) ([]string, map[string]domain.Team, error) {
 	if teams == nil {
 		return nil, nil, fmt.Errorf("team scope: team repo unavailable")

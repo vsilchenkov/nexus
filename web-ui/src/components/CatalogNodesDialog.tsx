@@ -47,7 +47,9 @@ export function CatalogNodesDialog({ kind, id, name, usageCount, onClose }: Prop
     refetchOnMount: "always",
   });
 
-  const data = nodesQ.data;
+  // При ошибке перечитывания react-query хранит прежние data: элемент удалили
+  // в другом окне — и под «элемент удалён» остался бы старый список.
+  const data = nodesQ.error ? undefined : nodesQ.data;
   const notFound = isNotFound(nodesQ.error);
   const stale = notFound || (data !== undefined && data.total !== usageCount);
   useEffect(() => {

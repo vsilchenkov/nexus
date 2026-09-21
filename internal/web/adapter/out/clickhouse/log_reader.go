@@ -1483,6 +1483,7 @@ func (r *LogReaderCH) DistinctClients(ctx context.Context, q port.LogQuery, limi
 	if err != nil {
 		return nil, false, err
 	}
+	start := time.Now()
 	items, err := scanLogClients(cctx, conn, fmt.Sprintf(clientsSQL, q.Table, where), args)
 	if err != nil && isMissingColumnErr(err, "client_host") {
 		// §51.9: тихая деградация — фиксируем причину на debug-уровне.
@@ -1493,10 +1494,15 @@ func (r *LogReaderCH) DistinctClients(ctx context.Context, q port.LogQuery, limi
 	if err != nil {
 		return nil, false, classifyCHErr("clickhouse distinct clients", err)
 	}
-	if len(items) > limit {
-		return items[:limit], true, nil
+	truncated := len(items) > limit
+	if truncated {
+		items = items[:limit]
 	}
-	return items, false, nil
+	r.logger.Debug("distinct clients: done",
+		r.logger.Str("table", q.Table), r.logger.Int("rows", len(items)),
+		r.logger.Any("truncated", truncated),
+		r.logger.Int("duration_ms", int(time.Since(start).Milliseconds())))
+	return items, truncated, nil
 }
 
 // scanLogClients выполняет запрос фасета «Клиент» и читает строки
