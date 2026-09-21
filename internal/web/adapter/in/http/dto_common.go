@@ -149,6 +149,24 @@ type LogClientHostsResponse struct {
 	LogsAvailable  bool     `json:"logs_available"`
 }
 
+// LogClientDTO — одно значение фасета «Клиент» (§105.3). host пуст, если имя
+// IP за период не определилось; ip пуст только во внешних таблицах §64.
+type LogClientDTO struct {
+	IP    string `json:"ip"`
+	Host  string `json:"host"`
+	Count uint64 `json:"count"`
+}
+
+// LogClientsResponse — GET /api/nodes/{id}/logs/clients (§105.3): клиенты
+// узла с числом записей за период, по убыванию числа. truncated — значений
+// больше отданных.
+type LogClientsResponse struct {
+	Items          []LogClientDTO `json:"items"`
+	Truncated      bool           `json:"truncated"`
+	LogsConfigured bool           `json:"logs_configured"`
+	LogsAvailable  bool           `json:"logs_available"`
+}
+
 // LogCountResponse — GET /api/nodes/{id}/logs/count (§67): точное число
 // записей под теми же фильтрами, что и список логов («Показано N из M»).
 type LogCountResponse struct {

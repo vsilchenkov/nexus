@@ -570,6 +570,15 @@ definitions:
         description: request | response
         type: string
     type: object
+  internal_web_adapter_in_http.LogClientDTO:
+    properties:
+      count:
+        type: integer
+      host:
+        type: string
+      ip:
+        type: string
+    type: object
   internal_web_adapter_in_http.LogClientHostsResponse:
     properties:
       items:
@@ -579,6 +588,19 @@ definitions:
       logs_available:
         type: boolean
       logs_configured:
+        type: boolean
+    type: object
+  internal_web_adapter_in_http.LogClientsResponse:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.LogClientDTO'
+        type: array
+      logs_available:
+        type: boolean
+      logs_configured:
+        type: boolean
+      truncated:
         type: boolean
     type: object
   internal_web_adapter_in_http.LogCountResponse:
@@ -5311,6 +5333,10 @@ paths:
         in: query
         name: client_host
         type: string
+      - description: фильтр по IP клиента (фильтр «Клиент», §105.4)
+        in: query
+        name: ip
+        type: string
       - description: ok | err (§72.1)
         in: query
         name: status
@@ -6449,8 +6475,7 @@ paths:
         in: query
         name: before_id
         type: string
-      - description: exact match по IP клиента (с §48 недоступно из UI, параметр API
-          сохранён)
+      - description: exact match по IP клиента (фильтр «Клиент», §105.4)
         in: query
         name: ip
         type: string
@@ -6544,11 +6569,53 @@ paths:
       summary: Уникальные значения client_host узла для фасета фильтра (§67).
       tags:
       - logs
+  /api/nodes/{id}/logs/clients:
+    get:
+      description: Пары «IP — имя» с числом записей (uniqExact(ID), как у /logs/count)
+        за период, по убыванию числа. Имя — самое свежее непустое client_host IP за
+        период, пустое — имя не определилось (нет PTR-записи). Записи без имени засчитываются
+        к своему IP. Строки с пустым IP (внешние таблицы §64) группируются по client_host.
+        Остальные фильтры журнала фасет не учитывает. Без from — 24 часа до to (или
+        до текущего момента). До 200 значений, truncated=true — значений больше. Узел
+        без clickhouse_table → 200 + logs_configured=false; CH недоступен → 200 +
+        logs_available=false; внешняя таблица без колонки client_host → только IP.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: начало периода (RFC3339 или UnixMilli); без него — 24 часа до
+          to
+        in: query
+        name: from
+        type: string
+      - description: конец периода (RFC3339 или UnixMilli); без него — текущий момент
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.LogClientsResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      - ApiTokenAuth: []
+      summary: Клиенты узла для фасета фильтра «Клиент» (§105.3).
+      tags:
+      - logs
   /api/nodes/{id}/logs/count:
     get:
       description: count() из ClickHouse под ТЕМИ ЖЕ фильтрами, что и GET /logs (status,
-        done, method, client_host, даты, полнотекст q) — счётчик «Показано N из M»
-        шапки. before_id игнорируется (total по фильтрам, не по странице). Серверный
+        done, method, client_host, ip, даты, полнотекст q) — счётчик «Показано N из
+        M» шапки. before_id игнорируется (total по фильтрам, не по странице). Серверный
         таймаут 10с; его превышение/недоступность CH → 200 + logs_available=false
         (UI прячет «из M»). Плохой q → 400.
       parameters:
@@ -6585,6 +6652,10 @@ paths:
       - description: exact match по PTR-имени клиента (§67)
         in: query
         name: client_host
+        type: string
+      - description: exact match по IP клиента (фильтр «Клиент», §105.4)
+        in: query
+        name: ip
         type: string
       - description: полнотекстовый фильтр (§48.1)
         in: query
@@ -6841,6 +6912,10 @@ paths:
       - description: exact match по PTR-имени клиента (§67)
         in: query
         name: client_host
+        type: string
+      - description: exact match по IP клиента (фильтр «Клиент», §105.4)
+        in: query
+        name: ip
         type: string
       - description: поисковое выражение (§48.1); в live ищет по url+parameters
         in: query

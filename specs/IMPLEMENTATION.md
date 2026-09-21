@@ -6440,3 +6440,18 @@ CH-таблице есть, а шесть отказов подряд (401/405/4
 |---|---|---|
 | ТЗ §105 | ✅ Phase 105.1 | [sections/105-log-client-filter.md](sections/105-log-client-filter.md) (повод — разбор боевых узлов), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); пометка в §67.3 |
 | §105.5 резолвер: stale-while-revalidate | ✅ Phase 105.2 | [rdns/resolver.go](../internal/platform/rdns/resolver.go) `Lookup`: протухшая запись L1 отдаёт прежнее имя и ставит фоновое обновление под тем же `pending`-guard (одно на IP); `""` — только у промаха нового IP. Debug `rdns: serving stale host, refresh scheduled` пишется раз на обновление, а не на запрос. Тесты [resolver_test.go](../internal/platform/rdns/resolver_test.go) `TestResolver_Lookup_StaleWhileRevalidate` (16 вызовов → старое имя, ровно один lookup, затем новое; новый IP → `""`) и `…_StaleRefreshedToEmpty` (PTR исчез → имя честно обнуляется) — красные на старом коде. **Граница:** таймаут DNS при обновлении неотличим от NXDOMAIN и обнуляет имя на `negative_ttl_sec` — это закрывает фасет §105.3 (счёт по IP), а не резолвер |
+| §105.3 фасет «Клиент» `GET /api/nodes/{id}/logs/clients` | ✅ Phase 105.3 | Порт `LogReader.DistinctClients` + тип `LogClient` ([port/log_reader.go](../internal/web/usecase/port/log_reader.go)); адаптер [log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go) `DistinctClients` (`clientsSQL`: `GROUP BY IP, if(IP='', client_host, '')`, `argMaxIf` для имени, `uniqExact(ID)`, `LIMIT limit+1` → `truncated`; кап 200; потолок `countTimeout`); usecase [logs.go](../internal/web/usecase/logs.go) `Clients` (окно `clientsDefaultWindow` = 24 ч до `to`/«сейчас», `applyDateCreateAligned`); handler `Clients` + DTO `LogClientsResponse` ([dto_common.go](../internal/web/adapter/in/http/dto_common.go)), маршрут `RequireScope("logs:read")`, swagger (заодно `ip` в @Param у `/logs`, `/logs/count`, `/logs/stream`, `/metrics/nodes/{id}`). Тесты: integration [log_clients_test.go](../tests/integration/log_clients_test.go) (группа `test-int-ch` по `^TestLogReader`), unit `TestLogs_Clients`, handler `TestLogsClients` |
+
+**Неочевидности §105.**
+
+- **Фасет строит WHERE общим `searchConds`, но по урезанному запросу** (`Table/NodeID/SinceMs/UntilMs/DateCreateAligned`).
+  Окно и отсечение партиций §72.4 поэтому совпадают со списком и `/logs/count` без копии кода, а фильтры экрана
+  (статус, `ip`, полнотекст) до фасета не доходят, даже если их передать. Иначе выбор клиента сужал бы свой же
+  дропдаун до одного значения.
+- **Проверка «нет колонки `client_host`» стоит ДО `classifyCHErr`.** `classifyCHErr` превращает missing
+  `client_host` в `ErrLogsBackendUnavailable` (§67, ради поллинга списка). Фасет обязан перехватить ошибку раньше и
+  повторить запрос без колонки (`clientsNoHostSQL`). Иначе на внешней таблице §64 до ручного ALTER UI показывал бы
+  «ClickHouse недоступен» вместо списка IP. Мутация «убрать fallback» роняет подтест integration-теста.
+- **Ключ `if(IP = '', client_host, '')`.** Без него все строки с пустым IP (внешние таблицы §64, которые пишет
+  посторонний сервис) слились бы в одну безымянную группу. С ним записи с IP группируются только по IP, а у строк
+  без IP значение задаёт имя.

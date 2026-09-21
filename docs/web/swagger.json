@@ -2868,6 +2868,12 @@
                     },
                     {
                         "type": "string",
+                        "description": "фильтр по IP клиента (фильтр «Клиент», §105.4)",
+                        "name": "ip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "ok | err (§72.1)",
                         "name": "status",
                         "in": "query"
@@ -4721,7 +4727,7 @@
                     },
                     {
                         "type": "string",
-                        "description": "exact match по IP клиента (с §48 недоступно из UI, параметр API сохранён)",
+                        "description": "exact match по IP клиента (фильтр «Клиент», §105.4)",
                         "name": "ip",
                         "in": "query"
                     },
@@ -4845,6 +4851,61 @@
                 }
             }
         },
+        "/api/nodes/{id}/logs/clients": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    },
+                    {
+                        "ApiTokenAuth": []
+                    }
+                ],
+                "description": "Пары «IP — имя» с числом записей (uniqExact(ID), как у /logs/count) за период, по убыванию числа. Имя — самое свежее непустое client_host IP за период, пустое — имя не определилось (нет PTR-записи). Записи без имени засчитываются к своему IP. Строки с пустым IP (внешние таблицы §64) группируются по client_host. Остальные фильтры журнала фасет не учитывает. Без from — 24 часа до to (или до текущего момента). До 200 значений, truncated=true — значений больше. Узел без clickhouse_table → 200 + logs_configured=false; CH недоступен → 200 + logs_available=false; внешняя таблица без колонки client_host → только IP.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Клиенты узла для фасета фильтра «Клиент» (§105.3).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "начало периода (RFC3339 или UnixMilli); без него — 24 часа до to",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "конец периода (RFC3339 или UnixMilli); без него — текущий момент",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogClientsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/nodes/{id}/logs/count": {
             "get": {
                 "security": [
@@ -4855,7 +4916,7 @@
                         "ApiTokenAuth": []
                     }
                 ],
-                "description": "count() из ClickHouse под ТЕМИ ЖЕ фильтрами, что и GET /logs (status, done, method, client_host, даты, полнотекст q) — счётчик «Показано N из M» шапки. before_id игнорируется (total по фильтрам, не по странице). Серверный таймаут 10с; его превышение/недоступность CH → 200 + logs_available=false (UI прячет «из M»). Плохой q → 400.",
+                "description": "count() из ClickHouse под ТЕМИ ЖЕ фильтрами, что и GET /logs (status, done, method, client_host, ip, даты, полнотекст q) — счётчик «Показано N из M» шапки. before_id игнорируется (total по фильтрам, не по странице). Серверный таймаут 10с; его превышение/недоступность CH → 200 + logs_available=false (UI прячет «из M»). Плохой q → 400.",
                 "produces": [
                     "application/json"
                 ],
@@ -4911,6 +4972,12 @@
                         "type": "string",
                         "description": "exact match по PTR-имени клиента (§67)",
                         "name": "client_host",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact match по IP клиента (фильтр «Клиент», §105.4)",
+                        "name": "ip",
                         "in": "query"
                     },
                     {
@@ -5282,6 +5349,12 @@
                         "type": "string",
                         "description": "exact match по PTR-имени клиента (§67)",
                         "name": "client_host",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "exact match по IP клиента (фильтр «Клиент», §105.4)",
+                        "name": "ip",
                         "in": "query"
                     },
                     {
@@ -8074,6 +8147,20 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.LogClientDTO": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "ip": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.LogClientHostsResponse": {
             "type": "object",
             "properties": {
@@ -8087,6 +8174,26 @@
                     "type": "boolean"
                 },
                 "logs_configured": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.LogClientsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.LogClientDTO"
+                    }
+                },
+                "logs_available": {
+                    "type": "boolean"
+                },
+                "logs_configured": {
+                    "type": "boolean"
+                },
+                "truncated": {
                     "type": "boolean"
                 }
             }

@@ -6963,7 +6963,8 @@ lister»; новый справочник — новая запись.
 **Фасет.** `GET /api/nodes/{id}/logs/clients?from=&to=` (scope `logs:read`) →
 `{items:[{ip, host, count}], truncated, logs_configured, logs_available}`. Группировка по `IP`
 (строки с пустым IP — по `client_host`), `count` — `uniqExact(ID)`, `host` — самое свежее
-непустое имя за окно (`argMaxIf`). Без `from` окно — 24 часа. До 200 значений, `truncated`.
+непустое имя за окно (`argMaxIf`). Без `from` окно — 24 часа до `to` (или до «сейчас»). До 200
+значений, `truncated`.
 Внешняя таблица без колонки `client_host` — только IP. Старый `/logs/client-hosts` остаётся для
 API-токенов.
 

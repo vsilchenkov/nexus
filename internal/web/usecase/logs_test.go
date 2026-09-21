@@ -8,6 +8,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/domain/logsearch"
+	"nexus/internal/platform/clock"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -27,6 +28,9 @@ type logReaderMock struct {
 	lastFailedQuery port.LogQuery // последний CountFailed-запрос (§79.1)
 	methods         []string      // ответ DistinctMethods (§48)
 	clientHosts     []string      // ответ DistinctClientHosts (§67)
+	clients         []port.LogClient
+	clientsTrunc    bool          // ответ DistinctClients (§105.3)
+	clientsQuery    port.LogQuery // последний запрос DistinctClients
 	total           uint64        // ответ Count (§67)
 	rangeMin        int64         // ответ DateRange (§48)
 	rangeMax        int64
@@ -113,6 +117,11 @@ func (m *logReaderMock) DistinctMethods(_ context.Context, _, _ string, _ int) (
 
 func (m *logReaderMock) DistinctClientHosts(_ context.Context, _, _ string, _ int) ([]string, error) {
 	return m.clientHosts, m.err
+}
+
+func (m *logReaderMock) DistinctClients(_ context.Context, q port.LogQuery, _ int) ([]port.LogClient, bool, error) {
+	m.clientsQuery = q
+	return m.clients, m.clientsTrunc, m.err
 }
 
 func (m *logReaderMock) DateRange(_ context.Context, _, _ string) (int64, int64, error) {
@@ -612,5 +621,54 @@ func TestLogs_Subscribe_ClosesOnCtxCancel(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("channel did not close after ctx cancel")
+	}
+}
+
+// §105.3: фасет «Клиент» — окно по умолчанию 24 часа (до to или до «сейчас»),
+// явный период проходит как есть, отсечение партиций §72.4 только у своих
+// таблиц, team scope как у остальных фасетов.
+func TestLogs_Clients(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	day := (24 * time.Hour).Milliseconds()
+	nodes := &stubNodeRepo{nodes: map[string]*domain.Node{
+		"n1":  {ID: "n1", ClickHouseTable: "t.t", TeamID: "team1", Status: domain.NodeStatusEnabled},
+		"ext": {ID: "ext", ClickHouseTable: "t.ext", TeamID: "team1", ExternalTable: true, Status: domain.NodeStatusEnabled},
+	}}
+	tests := []struct {
+		name               string
+		node               string
+		since, until       int64
+		wantSince, wantTil int64
+		wantAligned        bool
+	}{
+		{"без периода — сутки до сейчас", "n1", 0, 0, now.UnixMilli() - day, 0, true},
+		{"только to — сутки до to", "n1", 0, 5 * day, 4 * day, 5 * day, true},
+		{"явный период как есть", "n1", 1000, 2000, 1000, 2000, true},
+		{"внешняя таблица — без date_create", "ext", 1000, 2000, 1000, 2000, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := &logReaderMock{clients: []port.LogClient{{IP: "10.0.0.1", Count: 3}}, clientsTrunc: true}
+			uc := NewLogsUsecase(r, nodes, logging.NewNoop(), WithLogsClock(clock.Fixed(now)))
+			items, truncated, err := uc.Clients(context.Background(), tt.node, "team1", tt.since, tt.until)
+			if err != nil || len(items) != 1 || !truncated {
+				t.Fatalf("want 1 item truncated, got %v %v / %v", items, truncated, err)
+			}
+			q := r.clientsQuery
+			if q.Table == "" || q.NodeID != tt.node {
+				t.Fatalf("table/node не подставлены: %+v", q)
+			}
+			if q.SinceMs != tt.wantSince || q.UntilMs != tt.wantTil || q.DateCreateAligned != tt.wantAligned {
+				t.Fatalf("окно: want since=%d until=%d aligned=%v, got %d %d %v",
+					tt.wantSince, tt.wantTil, tt.wantAligned, q.SinceMs, q.UntilMs, q.DateCreateAligned)
+			}
+		})
+	}
+
+	uc := NewLogsUsecase(&logReaderMock{}, nodes, logging.NewNoop())
+	if _, _, err := uc.Clients(context.Background(), "n1", "other", 0, 0); !errors.Is(err, domain.ErrNodeNotFound) {
+		t.Fatalf("team scope: want ErrNodeNotFound, got %v", err)
 	}
 }
