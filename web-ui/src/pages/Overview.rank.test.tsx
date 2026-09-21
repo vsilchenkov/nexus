@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { configure, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { type ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +8,13 @@ import Overview from "./Overview";
 import { PREF_KEY_OVERVIEW_PERIOD } from "../lib/prefs";
 import { setTeamScopeAll } from "../lib/teamScope";
 import { type MyTeamsResp } from "../lib/teams";
+
+// Каждое ожидание здесь ждёт прихода среза, а он идёт следом за списком узлов.
+// Под нагрузкой CI (файлы гоняются параллельно, этот идёт ~5 с) секунды
+// waitFor по умолчанию не хватало: ui-build пайплайна 10383 упал на таймауте
+// ожидания при исправном бейдже. Настройка действует на этот файл: vitest
+// изолирует файлы друг от друга.
+configure({ asyncUtilTimeout: 5000 });
 
 // §86.10: срез из шапки — базовый слой метрик сквозного режима.
 //
@@ -358,7 +365,7 @@ describe("Overview: срез и порядок в сквозном режиме 
     // страницы: поиск переживает перемонтирование через зеркало сессии (§54).
     fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "" } });
 
-    await waitFor(() => expect(pathOrder()).toEqual(["n3", "n2", "n1"]), { timeout: 3000 });
+    await waitFor(() => expect(pathOrder()).toEqual(["n3", "n2", "n1"]));
   });
 
   // Деградация: старый бэкенд среза не отдаёт. Экран обязан пережить это со
