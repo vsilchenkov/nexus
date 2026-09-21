@@ -21,17 +21,25 @@ type NodeGroupRepoPg struct {
 	logger logging.Logger
 }
 
-var _ port.NodeGroupRepo = (*NodeGroupRepoPg)(nil)
+var (
+	_ port.NodeGroupRepo     = (*NodeGroupRepoPg)(nil)
+	_ port.CatalogNodeLister = (*NodeGroupRepoPg)(nil)
+)
 
 func NewNodeGroupRepoPg(db DBTX, logger logging.Logger) *NodeGroupRepoPg {
 	return &NodeGroupRepoPg{db: db, logger: logger}
 }
 
+// groupNodeMatch — предикат «узел n привязан к группе». Из него строятся и
+// usage_count, и список узлов группы (§104.2): число и список не могут
+// разойтись по построению.
+const groupNodeMatch = `n.group_id = node_groups.id`
+
 // groupUsageExpr — on-read usage_count: число узлов, привязанных к группе.
 // Считает узлы ВСЕЙ инсталляции, включая чужие команды — справочник глобальный,
 // и защита от удаления обязана видеть все ссылки, а не только видимые
 // смотрящему (§99.9).
-const groupUsageExpr = `(SELECT count(*) FROM nodes n WHERE n.group_id = node_groups.id)`
+const groupUsageExpr = `(SELECT count(*) FROM nodes n WHERE ` + groupNodeMatch + `)`
 
 const groupColumns = `id, name, description, sort_order, created_by, updated_by, created_at, updated_at, ` + groupUsageExpr + ` AS usage_count`
 
@@ -80,6 +88,13 @@ LIMIT $2`, q, limit)
 func (r *NodeGroupRepoPg) Get(ctx context.Context, id string) (*domain.NodeGroup, error) {
 	return r.scan(r.db.QueryRow(ctx,
 		`SELECT `+groupColumns+` FROM node_groups WHERE id = $1::uuid`, id))
+}
+
+// NodesUsing — реализация port.CatalogNodeLister (§104): узлы группы тем же
+// предикатом, что usage_count.
+func (r *NodeGroupRepoPg) NodesUsing(ctx context.Context, groupID string, teamIDs []string, limit int) (port.CatalogNodesPage, error) {
+	c := catalogUsage{db: r.db, table: "node_groups", match: groupNodeMatch, notFound: domain.ErrNodeGroupNotFound}
+	return c.nodesUsing(ctx, groupID, teamIDs, limit)
 }
 
 func (r *NodeGroupRepoPg) GetByName(ctx context.Context, name string) (*domain.NodeGroup, error) {

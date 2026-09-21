@@ -60,6 +60,7 @@ import {
   type NodeSection,
 } from "../lib/nodeGroups";
 import { cn } from "../lib/cn";
+import { commentOnlyHit, type CommentSnippet as Snippet } from "../lib/commentSnippet";
 import { ABOVE_STRETCH, STRETCH_HOST, STRETCHED_LINK } from "../lib/stretchedLink";
 import {
   PREF_KEY_OVERVIEW_PERIOD,
@@ -72,6 +73,7 @@ import { useVisibleNodeMetrics } from "../lib/visibleMetrics";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { useMetricsRefetchMs } from "../components/node/useNodeMetrics";
 import { SearchHistoryList } from "../components/SearchHistoryList";
+import { CommentSnippet } from "../components/CommentSnippet";
 import { MIN_SEARCH_QUERY_LEN, useRecordSearch, useSearchHistory } from "../lib/searchHistory";
 
 type ListResp = { items: Node[] };
@@ -601,6 +603,17 @@ export default function Overview() {
   // список (§99.9) — поэтому «проблемные первыми» действует внутри группы, а
   // заморозка порядка §86.10 продолжает работать без изменений.
   const sections = useMemo(() => groupNodes(nodes, groups), [nodes, groups]);
+  // §103.4: узлы, найденные ТОЛЬКО по комментарию, получают сниппет. Строка
+  // поиска — та же, что в ключе запроса списка (URL), а не текст поля ввода.
+  const snippets = useMemo(() => {
+    const m = new Map<string, Snippet>();
+    if (!search) return m;
+    for (const n of nodes) {
+      const sn = commentOnlyHit(n, search);
+      if (sn) m.set(n.id, sn);
+    }
+    return m;
+  }, [nodes, search]);
   // Групп нет вовсе (или ни один видимый узел не сгруппирован) → плоский список,
   // как до §99: одинокая безымянная секция добавила бы разметку ни о чём.
   const grouped = hasGroupedSections(sections);
@@ -935,6 +948,7 @@ export default function Overview() {
             period={period}
             ready={metricsReady}
             teamNames={teamNames}
+            snippets={snippets}
             observe={allTeams ? visible.observe : null}
           />
         ) : (
@@ -947,6 +961,7 @@ export default function Overview() {
             period={period}
             ready={metricsReady}
             teamNames={teamNames}
+            snippets={snippets}
             observe={allTeams ? visible.observe : null}
           />
         ))}
@@ -1034,6 +1049,7 @@ function NodeTable({
   period,
   ready,
   teamNames,
+  snippets,
   observe,
 }: {
   // sections — узлы, разложенные по группам (§99.5). Секция без группы всегда
@@ -1047,6 +1063,9 @@ function NodeTable({
   // teamNames — карта id → имя команды; непуста только в сквозном режиме (§86.7).
   // Имя резолвит клиент по членствам: сервер выдачу не обогащает (§86.3).
   teamNames: Map<string, string> | null;
+  // snippets — §103.4: id узла → фрагмент комментария, если узел найден только
+  // по комментарию.
+  snippets: Map<string, Snippet>;
   // observe — ref-callback порционной загрузки (§86.4); в режиме одной команды
   // наблюдать нечего, метрики приезжают одним запросом.
   observe: ((nodeId: string) => (el: Element | null) => void) | null;
@@ -1149,6 +1168,14 @@ function NodeTable({
                         нельзя выделить мышью, а его копируют. Клик по нему
                         всё равно попадает в саму ссылку. */}
                     <span className="relative z-[1]">{n.path}</span>
+                    {/* §103.4: сниппет — внутри ссылки и поднят, как текст пути:
+                        строка остаётся одной ссылкой, текст можно выделить. */}
+                    {snippets.has(n.id) && (
+                      <CommentSnippet
+                        snippet={snippets.get(n.id)!}
+                        className="relative z-[1] mt-0.5 font-sans"
+                      />
+                    )}
                   </Link>
                 </td>
                 <td className="px-3 py-2.5">
@@ -1206,6 +1233,7 @@ function NodeCards({
   period,
   ready,
   teamNames,
+  snippets,
   observe,
 }: {
   sections: NodeSection[];
@@ -1216,6 +1244,7 @@ function NodeCards({
   period: Period;
   ready: boolean;
   teamNames: Map<string, string> | null;
+  snippets: Map<string, Snippet>;
   observe: ((nodeId: string) => (el: Element | null) => void) | null;
 }) {
   const { t } = useTranslation();
@@ -1327,6 +1356,9 @@ function NodeCards({
                 }
               />
             </div>
+            {/* §103.4: сниппет НЕ поднят над ссылкой — клик по нему открывает
+                узел, и в карточке не появляется мёртвой зоны. */}
+            {snippets.has(n.id) && <CommentSnippet snippet={snippets.get(n.id)!} lines={2} />}
             {/* Тоже над ссылкой: под ней не показалась бы подсказка с полным
                 адресом (title), а другого места посмотреть его нет. */}
             <div className={cn("flex items-center gap-2 text-[11px] text-fg-subtle", ABOVE_STRETCH)}>

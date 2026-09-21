@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
+import { useCmdkInputType } from "../lib/cmdkInput";
 import { cn } from "../lib/cn";
+import { commentOnlyHit } from "../lib/commentSnippet";
 import {
   loadGlobalSearchQ,
   MIN_SEARCH_QUERY_LEN,
@@ -26,6 +28,7 @@ import {
   PopoverAnchor,
   PopoverContent,
 } from "./ui";
+import { CommentSnippet } from "./CommentSnippet";
 
 // GlobalSearch — глобальный поиск узлов в шапке (§62). Ищет по всем командам
 // пользователя (GET /api/search/nodes); выбор результата ведёт на страницу узла,
@@ -42,6 +45,7 @@ export function GlobalSearch() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
+  const searchTypeRef = useCmdkInputType("search", inputRef);
 
   const [q, setQ] = useState(() => loadGlobalSearchQ());
   const [debouncedQ, setDebouncedQ] = useState(q);
@@ -62,6 +66,8 @@ export function GlobalSearch() {
   const clearHistory = useClearSearchHistory();
 
   const results = searchQ.data?.items ?? [];
+  // §103.5: сниппет — по строке, которая ушла на сервер, а не по полю ввода.
+  const resultsQ = searchQ.data?.q ?? "";
   const history = historyQ.data?.items ?? [];
 
   // Фокус по хоткею "/" или Ctrl/⌘+K (когда фокус не в поле ввода).
@@ -117,10 +123,11 @@ export function GlobalSearch() {
             )}
           >
             <Search size={15} className="shrink-0 text-fg-subtle" />
-            {/* §90.3: те же признаки «это поиск», что у CommandInput. Тип
-                текстовый — Escape закрывает выпадающий список результатов. */}
+            {/* §90.3: те же признаки «это поиск», что у CommandInput —
+                поле здесь своё (CommandPrimitive.Input напрямую), поэтому и
+                тип ставится тем же ref-хелпером: пропсом cmdk его затирает. */}
             <CommandPrimitive.Input
-              ref={inputRef}
+              ref={searchTypeRef}
               name="q"
               autoComplete="off"
               data-1p-ignore
@@ -149,17 +156,22 @@ export function GlobalSearch() {
                 {results.length === 0 && !searchQ.isFetching && (
                   <CommandEmpty>{emptyHint}</CommandEmpty>
                 )}
-                {results.map((n) => (
-                  <CommandItem key={n.id} value={n.id} onSelect={() => pickResult(n)}>
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate font-mono text-[13px] text-fg">{n.path}</span>
-                      <span className="truncate text-[11px] text-fg-subtle">{n.target_url}</span>
-                    </div>
-                    <Chip tone="info" className="ml-2 shrink-0">
-                      {n.team_name}
-                    </Chip>
-                  </CommandItem>
-                ))}
+                {results.map((n) => {
+                  const snippet = commentOnlyHit(n, resultsQ);
+                  return (
+                    <CommandItem key={n.id} value={n.id} onSelect={() => pickResult(n)}>
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate font-mono text-[13px] text-fg">{n.path}</span>
+                        <span className="truncate text-[11px] text-fg-subtle">{n.target_url}</span>
+                        {/* §103.4: узел найден только по комментарию — показать почему. */}
+                        {snippet && <CommentSnippet snippet={snippet} />}
+                      </div>
+                      <Chip tone="info" className="ml-2 shrink-0">
+                        {n.team_name}
+                      </Chip>
+                    </CommandItem>
+                  );
+                })}
               </>
             ) : history.length > 0 ? (
               <CommandGroup heading={t("search.history")}>

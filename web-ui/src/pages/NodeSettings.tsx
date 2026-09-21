@@ -39,6 +39,7 @@ import { secretPlaceholderKey } from "../lib/secretPlaceholder";
 import { PASSWORD_MANAGER_OFF } from "../lib/secretMask";
 import { validateNodeForm } from "../lib/nodeValidation";
 import { chSchemaChangeWontApply, chSyncFormDirty } from "../lib/chSchema";
+import { invalidateCatalogUsage } from "../lib/catalogUsage";
 import { buildVerifyMessage } from "../lib/chTableVerify";
 import { ackFormDefaults, ackFormFromSpec, ackSpecApplies, ackSpecFromForm } from "../lib/ackSpec";
 import { fetchLastLogBody } from "../lib/lastLogBody";
@@ -553,6 +554,9 @@ export default function NodeSettings() {
       // только что изменённое поле «отъезжает» к старому значению, пока не
       // истечёт staleTime. Точечная инвалидация даёт мгновенный refetch.
       if (nodeId) qc.invalidateQueries({ queryKey: ["node", nodeId] });
+      // §104.6: сохранение могло сменить группу, заголовки и (у нового узла)
+      // хосты — счётчики справочников в Настройках устарели.
+      invalidateCatalogUsage(qc);
       // §56: «Сохранить и синхронизировать» — остаёмся на форме и открываем
       // диалог синхронизации по уже сохранённым настройкам (без сброса формы и
       // без navigate). filledRef не даёт рефетчу затереть форму.

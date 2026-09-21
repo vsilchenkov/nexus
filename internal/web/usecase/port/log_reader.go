@@ -127,6 +127,15 @@ type ReplayCursor struct {
 // «окно пройдено, продолжать нечего».
 func (c ReplayCursor) IsZero() bool { return c.AfterMs == 0 && c.AfterID == "" }
 
+// LogClient — одно значение фасета «Клиент» (§105.3). Host пуст, если имя IP
+// за окно не определилось (нет PTR-записи, запись до §67); IP пуст только во
+// внешних таблицах §64, тогда значение задаёт Host.
+type LogClient struct {
+	IP    string
+	Host  string
+	Count uint64
+}
+
 // LogReader — read-only доступ к ClickHouse-логам узлов (§7.4 ТЗ).
 // Используется replay (§7.4.1) и live-tail (§7.4).
 type LogReader interface {
@@ -214,6 +223,17 @@ type LogReader interface {
 	// (кап адаптера). Таблица без колонки (§64, внешняя до ручного ALTER) →
 	// пустой список без ошибки (мягкая деградация).
 	DistinctClientHosts(ctx context.Context, table, nodeID string, limit int) ([]string, error)
+
+	// DistinctClients — фасет «Клиент» (§105.3): пары «IP — имя» узла с числом
+	// ЗАПИСЕЙ (uniqExact(ID), единица §78.6) за период, по убыванию числа, до
+	// limit (кап адаптера). truncated — значений больше limit.
+	//
+	// Из q читаются ТОЛЬКО Table, NodeID, SinceMs, UntilMs и DateCreateAligned:
+	// фасет считает по узлу и периоду, остальные фильтры экрана на него не
+	// влияют. Имя — самое свежее непустое client_host IP за окно. Строки с
+	// пустым IP (внешние таблицы §64) группируются по client_host. Таблица без
+	// колонки client_host (§64 до ручного ALTER) — не ошибка: только IP.
+	DistinctClients(ctx context.Context, q LogQuery, limit int) (items []LogClient, truncated bool, err error)
 
 	// DateRange — min/max date_request узла в UnixMilli (§48.3, фасет
 	// ограничения полей дат). Пустая таблица/нет записей узла → (0, 0).

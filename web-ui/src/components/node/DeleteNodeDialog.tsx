@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Info, Archive } from "lucide-react";
 
 import { api, type Node } from "../../api/client";
+import { invalidateCatalogUsage } from "../../lib/catalogUsage";
 import { Button, Hint, Input, Modal } from "../ui";
 
 // DeleteNodeDialog — удаление узла (§7.5): чекбокс «также удалить таблицу логов»
@@ -35,6 +36,7 @@ export function DeleteNodeDialog({ node, onClose }: { node: Node; onClose: () =>
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
+      invalidateCatalogUsage(qc); // §104.6: узел уносит свои ссылки на справочники
       navigate("/");
     },
     onError: (e: { response?: { data?: { error?: string } } }) =>

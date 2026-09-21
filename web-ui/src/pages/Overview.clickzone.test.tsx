@@ -9,6 +9,7 @@ import { PREF_KEY_OVERVIEW_PERIOD } from "../lib/prefs";
 import { type MyTeamsResp } from "../lib/teams";
 import { TooltipProvider } from "../components/ui";
 import { expectLiftedAbove, expectStretchedTo } from "../test/stretched";
+import { ABOVE_STRETCH } from "../lib/stretchedLink";
 
 // §7.3: «Клик по строке таблицы или по карточке открывает §7.4».
 //
@@ -239,5 +240,67 @@ describe("Overview: зона клика по узлу (§7.3)", () => {
       return el as HTMLElement;
     });
     expectLiftedAbove(bar, link);
+  });
+});
+
+// §103.4: узел, найденный на «Узлах» ТОЛЬКО по комментарию, показывает сниппет.
+// В таблице он внутри ссылки (строка остаётся одной ссылкой), в карточке — не
+// поднят над ней (иначе в карточке появилась бы мёртвая зона).
+describe("Overview: сниппет комментария (§103.4)", () => {
+  beforeEach(() => {
+    apiGet.mockReset();
+    apiPut.mockReset();
+    localStorage.clear();
+    sessionStorage.clear();
+    groups = [];
+    nodesList = NODES.map((n) =>
+      n.id === "free-a" ? { ...n, comment: "Интеграция со СДЭК, тикет NX-41" } : n,
+    );
+    prometheusAvailable = true;
+    metrics = NODES.map((n) => ok(n.id, 10));
+    mockServer();
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  async function snippetMark(): Promise<HTMLElement> {
+    return await waitFor(() => {
+      const marks = document.querySelectorAll("mark");
+      expect(marks).toHaveLength(1);
+      return marks[0] as HTMLElement;
+    });
+  }
+
+  it("таблица: сниппет внутри ссылки узла, ссылка по-прежнему растянута", async () => {
+    localStorage.setItem("nexus.overview.view", "table");
+    renderOverview("/?q=сдэк");
+    const mark = await snippetMark();
+    expect(mark).toHaveTextContent("СДЭК");
+
+    const link = mark.closest("a") as HTMLElement;
+    expect(link).toHaveAttribute("href", "/nodes/free-a");
+    expectStretchedTo(link, link.closest("tr") as HTMLElement);
+  });
+
+  it("карточки: сниппет в карточке и не поднят над ссылкой", async () => {
+    localStorage.setItem("nexus.overview.view", "cards");
+    renderOverview("/?q=сдэк");
+    const mark = await snippetMark();
+
+    expect(mark.closest("a")).toBeNull();
+    const selector = `.${ABOVE_STRETCH.split(" ").join(".")}`;
+    expect(mark.closest(selector)).toBeNull();
+    const card = mark.closest(".relative") as HTMLElement;
+    expect(card.querySelector('a[href="/nodes/free-a"]')).toBeTruthy();
+  });
+
+  it("без поиска сниппета нет", async () => {
+    localStorage.setItem("nexus.overview.view", "table");
+    renderOverview("/");
+    await waitFor(() => expect(screen.getAllByRole("link").length).toBeGreaterThan(0));
+    expect(document.querySelector("mark")).toBeNull();
   });
 });

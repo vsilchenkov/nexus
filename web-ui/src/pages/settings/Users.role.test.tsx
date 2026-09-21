@@ -95,6 +95,15 @@ describe("выбор роли в диалоге пользователя", () =>
     apiPost.mockReset();
   });
 
+  // §104.8: самописное окно Настроек тоже диалог — роль и имя по заголовку.
+  it("окно пользователя — диалог с именем по заголовку", async () => {
+    mockServer([user("u-admin", "admin", "admin")]);
+    renderPanel();
+    await openCreateDialog();
+    const dialog = screen.getByRole("dialog", { name: "settings.users.dialog.new_title" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+  });
+
   it("показывает все четыре роли, включая «Оператор»", async () => {
     mockServer([user("u-admin", "admin", "admin")]);
     renderPanel();

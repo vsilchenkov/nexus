@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"nexus/internal/domain"
-	"nexus/internal/web/usecase/port"
 )
 
 // Резолв сквозного скоупа «все команды пользователя» (§86.2).
@@ -15,16 +14,26 @@ import (
 // каждый запрос и пустым не бывает молча. Три копии этого правила разъехались бы
 // при первой же правке, а расхождение здесь означает утечку чужих команд.
 
+// TeamMembershipLister — членства пользователя. Малый consumer-side интерфейс
+// вместо port.TeamRepo (12 методов): скоупу (§86.2), префам (§71) и списку
+// узлов справочника (§104) нужны только членства (ISP). Реализуется тем же
+// TeamRepoPg.
+type TeamMembershipLister interface {
+	ListUserTeams(ctx context.Context, userID string) ([]*domain.UserTeam, error)
+}
+
 // teamScope — id команд пользователя и карта id → команда.
 //
 // Карта нужна там, где выдачу надо обогатить именем команды (§62), и ничего не
 // стоит: она строится из того же ответа.
 //
 // Пустой список членств — НЕ ошибка: пользователь без команд просто ничего не
-// видит. Но и запрос с пустым набором уходить не должен — в адаптерах пустой
-// TeamIDs означает «фильтра нет», то есть выдачу всего инстанса. Проверку
-// делает вызывающий, здесь только резолв.
-func teamScope(ctx context.Context, teams port.TeamRepo, userID string) ([]string, map[string]domain.Team, error) {
+// видит. Что делать с пустым набором, решает вызывающий по контракту своего
+// порта, здесь только резолв. В ListNodesFilter.TeamIDs пустой набор означает
+// «фильтра нет», то есть выдачу всего инстанса, — такой запрос уходить не
+// должен. У port.CatalogNodeLister (§104) пустой скоуп, наоборот,
+// fail-closed («видимых нет»), и запрос идёт: он нужен ради Total и 404.
+func teamScope(ctx context.Context, teams TeamMembershipLister, userID string) ([]string, map[string]domain.Team, error) {
 	if teams == nil {
 		return nil, nil, fmt.Errorf("team scope: team repo unavailable")
 	}

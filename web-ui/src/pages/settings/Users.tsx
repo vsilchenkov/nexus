@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
@@ -7,7 +7,8 @@ import { generatePassword, passwordStrength } from "../../lib/password";
 import { useConfirm } from "../../lib/confirm";
 import type { Role } from "../../lib/roles";
 import { MY_TEAMS_KEY } from "../../lib/teams";
-import { SearchInput } from "../../components/ui";
+import { DialogFrame, SearchInput } from "../../components/ui";
+import { PASSWORD_MANAGER_OFF } from "../../lib/secretMask";
 
 // TeamBrief — команда пользователя для колонки «Команды» (§44.G).
 type TeamBrief = { id: string; slug: string; name: string; role: string };
@@ -440,6 +441,7 @@ type TeamListItem = { id: string; slug: string; name: string };
 // default-команда) — оно остаётся в диалоге участников команды.
 function UserTeamsDialog({ user, onClose }: { user: User; onClose: () => void }) {
   const { t } = useTranslation();
+  const titleId = useId();
   const qc = useQueryClient();
   const confirm = useConfirm();
 
@@ -520,10 +522,10 @@ function UserTeamsDialog({ user, onClose }: { user: User; onClose: () => void })
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} labelledBy={titleId}>
       <div className="space-y-4 w-[460px] max-w-full">
         <header>
-          <h3 className="text-lg font-semibold">
+          <h3 id={titleId} className="text-lg font-semibold">
             {t("settings.users.teams_dialog.title", { name: user.name || user.login })}
           </h3>
         </header>
@@ -658,6 +660,7 @@ type UserDialogProps = {
 
 function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: UserDialogProps) {
   const { t } = useTranslation();
+  const titleId = useId();
   const resetReady = usePasswordResetReady();
 
   const [login, setLogin] = useState(initial?.login ?? "");
@@ -715,13 +718,13 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
       : true;
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} labelledBy={titleId}>
       {/* §87.5: четвёртая роль добавила ряд карточек — без ограничения высоты
           форма создания выталкивала бы кнопки за нижний край на низких экранах
           (у Modal своей прокрутки нет). */}
       <div className="space-y-4 w-[460px] max-w-full max-h-[80vh] overflow-y-auto pr-1">
         <header>
-          <h3 className="text-lg font-semibold">
+          <h3 id={titleId} className="text-lg font-semibold">
             {mode === "create"
               ? t("settings.users.dialog.new_title")
               : t("settings.users.dialog.edit_title", { login: initial?.name || initial?.login })}
@@ -745,7 +748,12 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.name")}
             </label>
+            {/* §90.3: имя и почта здесь — ЧУЖИЕ (администратор заводит
+                учётку другому человеку), а Chrome предлагает в такие поля
+                данные владельца браузера — рядом ещё и поле пароля, из-за
+                которого форма опознаётся как регистрационная. */}
             <input
+              {...PASSWORD_MANAGER_OFF}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={t("settings.users.field.name_placeholder")}
@@ -760,10 +768,11 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.login")}
             </label>
-            {/* autoComplete="off": иначе Chrome вписывает сюда сохранённый
-                логин браузера (поле пароля идёт следом в create-режиме). */}
+            {/* §90.3/§98.7: иначе Chrome вписывает сюда сохранённый логин
+                браузера (поле пароля идёт следом в create-режиме), а сторонние
+                менеджеры паролей ищут по своим меткам — нужен весь набор. */}
             <input
-              autoComplete="off"
+              {...PASSWORD_MANAGER_OFF}
               value={login}
               onChange={(e) => setLogin(e.target.value)}
               disabled={mode === "edit"}
@@ -779,8 +788,12 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
             <label className="text-xs uppercase tracking-wider text-fg-muted">
               {t("settings.users.field.email")}
             </label>
+            {/* Тип остаётся email (клавиатура и семантика поля важнее):
+                адресный автозаполнитель Chrome этим набором глушится не всегда,
+                но подстановку в пару с паролем он снимает. */}
             <input
               type="email"
+              {...PASSWORD_MANAGER_OFF}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="user@example.com"
@@ -800,9 +813,12 @@ function UserDialog({ mode, initial, isSelf, activeAdmins, onClose, onSaved }: U
                 {t("settings.users.field.password")}
               </label>
               <div className="flex gap-2">
+                {/* §90.3: пароль здесь ВИДИМЫЙ (type="text"), парой к логину
+                    менеджер его не считает, но метки всё равно нужны — по ним
+                    решают 1Password и LastPass. */}
                 <input
                   type="text"
-                  autoComplete="off"
+                  {...PASSWORD_MANAGER_OFF}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="min 8 chars"
@@ -924,6 +940,7 @@ type PasswordDialogProps = {
 
 function PasswordDialog({ user, onClose, onSaved }: PasswordDialogProps) {
   const { t } = useTranslation();
+  const titleId = useId();
   const [password, setPassword] = useState("");
   const [mustChange, setMustChange] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -944,10 +961,10 @@ function PasswordDialog({ user, onClose, onSaved }: PasswordDialogProps) {
   const canSubmit = password.length >= 8 && !submit.isPending;
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} labelledBy={titleId}>
       <div className="space-y-4 w-[400px] max-w-full">
         <header>
-          <h3 className="text-lg font-semibold">
+          <h3 id={titleId} className="text-lg font-semibold">
             {t("settings.users.password_dialog.title", { login: user.name || user.login })}
           </h3>
         </header>
@@ -963,9 +980,10 @@ function PasswordDialog({ user, onClose, onSaved }: PasswordDialogProps) {
             {t("settings.users.password_dialog.new_password")}
           </label>
           <div className="flex gap-2">
+            {/* §90.3: видимый пароль — метки менеджеров, см. форму создания. */}
             <input
               type="text"
-              autoComplete="off"
+              {...PASSWORD_MANAGER_OFF}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="min 8 chars"
@@ -1030,21 +1048,20 @@ function PasswordMeter({ score, labelKey }: { score: 0 | 1 | 2 | 3 | 4; labelKey
 }
 
 // Закрытие ТОЛЬКО явным действием (Esc / «Отмена», §21): клик по подложке не
-// закрывает — случайный клик мимо окна терял введённые данные формы.
-function Modal({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
+// закрывает — случайный клик мимо окна терял введённые данные формы. Семантику
+// диалога и Esc даёт DialogFrame (§104.8); labelledBy — id заголовка окна.
+function Modal({
+  onClose,
+  labelledBy,
+  children,
+}: {
+  onClose: () => void;
+  labelledBy: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl">
-        {children}
-      </div>
-    </div>
+    <DialogFrame onClose={onClose} labelledBy={labelledBy} className="bg-bg-elev rounded-xl border border-bg-muted p-5 shadow-xl">
+      {children}
+    </DialogFrame>
   );
 }

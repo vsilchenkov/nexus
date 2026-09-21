@@ -386,3 +386,31 @@ describe("parseLogsInitialFilter: фильтры из адреса (§102.6)", (
     expect(parseLogsInitialFilter(new URLSearchParams("q_case=1&q_word=1"))).toBeNull();
   });
 });
+
+// §105.4: фильтр «Клиент» выбирает по IP — ключ ip в адресе вкладки. Без него
+// переход «Метрики → Журнал» терял бы клиента, под которым посчитан столбец.
+describe("клиент в адресе журнала (§105.4)", () => {
+  const prev = () => new URLSearchParams("tab=metrics&range=24h&team=vika");
+
+  it("ссылка на журнал несёт ip клиента", () => {
+    const next = withLogsMethod(prev(), { from: 1, to: 2 }, "m", { clientIp: "192.168.2.5" });
+    expect(next.get("ip")).toBe("192.168.2.5");
+    expect(next.get("client_host")).toBeNull();
+    const bar = withLogsWindow(prev(), { from: 1, to: 2, onlyErrors: false }, { clientIp: "10.0.0.1" });
+    expect(bar.get("ip")).toBe("10.0.0.1");
+  });
+
+  it("переход без клиента чистит ip, уход с «Логов» — тоже", () => {
+    const dirty = new URLSearchParams("tab=logs&ip=10.0.0.1&team=vika");
+    expect(withLogsWindow(dirty, { from: 1, to: 2, onlyErrors: false }).get("ip")).toBeNull();
+    expect(withFailedLogs(dirty, { from: "2026-09-16T10:00", to: "2026-09-16T11:00", done: "no" }).get("ip")).toBeNull();
+    const away = withNodeTab(dirty, "overview");
+    expect(away.get("ip")).toBeNull();
+    expect(away.get("team")).toBe("vika");
+  });
+
+  it("ip из адреса — фильтр даже без окна; старый client_host читается", () => {
+    expect(parseLogsInitialFilter(new URLSearchParams("ip=10.0.0.1"))?.clientIp).toBe("10.0.0.1");
+    expect(parseLogsInitialFilter(new URLSearchParams("client_host=app-01"))?.clientHost).toBe("app-01");
+  });
+});

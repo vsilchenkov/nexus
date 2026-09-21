@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NodeGroupsPanel } from "./NodeGroups";
@@ -47,10 +48,13 @@ const GROUPS = [
 
 function renderPanel() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // MemoryRouter — строки диалога §104 это ссылки на узлы.
   render(
-    <QueryClientProvider client={qc}>
-      <NodeGroupsPanel />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={qc}>
+        <NodeGroupsPanel />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -175,5 +179,38 @@ describe("NodeGroupsPanel", () => {
 
     expect(screen.getByText("settings.groups.dialog.create").closest("button")).toBeDisabled();
     expect(screen.getByText("settings.groups.order_range")).toBeInTheDocument();
+  });
+
+  // §104.5: «узлов: N» — кнопка, открывающая список узлов группы;
+  // «не используется» — текст, открывать нечего.
+  it("счётчик используемой группы открывает список её узлов", async () => {
+    apiGet.mockImplementation((url: string) =>
+      Promise.resolve(
+        url === "/api/node-groups/g1/nodes"
+          ? { items: [], total: 4, visible: 0, hidden: 4 }
+          : { items: GROUPS },
+      ),
+    );
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("1С Обмен")).toBeInTheDocument());
+
+    expect(
+      within(rowOf("Курьерские службы")).queryByRole("button", { name: "settings.groups.not_used" }),
+    ).toBeNull();
+    const counter = within(rowOf("1С Обмен")).getByRole("button", { name: "settings.groups.used" });
+    expect(counter).toHaveAttribute("aria-haspopup", "dialog");
+
+    fireEvent.click(counter);
+    expect(await screen.findByText("catalog_nodes.title.group")).toBeInTheDocument();
+    expect(apiGet).toHaveBeenCalledWith("/api/node-groups/g1/nodes");
+  });
+
+  it("подсказка заблокированного удаления ведёт к списку узлов", async () => {
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("1С Обмен")).toBeInTheDocument());
+    expect(within(rowOf("1С Обмен")).getByLabelText("common.delete")).toHaveAttribute(
+      "title",
+      "settings.groups.delete_in_use_tip",
+    );
   });
 });

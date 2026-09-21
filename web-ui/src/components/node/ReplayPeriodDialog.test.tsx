@@ -218,4 +218,19 @@ describe("Диалог повторной отправки (§85)", () => {
     await screen.findByText("replay_period.empty");
     expect(screen.getByRole("button", { name: /replay_period\.send/ })).toBeDisabled();
   });
+
+  // §105.4: фасет «Клиент» считает записи за период диалога. Полей «Дата с/по»
+  // здесь нет, и без явного окна фасет брал последние сутки: клиента, который
+  // слал запросы три дня назад, нельзя было выбрать для повтора за неделю.
+  it("фасет «Клиент» считает за период, выбранный в диалоге", async () => {
+    render(wrap(<ReplayPeriodDialog node={ASYNC_NODE} onClose={() => {}} />));
+    fireEvent.click(screen.getByRole("button", { name: "metrics.range.7d" }));
+    fireEvent.click(screen.getByRole("button", { name: "logs.advanced.client_any" }));
+
+    await waitFor(() =>
+      expect(apiGet.mock.calls.some(([url]) => url === "/api/nodes/n1/logs/clients")).toBe(true),
+    );
+    const [, params] = apiGet.mock.calls.find(([url]) => url === "/api/nodes/n1/logs/clients")!;
+    expect(Number(params.to) - Number(params.from)).toBe(7 * 24 * 3_600_000);
+  });
 });

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { X, ShieldX } from "lucide-react";
 
 import { api, type HostAllowlistEntry, type HostKind } from "../../api/client";
+import { invalidateCatalogUsage } from "../../lib/catalogUsage";
 import {
   Chip,
   Command,
@@ -57,13 +58,19 @@ export function AllowedHostsField({
     enabled: open,
   });
 
+  // Привязка меняет usage_count хоста: без сброса Настройки ещё до 30 с
+  // показывали бы старое «узлов: N» (§104.6).
+  const onBindingChanged = () => {
+    void qc.invalidateQueries({ queryKey: ["node-hosts", nodeId] });
+    invalidateCatalogUsage(qc);
+  };
   const attach = useMutation({
     mutationFn: (hostID: string) => api.post(`/api/nodes/${nodeId}/allowed-hosts`, { host_id: hostID }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["node-hosts", nodeId] }),
+    onSuccess: onBindingChanged,
   });
   const detach = useMutation({
     mutationFn: (hostID: string) => api.del(`/api/nodes/${nodeId}/allowed-hosts/${hostID}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["node-hosts", nodeId] }),
+    onSuccess: onBindingChanged,
   });
 
   const selected = nodeId ? (attached.data?.items ?? []) : pending;

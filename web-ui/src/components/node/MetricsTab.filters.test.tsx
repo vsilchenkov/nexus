@@ -71,7 +71,13 @@ beforeEach(() => {
     if (url.startsWith("/api/metrics/nodes/")) return Promise.resolve(METRICS);
     if (url === "/api/settings/public") return Promise.resolve({ metrics_refetch_ms: 999_000 });
     if (url.includes("/logs/methods")) return Promise.resolve({ items: ["POST"] });
-    if (url.includes("/logs/client-hosts")) return Promise.resolve({ items: [] });
+    if (url.includes("/logs/clients")) {
+      return Promise.resolve({
+        items: [{ ip: "192.168.2.5", host: "", count: 61 }],
+        logs_configured: true,
+        logs_available: true,
+      });
+    }
     return Promise.resolve({});
   });
 });
@@ -133,7 +139,23 @@ describe("MetricsTab: фильтры и шаг графика (§79.4/§79.5)", 
 
     expect(screen.queryByText("logs.advanced.from")).not.toBeInTheDocument();
     expect(screen.queryByText("logs.advanced.to")).not.toBeInTheDocument();
-    expect(screen.getByText("logs.advanced.client_host")).toBeInTheDocument();
+    expect(screen.getByText("logs.advanced.client")).toBeInTheDocument();
+  });
+
+  // §105.4: клиент выбирается по IP, и метрики считаются под ним же (параметр
+  // ip — общий серверный фильтр §72). Фасет считает записи за период вкладки.
+  it("клиент уходит в метрики как ip; фасет — за период вкладки", async () => {
+    renderTab("/nodes/n1?tab=metrics&range=1h");
+    await waitFor(() => expect(metricsCalls().length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: "logs.advanced.toggle_on" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "logs.advanced.client_any" }));
+    fireEvent.click(await screen.findByText("192.168.2.5"));
+    await waitFor(() => expect(metricsCalls().some((c) => c.ip === "192.168.2.5")).toBe(true));
+
+    const facet = apiGet.mock.calls.find((c) => c[0] === "/api/nodes/n1/logs/clients");
+    const w = (facet?.[1] ?? {}) as Record<string, string>;
+    expect(Number(w.to) - Number(w.from)).toBe(3600_000);
   });
 });
 

@@ -19,17 +19,23 @@ type HeaderCatalogRepoPg struct {
 	logger logging.Logger
 }
 
-var _ port.HeaderCatalogRepo = (*HeaderCatalogRepoPg)(nil)
+var (
+	_ port.HeaderCatalogRepo = (*HeaderCatalogRepoPg)(nil)
+	_ port.CatalogNodeLister = (*HeaderCatalogRepoPg)(nil)
+)
 
 func NewHeaderCatalogRepoPg(db DBTX, logger logging.Logger) *HeaderCatalogRepoPg {
 	return &HeaderCatalogRepoPg{db: db, logger: logger}
 }
 
-// usageExpr — on-read usage_count: число узлов, у которых имя встречается в
-// forward_headers. Без учёта регистра (имена в forward_headers вводятся
-// пользователем; каноническое имя — в каталоге).
-const usageExpr = `(SELECT count(*) FROM nodes n
-	WHERE EXISTS (SELECT 1 FROM unnest(n.forward_headers) fh WHERE lower(fh) = lower(headers_catalog.name)))`
+// headerNodeMatch — предикат «имя заголовка встречается в forward_headers
+// узла n». Без учёта регистра (имена в forward_headers вводятся
+// пользователем; каноническое имя — в каталоге). Из него строятся и
+// usage_count, и список узлов заголовка (§104.2).
+const headerNodeMatch = `EXISTS (SELECT 1 FROM unnest(n.forward_headers) fh WHERE lower(fh) = lower(headers_catalog.name))`
+
+// usageExpr — on-read usage_count: число узлов, пробрасывающих заголовок.
+const usageExpr = `(SELECT count(*) FROM nodes n WHERE ` + headerNodeMatch + `)`
 
 func (r *HeaderCatalogRepoPg) scan(row rowScanner) (*domain.HeaderCatalogEntry, error) {
 	var e domain.HeaderCatalogEntry
@@ -72,6 +78,13 @@ func (r *HeaderCatalogRepoPg) Get(ctx context.Context, id string) (*domain.Heade
 	return r.scan(r.db.QueryRow(ctx,
 		`SELECT id, name, description, created_by, created_at, updated_at, `+usageExpr+` AS usage_count
 		 FROM headers_catalog WHERE id = $1::uuid`, id))
+}
+
+// NodesUsing — реализация port.CatalogNodeLister (§104): узлы, пробрасывающие
+// заголовок, тем же предикатом, что usage_count.
+func (r *HeaderCatalogRepoPg) NodesUsing(ctx context.Context, headerID string, teamIDs []string, limit int) (port.CatalogNodesPage, error) {
+	c := catalogUsage{db: r.db, table: "headers_catalog", match: headerNodeMatch, notFound: domain.ErrHeaderNotFound}
+	return c.nodesUsing(ctx, headerID, teamIDs, limit)
 }
 
 func (r *HeaderCatalogRepoPg) GetByName(ctx context.Context, name string) (*domain.HeaderCatalogEntry, error) {

@@ -17,6 +17,7 @@ import { cn } from "../lib/cn";
 import { validateNodePath } from "../lib/nodeValidation";
 import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { useEnsureNodeTeam } from "../lib/nodeShare";
+import { invalidateCatalogUsage } from "../lib/catalogUsage";
 import {
   isKnownNodeTab,
   parseLogsInitialFilter,
@@ -284,6 +285,7 @@ function CopyNodeDialog({ node, onClose }: { node: Node; onClose: () => void }) 
     mutationFn: () => api.post<Node>(`/api/nodes/${node.id}/copy`, { path }),
     onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ["nodes"] });
+      invalidateCatalogUsage(qc); // §104.6: копия наследует группу, заголовки и хосты
       onClose();
       navigate(`/nodes/${created.id}`);
     },

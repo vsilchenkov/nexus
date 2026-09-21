@@ -119,3 +119,51 @@ func TestResolver_Lookup_EmptyPTRAnswer(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	assert.EqualValues(t, 1, calls.Load())
 }
+
+// expireL1 состаривает запись L1 так, будто её TTL истёк.
+func expireL1(r *Resolver, ip, host string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.l1[ip] = l1entry{host: host, expiresAt: time.Now().Add(-time.Second)}
+}
+
+// §105.5: протухшая запись отдаёт прежнее имя, пока идёт ровно одно фоновое
+// обновление; новое значение заменяет старое. Раньше запись на границе TTL
+// получала "" и выпадала из любого фильтра по хосту.
+func TestResolver_Lookup_StaleWhileRevalidate(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	block := make(chan struct{})
+	r := newTestResolver(func(context.Context, string) ([]string, error) {
+		calls.Add(1)
+		<-block
+		return []string{"new.example."}, nil
+	})
+	expireL1(r, "10.20.30.40", "old.example")
+
+	for range 16 {
+		assert.Equal(t, "old.example", r.Lookup("10.20.30.40"), "протухшая запись отдаёт прежнее имя")
+	}
+	require.Eventually(t, func() bool { return calls.Load() == 1 }, 2*time.Second, 10*time.Millisecond)
+	close(block)
+
+	require.Eventually(t, func() bool {
+		return r.Lookup("10.20.30.40") == "new.example"
+	}, 2*time.Second, 10*time.Millisecond)
+	assert.EqualValues(t, 1, calls.Load(), "ровно одно фоновое обновление")
+	assert.Empty(t, r.Lookup("10.20.30.41"), "промах нового IP по-прежнему пуст")
+}
+
+// §105.5: если PTR-запись исчезла, обновление честно перезаписывает имя пустым.
+func TestResolver_Lookup_StaleRefreshedToEmpty(t *testing.T) {
+	t.Parallel()
+	r := newTestResolver(func(context.Context, string) ([]string, error) {
+		return nil, errors.New("NXDOMAIN")
+	})
+	expireL1(r, "10.20.30.50", "gone.example")
+
+	assert.Equal(t, "gone.example", r.Lookup("10.20.30.50"))
+	require.Eventually(t, func() bool {
+		return r.Lookup("10.20.30.50") == ""
+	}, 2*time.Second, 10*time.Millisecond)
+}

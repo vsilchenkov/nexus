@@ -5,6 +5,8 @@ import { ArrowDown, ArrowUp, Pencil, Plus, Trash2 } from "lucide-react";
 
 import { api, type NodeGroup } from "../../api/client";
 import { Button, Input, Modal, SearchInput } from "../../components/ui";
+import { CatalogNodesDialog } from "../../components/CatalogNodesDialog";
+import { CatalogUsageCell } from "../../components/CatalogUsageCell";
 import { useConfirm } from "../../lib/confirm";
 
 type ListResp = { items: NodeGroup[] };
@@ -26,6 +28,9 @@ export function NodeGroupsPanel() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState<NodeGroup | "new" | null>(null);
+  // §104: чей список узлов открыт. Имя хранится здесь, число — берётся из
+  // живой строки таблицы (диалог сверяет его с ответом).
+  const [usageOf, setUsageOf] = useState<{ id: string; name: string } | null>(null);
 
   // Один ключ на весь справочник — его же читает комбобокс формы узла, поэтому
   // инвалидация по префиксу обновляет и открытые формы.
@@ -121,9 +126,12 @@ export function NodeGroupsPanel() {
                 <td className="px-2.5 py-2">{g.name}</td>
                 <td className="px-2.5 py-2 text-fg-muted">{g.description || "—"}</td>
                 <td className="px-2.5 py-2 text-fg-muted">
-                  {g.usage_count > 0
-                    ? t("settings.groups.used", { count: g.usage_count })
-                    : t("settings.groups.not_used")}
+                  <CatalogUsageCell
+                    count={g.usage_count}
+                    usedLabel={t("settings.groups.used", { count: g.usage_count })}
+                    notUsedLabel={t("settings.groups.not_used")}
+                    onOpen={() => setUsageOf({ id: g.id, name: g.name })}
+                  />
                 </td>
                 <td className="whitespace-nowrap px-2.5 py-2 text-right">
                   <button
@@ -148,7 +156,7 @@ export function NodeGroupsPanel() {
                       }
                     }}
                     disabled={g.usage_count > 0}
-                    title={g.usage_count > 0 ? t("settings.groups.in_use_tip") : t("common.delete")}
+                    title={g.usage_count > 0 ? t("settings.groups.delete_in_use_tip") : t("common.delete")}
                     aria-label={t("common.delete")}
                     className="rounded p-1 text-err hover:bg-bg-3 disabled:cursor-not-allowed disabled:opacity-30"
                   >
@@ -159,6 +167,16 @@ export function NodeGroupsPanel() {
             ))}
           </tbody>
         </table>
+      )}
+
+      {usageOf && (
+        <CatalogNodesDialog
+          kind="group"
+          id={usageOf.id}
+          name={usageOf.name}
+          usageCount={items.find((g) => g.id === usageOf.id)?.usage_count ?? 0}
+          onClose={() => setUsageOf(null)}
+        />
       )}
 
       {editing && (

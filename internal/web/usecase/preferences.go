@@ -10,13 +10,6 @@ import (
 	"nexus/internal/web/usecase/port"
 )
 
-// TeamMembershipLister — членства пользователя. Малый consumer-side интерфейс
-// вместо port.TeamRepo (12 методов): PreferenceUsecase проверяет только то, что
-// команда префа входит в членства (ISP). Реализуется тем же TeamRepoPg.
-type TeamMembershipLister interface {
-	ListUserTeams(ctx context.Context, userID string) ([]*domain.UserTeam, error)
-}
-
 // maxPreferencesPerUser — потолок числа записей предпочтений на пользователя
 // (§71): защита от раздувания GET /api/me/prefs (он отдаёт ВСЕ префы одним
 // ответом) и от накрутки ключей скриптом. Реальная потребность — примерно

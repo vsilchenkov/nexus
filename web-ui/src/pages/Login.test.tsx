@@ -1,10 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { type ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import Login from "./Login";
+import { defaultPeriod } from "../lib/period";
+import { defaultFilters, loadFilters, saveFilters } from "../lib/overviewFilters";
+import { loadGlobalSearchQ, saveGlobalSearchQ } from "../lib/searchHistory";
+import { setTeamScopeAll, useAllTeamsScope } from "../lib/teamScope";
 
 // §85.8: логин `admin` подставляется ТОЛЬКО на стенде.
 //
@@ -85,5 +89,41 @@ describe("Форма входа: префилл логина (§85.8)", () => {
 
     await waitFor(() => expect(apiGet).toHaveBeenCalled());
     expect(loginField().value).toBe("operator");
+  });
+});
+
+// §104.8: зеркала в sessionStorage живут во вкладке, а не у пользователя.
+// Регресс, красный на прежнем коде: выход и вход другим логином в той же
+// вкладке отдавали ему фильтры рабочего стола, строку глобального поиска и
+// сквозной режим «Все команды» прежнего пользователя.
+describe("Форма входа: сброс состояния прежней сессии (§104.8)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiGet.mockResolvedValue({ version: "1.0.0" });
+  });
+
+  it("стирает фильтры рабочего стола, строку поиска и сквозной режим", async () => {
+    saveFilters({ ...defaultFilters(defaultPeriod), search: "vika", status: "err" }, defaultPeriod);
+    saveGlobalSearchQ("сдэк");
+    setTeamScopeAll(true);
+    expect(loadFilters(defaultPeriod)).not.toBeNull();
+
+    renderLogin();
+
+    await waitFor(() => expect(loadFilters(defaultPeriod)).toBeNull());
+    expect(loadGlobalSearchQ()).toBe("");
+    expect(renderHook(() => useAllTeamsScope()).result.current).toBe(false);
+    expect(sessionStorage.getItem("nexus.team.scope")).toBeNull();
+  });
+
+  it("настройки браузера (тема, вид таблицы) не трогает", async () => {
+    localStorage.setItem("nexus.theme", "light");
+    localStorage.setItem("nexus.overview.view", "cards");
+
+    renderLogin();
+
+    await waitFor(() => expect(apiGet).toHaveBeenCalled());
+    expect(localStorage.getItem("nexus.theme")).toBe("light");
+    expect(localStorage.getItem("nexus.overview.view")).toBe("cards");
   });
 });

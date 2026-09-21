@@ -472,8 +472,9 @@ func (a *App) Start(ctx context.Context) error {
 	// Каталог разрешённых хостов (§23). Не зависит от ClickHouse — создаётся
 	// всегда. Привязка к узлу пересобирает снимок nodes.url_allowed_hosts и
 	// write-through кеш (тот же TTL, что у NodeUsecase).
+	hostAllowlistRepo := pgrepo.NewHostAllowlistRepoPg(a.pg, a.logger)
 	hostAllowlistUC := usecase.NewHostAllowlistUsecase(
-		pgrepo.NewHostAllowlistRepoPg(a.pg, a.logger),
+		hostAllowlistRepo,
 		nodeRepo, nodeCache, teamRepo, uow, auditUC,
 		time.Duration(a.cfg.Redis.NodeTTLSec)*time.Second,
 		a.logger,
@@ -482,17 +483,25 @@ func (a *App) Start(ctx context.Context) error {
 
 	// Справочник заголовков (§24). usage_count считается on-read из
 	// nodes.forward_headers; отдельной таблицы привязки нет.
-	headerCatalogUC := usecase.NewHeaderCatalogUsecase(
-		pgrepo.NewHeaderCatalogRepoPg(a.pg, a.logger), auditUC, a.logger,
-	)
+	headerCatalogRepo := pgrepo.NewHeaderCatalogRepoPg(a.pg, a.logger)
+	headerCatalogUC := usecase.NewHeaderCatalogUsecase(headerCatalogRepo, auditUC, a.logger)
 	headerCatalogHandler := httpadapter.NewHeaderCatalogHandler(headerCatalogUC, a.logger)
 
 	// Справочник групп узлов (§99). usage_count считается on-read из
 	// nodes.group_id; связь — nullable FK, отдельной таблицы привязки нет.
-	nodeGroupUC := usecase.NewNodeGroupUsecase(
-		pgrepo.NewNodeGroupRepoPg(a.pg, a.logger), auditUC, a.logger,
-	)
+	nodeGroupRepo := pgrepo.NewNodeGroupRepoPg(a.pg, a.logger)
+	nodeGroupUC := usecase.NewNodeGroupUsecase(nodeGroupRepo, auditUC, a.logger)
 	nodeGroupHandler := httpadapter.NewNodeGroupHandler(nodeGroupUC, a.logger)
+
+	// §104: узлы, использующие элемент справочника. Предикат «узел ссылается
+	// на элемент» живёт в репозитории справочника рядом с usage_count;
+	// видимость — членства пользователя (teamRepo).
+	catalogUsageHandler := httpadapter.NewCatalogUsageHandler(usecase.NewCatalogUsageUsecase(
+		map[usecase.CatalogKind]webport.CatalogNodeLister{
+			usecase.CatalogKindGroup:  nodeGroupRepo,
+			usecase.CatalogKindHeader: headerCatalogRepo,
+			usecase.CatalogKindHost:   hostAllowlistRepo,
+		}, teamRepo, a.logger), a.logger)
 
 	// Справочник полей запроса (§41). usage_count считается on-read из
 	// nodes.auth_dynamic_field / incoming_auth_dynamic_field.
@@ -817,6 +826,7 @@ func (a *App) Start(ctx context.Context) error {
 		HeaderCatalog: headerCatalogHandler,
 		NodeGroup:     nodeGroupHandler,
 		RequestField:  requestFieldHandler,
+		CatalogUsage:  catalogUsageHandler,
 		LogMask:       logMaskHandler,
 		RMQTest:       rmqTestHandler,
 		Instances:     peerInstanceHandler,

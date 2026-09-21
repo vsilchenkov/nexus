@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { api } from "../api/client";
+import { DialogFrame } from "./ui";
 
 type Orphan = {
   database: string;
@@ -44,56 +45,55 @@ function DropDialog({
   const [typed, setTyped] = useState("");
   const match = typed === table;
 
+  const titleId = useId();
+
   // Закрытие ТОЛЬКО явным действием (Esc / «Отмена», §21): клик по подложке
   // не закрывает — случайный клик мимо окна сбрасывал набранное имя таблицы.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
+  // Esc и семантику диалога даёт DialogFrame (§104.8).
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-bg-elev rounded-xl border border-bg-muted max-w-md w-full p-5 space-y-3">
-        <h3 className="text-base font-semibold text-err">
-          {t("settings.clickhouse.orphans.drop_confirm_1", { table })}
-        </h3>
-        <p className="text-sm text-fg-muted">
-          {t("settings.clickhouse.orphans.drop_confirm_2")}
+    <DialogFrame
+      onClose={onClose}
+      labelledBy={titleId}
+      className="bg-bg-elev rounded-xl border border-bg-muted max-w-md w-full p-5 space-y-3"
+    >
+      <h3 id={titleId} className="text-base font-semibold text-err">
+        {t("settings.clickhouse.orphans.drop_confirm_1", { table })}
+      </h3>
+      <p className="text-sm text-fg-muted">
+        {t("settings.clickhouse.orphans.drop_confirm_2")}
+      </p>
+      <input
+        autoFocus
+        type="text"
+        autoComplete="off"
+        value={typed}
+        onChange={(e) => setTyped(e.target.value)}
+        placeholder={table}
+        className="w-full px-3 py-2 bg-bg-muted rounded-md font-mono text-sm outline-none"
+      />
+      {typed && !match && (
+        <p className="text-xs text-err">
+          {t("settings.clickhouse.orphans.drop_mismatch")}
         </p>
-        <input
-          autoFocus
-          type="text"
-          autoComplete="off"
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          placeholder={table}
-          className="w-full px-3 py-2 bg-bg-muted rounded-md font-mono text-sm outline-none"
-        />
-        {typed && !match && (
-          <p className="text-xs text-err">
-            {t("settings.clickhouse.orphans.drop_mismatch")}
-          </p>
-        )}
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            onClick={onClose}
-            className="px-3 py-2 bg-bg-muted hover:bg-bg-muted/70 rounded-md text-sm"
-          >
-            {t("common.cancel")}
-          </button>
-          <button
-            disabled={!match || pending}
-            onClick={onConfirm}
-            className="px-3 py-2 bg-err hover:bg-err/80 text-white rounded-md text-sm disabled:opacity-50"
-          >
-            {pending
-              ? t("settings.clickhouse.orphans.dropping")
-              : t("settings.clickhouse.orphans.drop")}
-          </button>
-        </div>
+      )}
+      <div className="flex justify-end gap-2 pt-2">
+        <button
+          onClick={onClose}
+          className="px-3 py-2 bg-bg-muted hover:bg-bg-muted/70 rounded-md text-sm"
+        >
+          {t("common.cancel")}
+        </button>
+        <button
+          disabled={!match || pending}
+          onClick={onConfirm}
+          className="px-3 py-2 bg-err hover:bg-err/80 text-white rounded-md text-sm disabled:opacity-50"
+        >
+          {pending
+            ? t("settings.clickhouse.orphans.dropping")
+            : t("settings.clickhouse.orphans.drop")}
+        </button>
       </div>
-    </div>
+    </DialogFrame>
   );
 }
 

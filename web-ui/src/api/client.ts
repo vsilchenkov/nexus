@@ -243,6 +243,26 @@ export type NodeGroup = {
   updated_at: string;
 };
 
+// §104: узел, использующий элемент справочника (строка диалога «узлы: N»).
+export type CatalogNode = Pick<
+  Node,
+  "id" | "path" | "target_url" | "url_mode" | "root_method" | "status" | "team_id"
+> & {
+  team_slug: string;
+  team_name: string;
+};
+
+// §104.3: GET /api/{node-groups|headers|allowed-hosts}/{id}/nodes.
+// total — узлы всех команд (тот же предикат, что usage_count); visible — узлы
+// команд пользователя, items — их первые 500; hidden — узлы чужих команд
+// только числом.
+export type CatalogNodesResp = {
+  items: CatalogNode[];
+  total: number;
+  visible: number;
+  hidden: number;
+};
+
 // §41: справочник полей запроса (см. /api/request-fields).
 export type RequestFieldCatalogEntry = {
   id: string;

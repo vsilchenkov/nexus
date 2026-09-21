@@ -176,7 +176,7 @@ func parseTimeMs(v string) int64 {
 // @Param    from      query  string  false  "начало диапазона (RFC3339 или UnixMilli)"
 // @Param    to        query  string  false  "конец диапазона (RFC3339 или UnixMilli); для keyset-пагинации — date_request самой старой загруженной строки"
 // @Param    before_id query  string  false  "тай-брейкер keyset-пагинации: id самой старой загруженной строки (вместе с to — строгий курсор по плотным секундам)"
-// @Param    ip        query  string  false  "exact match по IP клиента (с §48 недоступно из UI, параметр API сохранён)"
+// @Param    ip        query  string  false  "exact match по IP клиента (фильтр «Клиент», §105.4)"
 // @Param    host      query  string  false  "exact match по Host (с §48 недоступно из UI, параметр API сохранён)"
 // @Param    client_host  query  string  false  "exact match по PTR-имени клиента (колонка client_host, §67)"
 // @Param    status    query  string  false  "ok — доставлено (done=1 и 200<=status<400) | err — полное дополнение ok | (пусто) — любой (§72.1)"
@@ -347,9 +347,40 @@ func (h *LogsHandler) ClientHosts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": items, "logs_configured": true, "logs_available": true})
 }
 
+// Clients godoc
+// @Summary  Клиенты узла для фасета фильтра «Клиент» (§105.3).
+// @Description  Пары «IP — имя» с числом записей (uniqExact(ID), как у /logs/count) за период, по убыванию числа. Имя — самое свежее непустое client_host IP за период, пустое — имя не определилось (нет PTR-записи). Записи без имени засчитываются к своему IP. Строки с пустым IP (внешние таблицы §64) группируются по client_host. Остальные фильтры журнала фасет не учитывает. Без from — 24 часа до to (или до текущего момента). До 200 значений, truncated=true — значений больше. Узел без clickhouse_table → 200 + logs_configured=false; CH недоступен → 200 + logs_available=false; внешняя таблица без колонки client_host → только IP.
+// @Tags     logs
+// @Produce  json
+// @Param    id    path   string  true   "node id"
+// @Param    from  query  string  false  "начало периода (RFC3339 или UnixMilli); без него — 24 часа до to"
+// @Param    to    query  string  false  "конец периода (RFC3339 или UnixMilli); без него — текущий момент"
+// @Success  200  {object}  LogClientsResponse
+// @Failure  404  {object}  ErrorResponse
+// @Security CookieAuth
+// @Security ApiTokenAuth
+// @Router   /api/nodes/{id}/logs/clients [get]
+func (h *LogsHandler) Clients(c *gin.Context) {
+	nodeID := c.Param("id")
+	window := logQueryFromContext(c) // только from/to: остальные фильтры фасет не учитывает
+	items, truncated, err := h.uc.Clients(c.Request.Context(), nodeID, currentTeamID(c),
+		window.SinceMs, window.UntilMs)
+	if h.writeFacetError(c, nodeID, "logs.clients", err,
+		gin.H{"items": []LogClientDTO{}, "truncated": false}) {
+		return
+	}
+	out := make([]LogClientDTO, 0, len(items))
+	for _, it := range items {
+		out = append(out, LogClientDTO{IP: it.IP, Host: it.Host, Count: it.Count})
+	}
+	c.JSON(http.StatusOK, LogClientsResponse{
+		Items: out, Truncated: truncated, LogsConfigured: true, LogsAvailable: true,
+	})
+}
+
 // Count godoc
 // @Summary  Точное число записей логов узла под текущими фильтрами (§67).
-// @Description  count() из ClickHouse под ТЕМИ ЖЕ фильтрами, что и GET /logs (status, done, method, client_host, даты, полнотекст q) — счётчик «Показано N из M» шапки. before_id игнорируется (total по фильтрам, не по странице). Серверный таймаут 10с; его превышение/недоступность CH → 200 + logs_available=false (UI прячет «из M»). Плохой q → 400.
+// @Description  count() из ClickHouse под ТЕМИ ЖЕ фильтрами, что и GET /logs (status, done, method, client_host, ip, даты, полнотекст q) — счётчик «Показано N из M» шапки. before_id игнорируется (total по фильтрам, не по странице). Серверный таймаут 10с; его превышение/недоступность CH → 200 + logs_available=false (UI прячет «из M»). Плохой q → 400.
 // @Tags     logs
 // @Produce  json
 // @Param    id    path   string  true   "node id"
@@ -360,6 +391,7 @@ func (h *LogsHandler) ClientHosts(c *gin.Context) {
 // @Param    unresolved   query  string  false  "1 — только НЕДОСТАВЛЕННЫЕ записи (§79.1)"
 // @Param    method       query  string  false  "exact match по подпути запроса (§48)"
 // @Param    client_host  query  string  false  "exact match по PTR-имени клиента (§67)"
+// @Param    ip           query  string  false  "exact match по IP клиента (фильтр «Клиент», §105.4)"
 // @Param    q            query  string  false  "полнотекстовый фильтр (§48.1)"
 // @Success  200  {object}  LogCountResponse
 // @Failure  400  {object}  ErrorResponse  "некорректный поисковый запрос"
@@ -618,6 +650,7 @@ func safeFilePart(s string) string {
 // @Param    id       path   string  true   "node id"
 // @Param    method   query  string  false  "exact match по подпути запроса (§48)"
 // @Param    client_host  query  string  false  "exact match по PTR-имени клиента (§67)"
+// @Param    ip       query  string  false  "exact match по IP клиента (фильтр «Клиент», §105.4)"
 // @Param    q        query  string  false  "поисковое выражение (§48.1); в live ищет по url+parameters"
 // @Param    q_case   query  bool    false  "1/true — с учётом регистра"
 // @Param    q_word   query  bool    false  "1/true — только целое слово"

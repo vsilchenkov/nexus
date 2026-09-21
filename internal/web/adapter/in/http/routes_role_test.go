@@ -26,6 +26,12 @@ import (
 
 // roleEngine собирает движок с настоящими маршрутами и сессией заданной роли.
 func roleEngine(role domain.UserRole) *gin.Engine {
+	return newRoleEngine(role, false)
+}
+
+// newRoleEngine — roleEngine; viaToken=true имитирует вход по API-токену
+// (APITokenAuth кладёт токен в контекст рядом с сессией его владельца).
+func newRoleEngine(role domain.UserRole, viaToken bool) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	// Recovery с io.Discard: nil-handler разрешённого маршрута паникует штатно
@@ -33,7 +39,12 @@ func roleEngine(role domain.UserRole) *gin.Engine {
 	r.Use(gin.RecoveryWithWriter(io.Discard))
 
 	mw := Middlewares{
-		APITokenAuth: func(c *gin.Context) { c.Next() },
+		APITokenAuth: func(c *gin.Context) {
+			if viaToken {
+				c.Set(ctxAPITokenKey, &domain.APIToken{})
+			}
+			c.Next()
+		},
 		SessionAuth: func(c *gin.Context) {
 			c.Set(ctxSessionKey, &domain.Session{
 				UserID: "u1", Login: "u1", Role: role, CurrentTeamID: "t1",
@@ -54,6 +65,7 @@ func roleEngine(role domain.UserRole) *gin.Engine {
 		HeaderCatalog: &HeaderCatalogHandler{},
 		NodeGroup:     &NodeGroupHandler{},
 		RequestField:  &RequestFieldCatalogHandler{},
+		CatalogUsage:  &CatalogUsageHandler{},
 		CHSchema:      &CHSchemaHandler{},
 		Kafka:         &KafkaHandler{},
 		Team:          &TeamHandler{},
@@ -176,6 +188,47 @@ func TestNodeGroupRoutes_ListOpenToEveryRole(t *testing.T) {
 		t.Run(string(role), func(t *testing.T) {
 			assert.NotEqual(t, http.StatusForbidden, roleStatus(r, http.MethodGet, "/api/node-groups"),
 				"%s обязан читать справочник групп", role)
+		})
+	}
+}
+
+// catalogUsageRoutes — узлы элемента справочника (§104.3).
+var catalogUsageRoutes = []string{
+	"/api/node-groups/g1/nodes",
+	"/api/headers/h1/nodes",
+	"/api/allowed-hosts/h1/nodes",
+}
+
+// TestCatalogUsageRoutes_OpenToEverySession: список узлов элемента справочника
+// доступен любой роли — usage_count и так отдаёт GET справочника любой сессии.
+// ≠404 проверяет, что маршрут вообще зарегистрирован: nil-handler разрешённого
+// маршрута даёт 500 (см. комментарий в начале файла), а незарегистрированный —
+// 404, и одно «≠403» такой пропуск не заметило бы.
+func TestCatalogUsageRoutes_OpenToEverySession(t *testing.T) {
+	t.Parallel()
+	for _, role := range []domain.UserRole{
+		domain.UserRoleViewer, domain.UserRoleOperator,
+		domain.UserRoleManager, domain.UserRoleAdmin,
+	} {
+		r := roleEngine(role)
+		for _, path := range catalogUsageRoutes {
+			t.Run(string(role)+" "+path, func(t *testing.T) {
+				code := roleStatus(r, http.MethodGet, path)
+				assert.NotEqual(t, http.StatusForbidden, code, "%s обязан видеть узлы элемента", role)
+				assert.NotEqual(t, http.StatusNotFound, code, "маршрут %s не зарегистрирован", path)
+			})
+		}
+	}
+}
+
+// TestCatalogUsageRoutes_APITokenForbidden: выдача строится по членствам
+// пользователя, а API-токен однокомандный — как /search/nodes (§62).
+func TestCatalogUsageRoutes_APITokenForbidden(t *testing.T) {
+	t.Parallel()
+	r := newRoleEngine(domain.UserRoleAdmin, true)
+	for _, path := range catalogUsageRoutes {
+		t.Run(path, func(t *testing.T) {
+			assert.Equal(t, http.StatusForbidden, roleStatus(r, http.MethodGet, path))
 		})
 	}
 }

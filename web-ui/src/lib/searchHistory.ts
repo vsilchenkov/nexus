@@ -88,14 +88,25 @@ export type NodeSearchItem = {
   team_id: string;
   team_slug: string;
   team_name: string;
+  // comment — §103: из него строится сниппет, когда узел найден только по
+  // комментарию.
+  comment?: string;
 };
+
+// NodeSearchResp — выдача поиска вместе со строкой, по которой она получена
+// (§103.5): пока едет новый ответ, на экране прошлая выдача (keepPreviousData),
+// и подсветка по тексту поля искала бы в ней не то.
+export type NodeSearchResp = { items: NodeSearchItem[]; q: string };
 
 // useNodeSearch — кросс-командный поиск узлов. enabled — управляет вызовом
 // извне (открыт дропдаун + запрос достаточной длины).
 export function useNodeSearch(q: string, enabled: boolean) {
   return useQuery({
     queryKey: ["node-search", q],
-    queryFn: () => api.get<{ items: NodeSearchItem[] }>("/api/search/nodes", { q, limit: 20 }),
+    queryFn: async (): Promise<NodeSearchResp> => {
+      const resp = await api.get<{ items: NodeSearchItem[] }>("/api/search/nodes", { q, limit: 20 });
+      return { ...resp, q };
+    },
     enabled,
     // Прежняя выдача остаётся видимой, пока едет новая (без мигания при вводе).
     placeholderData: keepPreviousData,

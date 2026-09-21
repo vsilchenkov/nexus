@@ -61,6 +61,10 @@ duration_ms.
 
 ## 67.3 UI: фильтр «Хост клиента» + facet
 
+> **Заменено [§105](105-log-client-filter.md):** UI фильтрует по IP через фасет
+> `/logs/clients` с числом записей за период; `/logs/client-hosts` остаётся для API-токенов.
+> Резолвер §67.2 перешёл на stale-while-revalidate (§105.5).
+
 - `GET /api/nodes/{id}/logs/client-hosts` — DISTINCT непустых `client_host` узла (кап 200,
   сортировка), деградации как у `/logs/methods` (`logs_configured`/`logs_available`).
 - `LogQuery.ClientHost` — exact match: SQL-условие в Search/Count + in-memory зеркало
