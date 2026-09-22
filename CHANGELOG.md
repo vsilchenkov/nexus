@@ -22,6 +22,13 @@
 
 ## [Unreleased]
 
+## [1.38.0] - 2026-09-22
+
+**Откат:** без отката схемы (миграций нет).
+
+Один раздел ТЗ: имя клиента для адресов без обратной DNS-записи (§106) — опрос NetBIOS и
+дозаполнение пустых имён в уже записанных логах по расписанию из настроек.
+
 ### Added
 
 - **§106 Имя клиента без обратной DNS-записи — NetBIOS.** Если у клиента из частной сети
@@ -3544,7 +3551,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.37.0...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.38.0...HEAD
+[1.38.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.37.0...v1.38.0
 [1.37.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.36.0...v1.37.0
 [1.36.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.35.1...v1.36.0
 [1.35.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.35.0...v1.35.1
