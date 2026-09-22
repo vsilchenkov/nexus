@@ -14,6 +14,11 @@
 // l1TTLCap. Негативный результат (нет PTR / ошибка DNS) кешируется тоже
 // (пустая строка) — иначе каждый запрос с IP без PTR порождал бы DNS-запрос.
 //
+// Второй этап (§106.2, opt-in, WithNetBIOS): если PTR ничего не дал, для
+// IPv4 спрашивается NetBIOS Node Status — Windows-хосты домена без обратной
+// DNS-записи отвечают на него своим именем. Для фоновых задач есть
+// блокирующий ResolveNow (§106.3): он ждёт полную цепочку, а не только L1.
+//
 // Fail-open всюду: Redis недоступен → работаем в режиме «только L1» с
 // Debug-логом; ошибка DNS → негативный кеш. Кросс-репличный дедуп резолвов
 // сознательно не делается (§67): singleflight покрывает конкуренцию внутри
@@ -62,9 +67,13 @@ type Resolver struct {
 	redis   *goredis.Client // nil допустим → режим «только L1»
 	// lookupAddr — шов для тестов; по умолчанию net.DefaultResolver.LookupAddr.
 	lookupAddr func(ctx context.Context, ip string) ([]string, error)
-	sf         singleflight.Group
-	logger     logging.Logger
-	cfg        Config
+	// lookupNetBIOS — второй этап (§106.2); nil — этап выключен.
+	lookupNetBIOS NetBIOSLookupFunc
+	// netbiosSuffix — DNS-суффикс к короткому NetBIOS-имени, без точек по краям.
+	netbiosSuffix string
+	sf            singleflight.Group
+	logger        logging.Logger
+	cfg           Config
 
 	mu      sync.Mutex
 	l1      map[string]l1entry
@@ -86,6 +95,21 @@ func WithLookupFunc(fn func(ctx context.Context, ip string) ([]string, error)) O
 		if fn != nil {
 			r.lookupAddr = fn
 		}
+	}
+}
+
+// NetBIOSLookupFunc — второй этап резолва (§106.2): короткое NetBIOS-имя
+// IPv4-хоста или "", если уникального имени <00> у хоста нет. Ошибка —
+// хост не ответил. Реализация — netbios.Client.Hostname.
+type NetBIOSLookupFunc func(ctx context.Context, ip string) (string, error)
+
+// WithNetBIOS включает второй этап: после пустого PTR для IPv4 вызывается fn,
+// к найденному имени через точку дописывается suffix ("" — короткое имя как
+// есть). nil fn оставляет этап выключенным.
+func WithNetBIOS(fn NetBIOSLookupFunc, suffix string) Option {
+	return func(r *Resolver) {
+		r.lookupNetBIOS = fn
+		r.netbiosSuffix = strings.Trim(suffix, ".")
 	}
 }
 
@@ -121,8 +145,7 @@ func New(ctx context.Context, redis *goredis.Client, cfg Config, logger logging.
 // же отвечает из hosts-файла мусором (Docker Desktop пишет туда
 // «127.0.0.1 kubernetes.docker.internal» — поймано на стенде).
 func (r *Resolver) Lookup(ip string) string {
-	parsed := net.ParseIP(ip)
-	if parsed == nil || parsed.IsLoopback() || parsed.IsUnspecified() {
+	if skipIP(ip) {
 		return ""
 	}
 	r.mu.Lock()
@@ -149,89 +172,26 @@ func (r *Resolver) Lookup(ip string) string {
 	return e.host // "" у промаха: нулевое значение l1entry
 }
 
-// resolve — фоновый резолв одного IP: Redis-кеш → PTR-lookup → Redis SET + L1.
+// skipIP — значения, которые не резолвятся вовсе: не-IP (rabbitmq://… у
+// pull-узлов §27.10, пустые строки), loopback и unspecified.
+func skipIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed == nil || parsed.IsLoopback() || parsed.IsUnspecified()
+}
+
+// resolve — фоновый резолв одного IP по заявке Lookup.
 func (r *Resolver) resolve(ip string) {
 	defer func() {
 		r.mu.Lock()
 		delete(r.pending, ip)
 		r.mu.Unlock()
 	}()
-	// singleflight — на случай гонки двух вызовов до установки pending.
-	// Результат кладут в кеши сами resolveOnce, возврат не нужен.
+	// singleflight — на случай гонки двух вызовов до установки pending и
+	// одновременного ResolveNow того же IP. Результат кладёт в кеши сам
+	// resolveOnce, возврат не нужен.
 	_, _, _ = r.sf.Do(ip, func() (any, error) {
-		return r.resolveOnce(ip), nil
+		return r.resolveOnce(r.baseCtx, ip, true), nil
 	})
-}
-
-// resolveOnce выполняет полный цикл резолва и заполняет оба кеша.
-func (r *Resolver) resolveOnce(ip string) string {
-	start := time.Now()
-	if r.baseCtx.Err() != nil {
-		return "" // приложение останавливается
-	}
-
-	// 1) Redis-кеш. Пустая строка — валидный негативный хит (отличаем от
-	// промаха по redis.Nil).
-	if r.redis != nil {
-		rctx, cancel := context.WithTimeout(r.baseCtx, redisOpTimeout)
-		val, err := r.redis.Get(rctx, keyPrefix+ip).Result()
-		cancel()
-		switch {
-		case err == nil:
-			r.l1Set(ip, val, val != "")
-			r.logger.Debug("rdns: resolved from redis cache",
-				r.logger.Str("ip", ip), r.logger.Str("host", val),
-				r.logger.Str("source", "redis"))
-			return val
-		case err != goredis.Nil:
-			// §51.9: fail-open — Redis недоступен, идём в DNS напрямую.
-			r.logger.Debug("rdns: redis get failed, falling back to dns",
-				r.logger.Str("ip", ip), r.logger.Err(err))
-		}
-	}
-
-	// 2) PTR-lookup с таймаутом.
-	dctx, cancel := context.WithTimeout(r.baseCtx, r.cfg.Timeout)
-	names, err := r.lookupAddr(dctx, ip)
-	cancel()
-
-	host := ""
-	if err == nil && len(names) > 0 {
-		host = strings.TrimSuffix(names[0], ".")
-	}
-	positive := host != ""
-	r.l1Set(ip, host, positive)
-
-	// 3) Redis SET с TTL (позитив/негатив). Ошибка — Debug, не фатально.
-	if r.redis != nil {
-		ttl := r.cfg.CacheTTL
-		if !positive {
-			ttl = r.cfg.NegativeTTL
-		}
-		rctx, rcancel := context.WithTimeout(r.baseCtx, redisOpTimeout)
-		if serr := r.redis.Set(rctx, keyPrefix+ip, host, ttl).Err(); serr != nil {
-			r.logger.Debug("rdns: redis set failed",
-				r.logger.Str("ip", ip), r.logger.Err(serr))
-		}
-		rcancel()
-	}
-
-	// §51.9: исход резолва. Отсутствие PTR — норма (Debug, не Warn).
-	source := "dns"
-	if !positive {
-		source = "dns_negative"
-	}
-	if err != nil {
-		r.logger.Debug("rdns: ptr lookup failed (cached negative)",
-			r.logger.Str("ip", ip), r.logger.Err(err),
-			r.logger.Int("duration_ms", int(time.Since(start).Milliseconds())))
-	} else {
-		r.logger.Debug("rdns: resolved",
-			r.logger.Str("ip", ip), r.logger.Str("host", host),
-			r.logger.Str("source", source),
-			r.logger.Int("duration_ms", int(time.Since(start).Milliseconds())))
-	}
-	return host
 }
 
 // l1Set кладёт значение в L1 с TTL = min(cfg TTL, l1TTLCap). При переполнении

@@ -11453,6 +11453,10 @@ const docTemplate = `{
                     "description": "CircuitBreakerThreshold — сколько отказов подряд приостанавливают доставку\nк узлу, ГЛОБАЛЬНО (§98.5). Третий уровень цепочки: узел (поле \u003e 0) →\nэто значение → sender.circuit_breaker.threshold из конфига.\nnil = «в интерфейсе не задано», и действует конфиг, как до §98.\nДиапазон — тот же, что у поля узла (1..100): расхождение границ дало бы\nзначение, которое принимают глобально и отвергают на узле. Не секрет.",
                     "type": "integer"
                 },
+                "client_host_backfill_cron": {
+                    "description": "ClientHostBackfillCron — расписание дозаполнения пустых client_host в\nлогах узлов (§106.4), стандартный 5-полевой cron по времени контейнера\nSender'а. nil — не задано, действует ClientHostBackfillDefaultCron;\n\"\" — дозаполнение выключено (указатель на пустую строку omitempty не\nвыбрасывает, поэтому «выключено» переживает запись в JSONB). Не секрет.",
+                    "type": "string"
+                },
                 "max_async_body_bytes": {
                     "description": "MaxAsyncBodyBytes — рабочий лимит тела асинхронного приёма (§97), байты:\n/requestAsync, /callback и sync-запрос к узлу на паузе (§3.6, он уходит\nв очередь). Обязан быть ≤ MaxBodyBytes. nil = дефолт\nBodyLimitDefaultBytes. Не секрет.",
                     "type": "integer"

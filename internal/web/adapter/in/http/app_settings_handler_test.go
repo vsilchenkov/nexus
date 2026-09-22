@@ -159,6 +159,8 @@ func TestAppSettingsHandler_Update_BadRequest(t *testing.T) {
 		{"log level below min", `{"logging":{"level":1}}`},
 		{"session ttl too small", `{"security":{"session_ttl_seconds":10}}`},
 		{"bad cron", `{"notifications":{"telegram":{"cron":"not a cron"}}}`},
+		// §106.4: без сентинела в settingsValidationErrors было бы 500.
+		{"bad client_host backfill cron", `{"general":{"client_host_backfill_cron":"* * * * * *"}}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -206,4 +208,21 @@ func TestAppSettingsHandler_Get_MasksSecretsKeepsLogLevel(t *testing.T) {
 	assert.Equal(t, "***", *got.ClickHouse.Password)
 	require.NotNil(t, got.Logging.Level)
 	assert.Equal(t, 5, *got.Logging.Level, "log level is not a secret")
+}
+
+// §106.4: пустая строка в JSON — «выключить дозаполнение», а не отсутствие
+// поля: она обязана дойти до БД как указатель на "" и опубликовать general.
+func TestAppSettingsHandler_Update_ClientHostBackfillCronEmpty(t *testing.T) {
+	t.Parallel()
+	repo := &fakeSettingsRepo{current: &domain.AppSettings{}}
+	pub := &capturePublisher{}
+	r := newSettingsRouter(t, repo, pub, false)
+
+	w := doSettings(t, r, http.MethodPut, `{"general":{"client_host_backfill_cron":""}}`)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	require.NotNil(t, repo.lastSaved)
+	require.NotNil(t, repo.lastSaved.General.ClientHostBackfillCron)
+	assert.Empty(t, *repo.lastSaved.General.ClientHostBackfillCron)
+	assert.Equal(t, []string{"general"}, pub.sections)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/crypto"
 	"nexus/internal/platform/logging"
 )
@@ -244,4 +245,29 @@ func TestDecodeAppSettings_BreakerPolicyAbsent(t *testing.T) {
 	require.NotNil(t, o)
 	assert.Nil(t, o.General.CircuitBreakerThreshold)
 	assert.Nil(t, o.General.CircuitBreakerCooldownSec)
+}
+
+// §106.4: поле расписания обязано дожить до узкого overlay. Без него Sender
+// читал бы nil и включал расписание по умолчанию даже у выключенной задачи.
+func TestDecodeAppSettings_ClientHostBackfillCron(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "absent_default", raw: `{"general":{}}`, want: domain.ClientHostBackfillDefaultCron},
+		{name: "empty_row_default", raw: `{}`, want: domain.ClientHostBackfillDefaultCron},
+		{name: "disabled", raw: `{"general":{"client_host_backfill_cron":""}}`, want: ""},
+		{name: "custom", raw: `{"general":{"client_host_backfill_cron":"*/10 * * * *"}}`, want: "*/10 * * * *"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			o, err := decodeAppSettings([]byte(tc.raw), nil, logging.NewNoop())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, clientHostBackfillCronFromOverlay(o))
+		})
+	}
+	assert.Equal(t, domain.ClientHostBackfillDefaultCron, clientHostBackfillCronFromOverlay(nil))
 }

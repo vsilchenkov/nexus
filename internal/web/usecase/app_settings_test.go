@@ -700,3 +700,70 @@ func TestChangedSections_BreakerPolicy(t *testing.T) {
 		General: domain.GeneralSettings{CircuitBreakerCooldownSec: new(30)},
 	}))
 }
+
+// §106.4: расписание дозаполнения client_host. Пустая строка — отдельное
+// значение «выключено», а не «не трогать»: она обязана дойти до БД и
+// опубликовать general, иначе выключить задачу из интерфейса нельзя.
+func TestAppSettings_Update_ClientHostBackfillCron(t *testing.T) {
+	t.Parallel()
+	rows := []struct {
+		name    string
+		expr    string
+		wantErr error
+	}{
+		{name: "стандартный cron", expr: "30 2 * * 1-5"},
+		{name: "дескриптор", expr: "@daily"},
+		{name: "пусто — выключено", expr: ""},
+		{name: "секунды не поддерживаются", expr: "* * * * * *", wantErr: domain.ErrClientHostBackfillCronInvalid},
+		{name: "мусор", expr: "каждый день", wantErr: domain.ErrClientHostBackfillCronInvalid},
+		{name: "минута вне диапазона", expr: "61 3 * * *", wantErr: domain.ErrClientHostBackfillCronInvalid},
+	}
+	for _, r := range rows {
+		t.Run(r.name, func(t *testing.T) {
+			t.Parallel()
+			repo := &fakeAppSettingsRepo{current: &domain.AppSettings{
+				General: domain.GeneralSettings{ClientHostBackfillCron: new("0 3 * * *")},
+			}}
+			pub := &fakeReloadPublisher{}
+			uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()), pub, false,
+				0, 0, logging.NewNoop())
+
+			err := uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+				General: domain.GeneralSettings{ClientHostBackfillCron: new(r.expr)},
+			})
+			if r.wantErr != nil {
+				require.ErrorIs(t, err, r.wantErr)
+				assert.Nil(t, repo.lastSaved, "невалидное расписание не должно доезжать до БД")
+				assert.Empty(t, pub.sections)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, repo.lastSaved.General.ClientHostBackfillCron)
+			assert.Equal(t, r.expr, *repo.lastSaved.General.ClientHostBackfillCron)
+			assert.Equal(t, []string{"general"}, pub.sections, "Sender пересобирает планировщик по событию general")
+		})
+	}
+}
+
+// Патч без поля не сбрасывает сохранённое расписание.
+func TestAppSettings_Update_ClientHostBackfillCron_KeptWhenAbsent(t *testing.T) {
+	t.Parallel()
+	repo := &fakeAppSettingsRepo{current: &domain.AppSettings{
+		General: domain.GeneralSettings{ClientHostBackfillCron: new("")},
+	}}
+	uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()),
+		&fakeReloadPublisher{}, false, 0, 0, logging.NewNoop())
+
+	require.NoError(t, uc.Update(context.Background(), Actor{UserID: "u"}, &domain.AppSettings{
+		General: domain.GeneralSettings{MetricsRefetchMs: new(30_000)},
+	}))
+	require.NotNil(t, repo.lastSaved.General.ClientHostBackfillCron)
+	assert.Empty(t, *repo.lastSaved.General.ClientHostBackfillCron, "выключенная задача осталась выключенной")
+}
+
+func TestChangedSections_ClientHostBackfillCron(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, []string{"general"}, changedSections(&domain.AppSettings{
+		General: domain.GeneralSettings{ClientHostBackfillCron: new("")},
+	}))
+}

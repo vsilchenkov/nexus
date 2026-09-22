@@ -9,6 +9,10 @@ hostname самого Sender'а (docker container ID). Развивает §4.3 
 
 Карта реализации — [../IMPLEMENTATION.md](../IMPLEMENTATION.md).
 
+> **Развито [§106](106-netbios-client-host.md):** второй этап резолва — NetBIOS Node Status для
+> IPv4-хостов без PTR (opt-in, `sender.rdns.netbios`), блокирующий `ResolveNow` для фоновых задач
+> и дозаполнение пустых `client_host` по расписанию из «Настройки → Общие».
+
 ## 67.1 Колонка `client_host`
 
 - `client_host String DEFAULT ''`, физически **сразу после `IP`** — в `RequiredLogColumns`
@@ -40,13 +44,16 @@ hostname самого Sender'а (docker container ID). Развивает §4.3 
    валидный негативный хит (промах отличается по redis.Nil).
 2. Промах → `net.DefaultResolver.LookupAddr` с таймаутом `timeout_ms`; PTR-имя обрезается от
    финальной точки.
+   2b. (§106, opt-in) PTR пуст, адрес IPv4, `sender.rdns.netbios.enabled` → NetBIOS Node Status
+   по UDP/137; имя — первое уникальное `<00>` плюс `sender.rdns.netbios.suffix`.
 3. Redis `SET EX`: позитив — `cache_ttl_sec`, негатив (нет PTR/ошибка DNS) — `negative_ttl_sec`.
+   Резолв, прерванный отменой контекста, не кешируется ни в L1, ни в Redis (§106.2).
    Плюс запись в L1 с TTL = min(TTL, 5 мин) — потолок, чтобы реплика подхватывала обновления
    соседей не позже чем через 5 минут.
 
 **Fail-open всюду**: Redis недоступен/nil → режим «только L1» с Debug-логом; ошибка DNS →
 негативный кеш. Debug-инструментация §51.9: ip, host, source (redis|dns|dns_negative),
-duration_ms.
+duration_ms (§106 добавил `netbios|netbios_negative`).
 
 **Сознательные отказы** (зафиксированы, чтобы не переизобретать):
 - Кросс-репличного дедупа резолвов нет: Redis-лок сложнее самой фичи; худший случай — по
@@ -57,7 +64,8 @@ duration_ms.
 `timeout_ms` (2000), `cache_ttl_sec` (3600), `negative_ttl_sec` (600).
 
 Требование к инфраструктуре: PTR-записи в корпоративном DNS для клиентских подсетей; резолв
-должен работать из контейнера Sender'а (`docker exec <sender> getent hosts <ip>`).
+должен работать из контейнера Sender'а (`docker exec <sender> getent hosts <ip>`). Хостам без PTR
+помогает NetBIOS-этап §106 — при открытом UDP/137 (§106.6).
 
 ## 67.3 UI: фильтр «Хост клиента» + facet
 

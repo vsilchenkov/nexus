@@ -81,3 +81,61 @@ func TestRDNS_RedisCache(t *testing.T) {
 	assert.Equal(t, callsAfterWarmup, dnsCalls.Load(),
 		"холодная реплика взяла имя из Redis без нового PTR-lookup")
 }
+
+// TestRDNS_ResolveNow_WritesRedis — §106.3: блокирующий резолв для
+// дозаполнения client_host. Возвращает имя второго этапа (NetBIOS §106.2) сразу,
+// кладёт его в общий Redis-кеш с TTL позитивного кеша, а соседняя реплика
+// получает то же имя из Redis без PTR и без NetBIOS.
+func TestRDNS_ResolveNow_WritesRedis(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	redisClient, cleanup := startRedis(t, ctx)
+	defer cleanup()
+
+	logger := logging.NewNoop()
+	cfg := rdns.Config{Timeout: 2 * time.Second, CacheTTL: time.Hour, NegativeTTL: 10 * time.Minute}
+
+	var ptrCalls, nbCalls atomic.Int32
+	lookup := func(context.Context, string) ([]string, error) {
+		ptrCalls.Add(1)
+		return nil, errors.New("NXDOMAIN") // корпоративный DNS без PTR (§106.1)
+	}
+	nb := func(_ context.Context, ip string) (string, error) {
+		nbCalls.Add(1)
+		if ip == "192.168.6.167" {
+			return "SRV-D-SQLDEV-HQ", nil
+		}
+		return "", errors.New("i/o timeout")
+	}
+	newResolver := func() *rdns.Resolver {
+		return rdns.New(ctx, redisClient, cfg, logger,
+			rdns.WithLookupFunc(lookup), rdns.WithNetBIOS(nb, "vz78.vozovoz.ru"))
+	}
+
+	r1 := newResolver()
+	assert.Equal(t, "SRV-D-SQLDEV-HQ.vz78.vozovoz.ru", r1.ResolveNow(ctx, "192.168.6.167"),
+		"холодный кеш — имя без ожидания фона")
+	val, err := redisClient.Get(ctx, "nexus:rdns:192.168.6.167").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "SRV-D-SQLDEV-HQ.vz78.vozovoz.ru", val)
+	ttl, err := redisClient.TTL(ctx, "nexus:rdns:192.168.6.167").Result()
+	require.NoError(t, err)
+	assert.InDelta(t, cfg.CacheTTL.Seconds(), ttl.Seconds(), 60, "TTL позитивного кеша ≈ cache_ttl")
+
+	// Оба этапа пусты — негативный маркер с TTL негативного кеша.
+	assert.Empty(t, r1.ResolveNow(ctx, "192.168.2.5"))
+	val, err = redisClient.Get(ctx, "nexus:rdns:192.168.2.5").Result()
+	require.NoError(t, err)
+	assert.Empty(t, val)
+	ttl, err = redisClient.TTL(ctx, "nexus:rdns:192.168.2.5").Result()
+	require.NoError(t, err)
+	assert.InDelta(t, cfg.NegativeTTL.Seconds(), ttl.Seconds(), 60, "TTL негативного кеша ≈ negative_ttl")
+
+	ptrBefore, nbBefore := ptrCalls.Load(), nbCalls.Load()
+	r2 := newResolver()
+	assert.Equal(t, "SRV-D-SQLDEV-HQ.vz78.vozovoz.ru", r2.ResolveNow(ctx, "192.168.6.167"))
+	assert.Empty(t, r2.ResolveNow(ctx, "192.168.2.5"))
+	assert.Equal(t, ptrBefore, ptrCalls.Load(), "соседняя реплика не повторила PTR")
+	assert.Equal(t, nbBefore, nbCalls.Load(), "соседняя реплика не повторила NetBIOS")
+}

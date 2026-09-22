@@ -183,6 +183,27 @@ type GeneralSettings struct {
 	// секунды, ГЛОБАЛЬНО (§98.5). Диапазон 1..3600, как у поля узла.
 	// nil = действует конфиг. Не секрет.
 	CircuitBreakerCooldownSec *int `json:"circuit_breaker_cooldown_sec,omitempty"`
+
+	// ClientHostBackfillCron — расписание дозаполнения пустых client_host в
+	// логах узлов (§106.4), стандартный 5-полевой cron по времени контейнера
+	// Sender'а. nil — не задано, действует ClientHostBackfillDefaultCron;
+	// "" — дозаполнение выключено (указатель на пустую строку omitempty не
+	// выбрасывает, поэтому «выключено» переживает запись в JSONB). Не секрет.
+	ClientHostBackfillCron *string `json:"client_host_backfill_cron,omitempty"`
+}
+
+// ClientHostBackfillDefaultCron — расписание дозаполнения client_host, когда
+// администратор его не задавал (§106.4): раз в час, в начале часа.
+const ClientHostBackfillDefaultCron = "0 * * * *"
+
+// ClientHostBackfillCronOrDefault разворачивает настройку в действующее
+// выражение: nil → ClientHostBackfillDefaultCron, иначе значение как есть
+// ("" — выключено). Вынесено в домен, чтобы Web и Sender понимали nil одинаково.
+func ClientHostBackfillCronOrDefault(v *string) string {
+	if v == nil {
+		return ClientHostBackfillDefaultCron
+	}
+	return *v
 }
 
 // Рабочие лимиты размера тела (§97): дефолт 100 МиБ, минимум 1 КиБ.
