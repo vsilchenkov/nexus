@@ -16,6 +16,7 @@ import (
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"nexus/internal/domain"
+	chpf "nexus/internal/platform/clickhouse"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -62,28 +63,13 @@ func classifyCHErr(op string, err error) error {
 	return wrapped
 }
 
-// Коды серверных ошибок ClickHouse «нет такой колонки» (§67 деградация
-// внешних таблиц §64, у которых владелец ещё не выполнил ручной ALTER).
-const (
-	chCodeNotFoundColumnInBlock = 10 // NOT_FOUND_COLUMN_IN_BLOCK
-	chCodeNoSuchColumnInTable   = 16 // NO_SUCH_COLUMN_IN_TABLE
-	chCodeUnknownIdentifier     = 47 // UNKNOWN_IDENTIFIER
-)
-
 // isMissingColumnErr сообщает, что err — серверная ошибка CH «колонка col не
 // существует». Используется для мягкой деградации facet-запросов по внешним
 // таблицам (§64), где новая обязательная колонка ещё не добавлена вручную:
-// такие ошибки — транзитное состояние деплой-окна, а не баг (см. §67).
+// такие ошибки — транзитное состояние деплой-окна, а не баг (см. §67). Общая
+// реализация — в platform/clickhouse: ею же пользуется дозаполнение §106.3.
 func isMissingColumnErr(err error, col string) bool {
-	var ex *chgo.Exception
-	if !errors.As(err, &ex) {
-		return false
-	}
-	switch ex.Code {
-	case chCodeNotFoundColumnInBlock, chCodeNoSuchColumnInTable, chCodeUnknownIdentifier:
-		return strings.Contains(ex.Message, col)
-	}
-	return false
+	return chpf.IsMissingColumnErr(err, col)
 }
 
 // ConnProvider — узкий read-only доступ к ClickHouse-соединению.

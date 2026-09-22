@@ -324,4 +324,9 @@ var (
 	// настроек приложения, а не в форму узла.
 	ErrBreakerThresholdInvalid = errors.New("domain: circuit_breaker_threshold must be 1..100")
 	ErrBreakerCooldownInvalid  = errors.New("domain: circuit_breaker_cooldown_sec must be 1..3600")
+
+	// ErrClientHostBackfillCronInvalid — расписание дозаполнения client_host
+	// не разбирается как стандартный cron (§106.4). Пустая строка допустима:
+	// она выключает дозаполнение.
+	ErrClientHostBackfillCronInvalid = errors.New("domain: invalid client_host backfill cron expression")
 )

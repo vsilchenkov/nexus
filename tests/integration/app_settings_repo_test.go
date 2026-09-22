@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/bootstrap"
 	"nexus/internal/platform/crypto"
 	"nexus/internal/platform/logging"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
@@ -85,6 +86,44 @@ func TestAppSettingsRepo_GeneralRoundTrip_E2E(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.General.PublicBaseURL, "public_base_url должен сохраниться")
 	require.Equal(t, publicURL, *got.General.PublicBaseURL)
+}
+
+// recordingSchedule запоминает последнее расписание, применённое reloader'ом.
+type recordingSchedule struct{ got []string }
+
+func (r *recordingSchedule) SetSchedule(expr string) error {
+	r.got = append(r.got, expr)
+	return nil
+}
+
+// TestAppSettingsRepo_ClientHostBackfillCron_E2E (§106.4): путь настройки от
+// репозитория Web до планировщика Sender'а. "" (задача выключена) обязано
+// пережить JSONB и узкий overlay bootstrap'а как "", а не как nil — иначе
+// Sender включил бы расписание по умолчанию вопреки администратору.
+func TestAppSettingsRepo_ClientHostBackfillCron_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	cipher := mustTestCipher(t)
+	repo := pgrepo.NewAppSettingsRepoPg(pool, cipher, logging.NewNoop())
+	sw := &recordingSchedule{}
+	reload := bootstrap.ClientHostBackfillReloader(pool, sw, cipher, logging.NewNoop())
+
+	require.NoError(t, reload(ctx), "пустая app_settings")
+	for _, expr := range []string{"", "*/10 * * * *"} {
+		require.NoError(t, repo.Update(ctx, &domain.AppSettings{
+			General: domain.GeneralSettings{ClientHostBackfillCron: &expr},
+		}))
+		got, err := repo.Get(ctx)
+		require.NoError(t, err)
+		require.NotNil(t, got.General.ClientHostBackfillCron, "expr=%q", expr)
+		assert.Equal(t, expr, *got.General.ClientHostBackfillCron)
+		require.NoError(t, reload(ctx))
+	}
+	assert.Equal(t, []string{domain.ClientHostBackfillDefaultCron, "", "*/10 * * * *"}, sw.got)
 }
 
 // TestAppSettingsRepo_SecurityRoundTrip_E2E (§34.2): защита от той же регрессии

@@ -104,6 +104,10 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 	if err := validateTelegramPatch(patch); err != nil {
 		return err
 	}
+	// §106.4: расписание дозаполнения client_host ("" — выключено).
+	if err := validateClientHostBackfillCron(patch.General.ClientHostBackfillCron); err != nil {
+		return err
+	}
 	if patch.General.PublicBaseURL != nil {
 		if err := domain.ValidatePublicBaseURL(*patch.General.PublicBaseURL); err != nil {
 			return err
@@ -252,6 +256,11 @@ func mergeAppSettings(current, patch *domain.AppSettings) *domain.AppSettings {
 	if patch.General.CircuitBreakerCooldownSec != nil {
 		out.General.CircuitBreakerCooldownSec = patch.General.CircuitBreakerCooldownSec
 	}
+	// §106.4: расписание дозаполнения client_host; "" (выключено) — тоже
+	// значение и перезаписывает прежнее.
+	if patch.General.ClientHostBackfillCron != nil {
+		out.General.ClientHostBackfillCron = patch.General.ClientHostBackfillCron
+	}
 
 	// §34.2: Security — длительность сессии (не секрет).
 	if patch.Security.SessionTTLSeconds != nil {
@@ -391,6 +400,20 @@ func validateTelegramPatch(p *domain.AppSettings) error {
 	return nil
 }
 
+// validateClientHostBackfillCron проверяет расписание дозаполнения client_host
+// (§106.4). nil (поле не прислано) и "" (выключить) допустимы. Парсер тот же,
+// что у планировщика Sender'а (cron.New по умолчанию — стандартный 5-полевой),
+// поэтому выражение, прошедшее проверку, Sender примет.
+func validateClientHostBackfillCron(expr *string) error {
+	if expr == nil || *expr == "" {
+		return nil
+	}
+	if _, err := cron.ParseStandard(*expr); err != nil {
+		return fmt.Errorf("%w: %v", domain.ErrClientHostBackfillCronInvalid, err)
+	}
+	return nil
+}
+
 // changedSections — список секций (sentry/clickhouse), в которых патч
 // содержит хотя бы одно не-nil поле. Используется в audit details.
 func changedSections(p *domain.AppSettings) []string {
@@ -402,7 +425,8 @@ func changedSections(p *domain.AppSettings) []string {
 		p.General.MetricsRefetchMs != nil || p.General.MetricsApproxCounts != nil ||
 		p.General.RejectedRetentionDays != nil ||
 		p.General.MaxBodyBytes != nil || p.General.MaxAsyncBodyBytes != nil ||
-		p.General.CircuitBreakerThreshold != nil || p.General.CircuitBreakerCooldownSec != nil {
+		p.General.CircuitBreakerThreshold != nil || p.General.CircuitBreakerCooldownSec != nil ||
+		p.General.ClientHostBackfillCron != nil {
 		out = append(out, "general")
 	}
 	if p.Security.SessionTTLSeconds != nil {

@@ -458,6 +458,20 @@ type SenderRDNSConfig struct {
 	TimeoutMs      int  `yaml:"timeout_ms"`       // §67: таймаут одного PTR-lookup (default 2000)
 	CacheTTLSec    int  `yaml:"cache_ttl_sec"`    // §67: TTL позитивного кеша (default 3600)
 	NegativeTTLSec int  `yaml:"negative_ttl_sec"` // §67: TTL негативного кеша — IP без PTR (default 600)
+	// NetBIOS — второй этап резолва для IPv4-хостов без PTR (§106.2). Секция
+	// общая для Sender'а и Receiver'а (журнал отказов §94) и не перечитывается
+	// на лету: после правки нужен рестарт обоих сервисов.
+	NetBIOS SenderRDNSNetBIOSConfig `yaml:"netbios"`
+}
+
+// SenderRDNSNetBIOSConfig — NetBIOS Node Status по UDP/137 (§106.2, §106.5).
+// Этап opt-in: без открытого UDP/137 от контейнеров до клиентских подсетей
+// каждый новый IP без PTR стоил бы таймаута, поэтому включается осознанно.
+type SenderRDNSNetBIOSConfig struct {
+	Enabled   bool   `yaml:"enabled"`    // §106.5: включить этап (default false)
+	Port      int    `yaml:"port"`       // §106.5: UDP-порт NetBIOS Name Service (default 137)
+	TimeoutMs int    `yaml:"timeout_ms"` // §106.5: таймаут одного запроса (default 1000)
+	Suffix    string `yaml:"suffix"`     // §106.5: DNS-суффикс к короткому имени; "" — имя как есть
 }
 
 // SenderPausedSweepConfig — параметры sweeper'а delay-топика nexus.async.paused

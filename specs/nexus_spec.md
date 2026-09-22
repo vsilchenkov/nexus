@@ -4406,6 +4406,9 @@ Redis `nexus:rdns:<ip>` (общий для реплик; TTL позитив `cac
 (TTL ≤ 5 мин). Дедуп pending+singleflight; fail-open при сбоях Redis/DNS; Debug-логи §51.9.
 Кросс-репличный дедуп и Prometheus-метрики — сознательно нет. Конфиг `sender.rdns`
 (`disabled` default false). Требуются PTR-записи в корпоративном DNS.
+Развито §106: хостам без PTR — второй этап NetBIOS Node Status по UDP/137 (opt-in,
+`sender.rdns.netbios`), блокирующий `ResolveNow`, отменённый резолв не кешируется; пустые
+`client_host` дописываются задачей Sender'а по cron из «Настройки → Общие».
 
 **Фильтр.** Facet `GET /api/nodes/{id}/logs/client-hosts` (DISTINCT, кап 200, деградации как
 у `/logs/methods`); `LogQuery.ClientHost` — exact match в Search/Count/live-tail; query-параметр
@@ -6991,3 +6994,47 @@ API-токенов.
 учёт остальных фильтров в фасете. Миграций и конфиг-ключей нет.
 
 Полный текст — [sections/105-log-client-filter.md](sections/105-log-client-filter.md).
+
+## 106. Имя клиента без PTR: NetBIOS-опрос и дозаполнение client_host
+
+Развивает §67 (колонка `client_host`, резолвер), §105 (фасет «Клиент», stale-while-revalidate),
+§94 (журнал отказов тем же резолвером), §42.10 (дозаполнение мутацией), §20 (cron с hot-reload),
+§70.4 (владение таблицами).
+
+**Повод — разбор боя 22.09.2026.** `vika/dadata_suggestions`: 7 % записей за 60 дней без имени
+клиента (`192.168.2.5` SRV-D-1C, `192.168.6.167` SRV-D-SQLDEV-HQ, `192.168.3.15` PC7821518).
+Обратная зона `168.192.in-addr.arpa` на контроллерах домена есть, PTR для подсетей 2/3/6 не
+заведены (авторитетный NXDOMAIN), A-записи есть; хосты отвечают на NetBIOS Node Status. Проба с
+сервера шины: ответил только 6.167 — область правила NB-Name-In или межвлановый ACL; главный
+объём закрывается регистрацией PTR.
+
+**Второй этап резолва.** После пустого PTR (NXDOMAIN, пустой ответ, ошибка) для частных IPv4
+(RFC 1918; публичные не опрашиваются — сигнатура IDS и управление через `X-Forwarded-For`) — запрос
+NBSTAT на `<ip>:137` (пакет `platform/netbios`, подключённый UDP-сокет, сверка номера
+транзакции, фаззинг парсера). Имя — первое уникальное `<00>`, `[A-Za-z0-9_-]`, ≤ 15, плюс
+`sender.rdns.netbios.suffix`. Те же кеши и TTL; `source` = `netbios|netbios_negative`. `Lookup`
+остаётся zero-I/O. Отмена ctx посреди цепочки не кешируется. Конфиг `sender.rdns.netbios`
+(`enabled: false`, `port: 137`, `timeout_ms: 1000`, `suffix`); на бою `enabled`/`suffix`
+из `.env` (`RDNS_NETBIOS_ENABLED`, `RDNS_NETBIOS_SUFFIX`) — пересоздать sender и receiver.
+
+**Дозаполнение.** Задача Sender'а: управляемые таблицы (§64 исключены, мягкий гейт §70.4) →
+до 1000 IP с пустым именем, свежие первыми, без не-IP и loopback
+(`GROUP BY IP ORDER BY max(date_create) DESC LIMIT 1000`) → синхронный `Resolver.ResolveNow`
+(до 8 параллельно; пишет только в Redis, не в L1) → одна асинхронная мутация
+`ALTER … UPDATE client_host = transform(IP, [...], [...], client_host) WHERE client_host = '' AND IP IN (...)`,
+если на таблице нет незавершённой мутации дозаполнения. Литералы только из `net.ParseIP` и
+`^[A-Za-z0-9._-]{1,253}$`. Непустые имена не трогаются; таблица без колонки — Debug и пропуск;
+Redis-лок `sender-client-host-backfill`; без Redis задача не запускается. Очистка поля
+расписания прерывает идущий цикл. Границы: имя пишется во всю историю IP (DHCP-адрес получит
+имя нынешнего владельца навсегда), первый цикл после выката проходит все партиции строк до §67.
+
+**Расписание.** `app_settings.general.client_host_backfill_cron`: не задано — `0 * * * *` (раз в час), `""` —
+выключено, иначе 5-полевой cron (время контейнера Sender'а). Поле в «Настройки → Общие»;
+сохранение публикует `general`, Sender пересобирает планировщик без перезапуска. Невалидное
+выражение — 400. Сбой чтения настроек на старте оставляет задачу выключенной и повторяет чтение в
+фоне (fail-closed).
+
+**Вне рамок:** агрегаты §94, внешние таблицы §64, статический словарь IP → имя, IPv6/WINS/LLMNR,
+регистр имён, метрики, hot-reload блока `netbios`, кнопка «запустить сейчас». Миграций нет.
+
+Полный текст — [sections/106-netbios-client-host.md](sections/106-netbios-client-host.md).

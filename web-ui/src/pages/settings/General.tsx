@@ -20,6 +20,9 @@ type GeneralSettings = {
   // действует конфигурация сервиса; на узле значение можно переопределить.
   circuit_breaker_threshold?: number | null;
   circuit_breaker_cooldown_sec?: number | null;
+  // §106.4: расписание дозаполнения client_host (cron). Отсутствие —
+  // расписание по умолчанию, "" — дозаполнение выключено.
+  client_host_backfill_cron?: string;
 };
 type SecuritySettings = { session_ttl_seconds?: number };
 type AppSettings = {
@@ -44,6 +47,11 @@ const BREAKER_COOLDOWN_MAX_SEC = 3600;
 // §94.5: границы срока хранения журнала отказов. Зеркало домена
 // (RejectedRetention*Days): расхождение дало бы поле, которое сервер отвергает.
 const REJECTED_RETENTION_MAX_DAYS = 365;
+
+// §106.4: расписание дозаполнения client_host по умолчанию — зеркало
+// domain.ClientHostBackfillDefaultCron. Пустое поле значит «выключено», поэтому
+// незаданное значение показывается действующим выражением, а не пустотой.
+const CLIENT_HOST_BACKFILL_DEFAULT_CRON = "0 * * * *";
 
 // §97: лимиты тела задаются в МиБ в UI, хранятся в байтах — та же схема, что у
 // длительности сессии (минуты) и интервала метрик (секунды).
@@ -87,6 +95,12 @@ export function GeneralPanel() {
   // §98.5: политика защиты узла. Пусто = не трогаем (действует конфигурация).
   const [breakerThreshold, setBreakerThreshold] = useState("");
   const [breakerCooldown, setBreakerCooldown] = useState("");
+  // §106.4: расписание дозаполнения client_host и значение с сервера — поле
+  // уходит в PUT, только если его изменили (в том числе очистили).
+  const [backfillCron, setBackfillCron] = useState(CLIENT_HOST_BACKFILL_DEFAULT_CRON);
+  const [initialBackfillCron, setInitialBackfillCron] = useState(
+    CLIENT_HOST_BACKFILL_DEFAULT_CRON,
+  );
   const [error, setError] = useState<string | null>(null);
 
   // §97: потолки из конфига — выше них сервер значение не примет, поэтому
@@ -130,6 +144,10 @@ export function GeneralPanel() {
       setBreakerThreshold(bt === undefined || bt === null ? "" : String(bt));
       const bc = data.general?.circuit_breaker_cooldown_sec;
       setBreakerCooldown(bc === undefined || bc === null ? "" : String(bc));
+      // §106.4: undefined — не задано, действует расписание по умолчанию.
+      const cron = data.general?.client_host_backfill_cron ?? CLIENT_HOST_BACKFILL_DEFAULT_CRON;
+      setBackfillCron(cron);
+      setInitialBackfillCron(cron);
     }
   }, [data]);
 
@@ -157,6 +175,10 @@ export function GeneralPanel() {
       if (bt !== "") general.circuit_breaker_threshold = Math.round(Number(bt));
       const bc = breakerCooldown.trim();
       if (bc !== "") general.circuit_breaker_cooldown_sec = Math.round(Number(bc));
+      // §106.4: в отличие от числовых полей пустая строка здесь — значение
+      // («выключить»), поэтому отправляется при любом изменении, включая очистку.
+      const cron = backfillCron.trim();
+      if (cron !== initialBackfillCron) general.client_host_backfill_cron = cron;
       const body: { general: GeneralSettings; security?: SecuritySettings } = { general };
       // Длительность сессии: пусто — не трогаем (остаётся из env/текущего).
       const mins = sessionMinutes.trim();
@@ -273,6 +295,33 @@ export function GeneralPanel() {
         {rejectedDays.trim() === "0" && (
           <p className="text-xs text-warn">{t("settings.general.rejected_retention_zero_warn")}</p>
         )}
+      </div>
+
+      <div className="max-w-3xl space-y-1">
+        <label
+          htmlFor="client-host-backfill-cron"
+          className="text-xs uppercase tracking-wider text-fg-muted"
+        >
+          {t("settings.general.client_host_backfill_cron")}
+        </label>
+        <input
+          id="client-host-backfill-cron"
+          type="text"
+          value={backfillCron}
+          onChange={(e) => setBackfillCron(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full rounded-md bg-bg-muted px-3 py-2 font-mono text-xs outline-none"
+        />
+        <p className="text-xs text-fg-subtle">
+          {t("settings.general.client_host_backfill_cron_hint")}
+        </p>
+        {backfillCron.trim() === "" && (
+          <p className="text-xs text-warn">
+            {t("settings.general.client_host_backfill_cron_disabled_warn")}
+          </p>
+        )}
+        <p className="text-xs text-fg-subtle">{t("settings.common.hot_reload_note")}</p>
       </div>
 
       <div className="max-w-3xl space-y-1">

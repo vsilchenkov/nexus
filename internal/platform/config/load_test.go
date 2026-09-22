@@ -129,6 +129,25 @@ func TestApplyDefaults_NotOverwritingNonZero(t *testing.T) {
 		"ping без активных стримов должен быть разрешён по умолчанию (флаг инвертирован намеренно)")
 }
 
+// §106.5: пустая секция netbios даёт выключенный этап с рабочими порт и
+// таймаутом — включение одним флагом enabled не требует других ключей.
+func TestApplyDefaults_RDNSNetBIOS(t *testing.T) {
+	t.Parallel()
+	c := &Config{}
+	applyDefaults(c)
+	assert.False(t, c.Sender.RDNS.NetBIOS.Enabled, "этап opt-in")
+	assert.Equal(t, 137, c.Sender.RDNS.NetBIOS.Port)
+	assert.Equal(t, 1000, c.Sender.RDNS.NetBIOS.TimeoutMs)
+	assert.Empty(t, c.Sender.RDNS.NetBIOS.Suffix)
+
+	c = &Config{}
+	c.Sender.RDNS.NetBIOS.Port = 1137
+	c.Sender.RDNS.NetBIOS.TimeoutMs = 300
+	applyDefaults(c)
+	assert.Equal(t, 1137, c.Sender.RDNS.NetBIOS.Port, "явное значение не затирается")
+	assert.Equal(t, 300, c.Sender.RDNS.NetBIOS.TimeoutMs)
+}
+
 func TestValidate(t *testing.T) {
 	t.Parallel()
 
@@ -218,6 +237,39 @@ func TestValidate(t *testing.T) {
 		// Клиент с keepalive_time_sec=0 не пингует вообще (grpc-go подставляет
 		// бесконечность) и нарушителем стать не может — политика любой строгости
 		// для него безопасна.
+		// §67/§106.5: sender.rdns. Нули заменяют дефолты, отрицательное — только
+		// явный конфиг: нулевой таймаут или мгновенно истекающий кеш.
+		{"rdns_timeout_negative",
+			func(c *Config) { c.Sender.RDNS.TimeoutMs = -1 },
+			"sender.rdns.timeout_ms"},
+		{"rdns_negative_ttl_negative",
+			func(c *Config) { c.Sender.RDNS.NegativeTTLSec = -5 },
+			"sender.rdns.negative_ttl_sec"},
+		{"netbios_port_out_of_range",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Port = 70_000 },
+			"sender.rdns.netbios.port"},
+		{"netbios_timeout_out_of_range",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.TimeoutMs = 60_001 },
+			"sender.rdns.netbios.timeout_ms"},
+		{"netbios_suffix_ok",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = "vz78.vozovoz.ru" },
+			""},
+		{"netbios_suffix_fqdn_dots_ok",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = ".vz78.vozovoz.ru." },
+			""},
+		// Суффикс уходит в client_host и в ALTER TABLE … UPDATE дозаполнения.
+		{"netbios_suffix_quote",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = "vz78'x" },
+			"sender.rdns.netbios.suffix"},
+		{"netbios_suffix_space",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = "vz78 vozovoz.ru" },
+			"sender.rdns.netbios.suffix"},
+		{"netbios_suffix_empty_label",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = "vz78..ru" },
+			"sender.rdns.netbios.suffix"},
+		{"netbios_suffix_too_long",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = strings.Repeat("a", 238) },
+			"sender.rdns.netbios.suffix"},
 		{"grpc_keepalive_client_disabled_ok",
 			func(c *Config) {
 				c.Receiver.SenderGRPC.KeepaliveTimeSec = 0
@@ -375,6 +427,43 @@ func TestApplyDefaults_MaxAsyncBodyBytes(t *testing.T) {
 			assert.Equal(t, tc.wantAsync, c.Receiver.MaxAsyncBodyBytes)
 			assert.LessOrEqual(t, c.Receiver.MaxAsyncBodyBytes, c.Receiver.MaxBodyBytes,
 				"async-лимит никогда не должен превышать общий")
+		})
+	}
+}
+
+// §106.5: боевой config/config.yml включает NetBIOS-этап из .env, а не
+// правкой файла: файл приезжает с тегом, и локальная правка на сервере давала
+// бы версию «-dirty» и конфликт при checkout следующего тега. Без переменных
+// этап выключен, с ними — включён с суффиксом.
+func TestLoad_RepoConfig_NetBIOSFromEnv(t *testing.T) {
+	// t.Parallel() несовместим с t.Setenv.
+	repoConfig := filepath.Join("..", "..", "..", "config", "config.yml")
+	tests := []struct {
+		name        string
+		enabled     string
+		suffix      string
+		wantEnabled bool
+		wantSuffix  string
+	}{
+		{name: "env_absent_disabled"},
+		{name: "env_enabled_with_suffix", enabled: "true", suffix: "vz78.vozovoz.ru",
+			wantEnabled: true, wantSuffix: "vz78.vozovoz.ru"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range map[string]string{"RDNS_NETBIOS_ENABLED": tc.enabled, "RDNS_NETBIOS_SUFFIX": tc.suffix} {
+				if v == "" {
+					t.Setenv(k, "") // регистрирует восстановление прежнего значения
+					require.NoError(t, os.Unsetenv(k))
+					continue
+				}
+				t.Setenv(k, v)
+			}
+			cfg, _, err := Load(Flags{ConfigPath: repoConfig}, t.TempDir())
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantEnabled, cfg.Sender.RDNS.NetBIOS.Enabled)
+			assert.Equal(t, tc.wantSuffix, cfg.Sender.RDNS.NetBIOS.Suffix)
+			assert.Equal(t, 137, cfg.Sender.RDNS.NetBIOS.Port)
 		})
 	}
 }

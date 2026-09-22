@@ -3,9 +3,22 @@ package config
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"nexus/internal/domain"
 )
+
+// dnsSuffixPattern — DNS-суффикс NetBIOS-этапа (§106.5): метки из букв, цифр и
+// дефиса через точку. Суффикс дописывается к имени клиента и уходит в
+// client_host и в ALTER TABLE … UPDATE дозаполнения, поэтому ни кавычек, ни
+// пробелов в нём быть не может. Неизменяемое значение, как envVarPattern.
+var dnsSuffixPattern = regexp.MustCompile(`^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$`)
+
+// maxNetBIOSSuffixLen — предел длины суффикса: полное имя (15 символов
+// NetBIOS-имени + точка + суффикс) обязано уложиться в 253 символа DNS-имени
+// (RFC 1035 §2.3.4). Длиннее дозаполнение §106.3 такое имя отбросило бы молча.
+const maxNetBIOSSuffixLen = 253 - 16
 
 // Validate проверяет обязательные поля и допустимые значения.
 // Возвращает первую найденную ошибку; для production-сценариев
@@ -107,11 +120,48 @@ func Validate(c *Config) error {
 		}
 	}
 
+	if err := validateRDNS(&c.Sender.RDNS); err != nil {
+		return err
+	}
+
 	// §64: границы те же, что у domain.Node.MaxBodySize — иначе форма подставит
 	// значение, которое не пройдёт валидацию при сохранении узла.
 	if c.Web.NodeDefaultMaxBodySize < 1 || c.Web.NodeDefaultMaxBodySize > 10_000_000 {
 		return fmt.Errorf("web.node_default_max_body_size=%d: must be 1..10000000", c.Web.NodeDefaultMaxBodySize)
 	}
 
+	return nil
+}
+
+// validateRDNS — sender.rdns (§67) и его NetBIOS-этап (§106.5). Нули сюда не
+// доходят: их заменяют дефолты. Отрицательное значение попадает только из
+// явного конфига и означало бы нулевой таймаут или кеш, который истекает сразу.
+func validateRDNS(r *SenderRDNSConfig) error {
+	for _, f := range []struct {
+		key string
+		val int
+	}{
+		{"sender.rdns.timeout_ms", r.TimeoutMs},
+		{"sender.rdns.cache_ttl_sec", r.CacheTTLSec},
+		{"sender.rdns.negative_ttl_sec", r.NegativeTTLSec},
+	} {
+		if f.val < 1 {
+			return fmt.Errorf("%s=%d: must be >= 1", f.key, f.val)
+		}
+	}
+	nb := r.NetBIOS
+	if nb.Port < 1 || nb.Port > 65_535 {
+		return fmt.Errorf("sender.rdns.netbios.port=%d: must be 1..65535", nb.Port)
+	}
+	if nb.TimeoutMs < 1 || nb.TimeoutMs > 60_000 {
+		return fmt.Errorf("sender.rdns.netbios.timeout_ms=%d: must be 1..60000", nb.TimeoutMs)
+	}
+	// Точки по краям допустимы ("vz78.vozovoz.ru." — FQDN-форма): резолвер их
+	// обрезает, проверяется то, что реально попадёт в имя.
+	if sfx := strings.Trim(nb.Suffix, "."); sfx != "" &&
+		(len(sfx) > maxNetBIOSSuffixLen || !dnsSuffixPattern.MatchString(sfx)) {
+		return fmt.Errorf("sender.rdns.netbios.suffix=%q: must be a DNS suffix (labels of A-Z, a-z, 0-9, '-' joined by '.'), <= %d chars",
+			nb.Suffix, maxNetBIOSSuffixLen)
+	}
 	return nil
 }

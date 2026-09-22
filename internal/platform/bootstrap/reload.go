@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -201,6 +202,47 @@ func BreakerPolicyReloader(pool *pgxpool.Pool, sw BreakerPolicySwitch, cfgThresh
 			logger.Int("cooldown_sec", int(p.Cooldown.Seconds())))
 		return nil
 	}
+}
+
+// ScheduleSwitch — узкий интерфейс, который реализует
+// sender/usecase.ClientHostBackfill (§106.4). Объявлен здесь, чтобы bootstrap
+// не зависел от пакетов Sender'а.
+type ScheduleSwitch interface {
+	SetSchedule(expr string) error
+}
+
+// ClientHostBackfillReloader возвращает Reloader, который перечитывает
+// расписание дозаполнения client_host и пересобирает планировщик без рестарта
+// (§106.4). nil в настройках — расписание по умолчанию, "" — задача выключена.
+// Невалидное выражение (правка БД в обход API) возвращается ошибкой, прежнее
+// расписание остаётся.
+//
+// Тот же Reloader используется как сид стартового значения — первый вызов
+// сразу после создания подписчика.
+func ClientHostBackfillReloader(pool *pgxpool.Pool, sw ScheduleSwitch, cipher *crypto.Cipher, logger logging.Logger) reloader.Reloader {
+	return func(ctx context.Context) error {
+		o, err := readAppSettings(ctx, pool, cipher, logger)
+		if err != nil {
+			return err
+		}
+		expr := clientHostBackfillCronFromOverlay(o)
+		if err := sw.SetSchedule(expr); err != nil {
+			return fmt.Errorf("apply client_host backfill schedule: %w", err)
+		}
+		// Info о смене расписания пишет сам планировщик; здесь — только факт
+		// перечитывания: секцию general публикует любая правка «Общих».
+		logger.Debug("client_host backfill schedule read from app_settings", logger.Str("cron", expr))
+		return nil
+	}
+}
+
+// clientHostBackfillCronFromOverlay — действующее выражение из overlay.
+func clientHostBackfillCronFromOverlay(o *appSettingsOverlay) string {
+	var v *string
+	if o != nil {
+		v = o.General.ClientHostBackfillCron
+	}
+	return domain.ClientHostBackfillCronOrDefault(v)
 }
 
 // WriterReloader — узкий интерфейс, который реализует chlog.WriterManager

@@ -85,6 +85,11 @@ type App struct {
 	// обновляется reloader'ом секции general без рестарта.
 	breakerPolicy *circuitbreaker.PolicyProvider
 
+	// hostResolver — резолвер имени клиента (§67, второй этап NetBIOS §106.2).
+	// nil при sender.rdns.disabled. Кроме доставки им пользуется дозаполнение
+	// пустых client_host (§106.3) — отсюда поле, а не локальная переменная.
+	hostResolver *rdns.Resolver
+
 	// done-каналы фоновых горутин — Stop дожидается их завершения
 	// (Phase AUD.3): housekeeping/lag-reporter/reload-callbacks не должны
 	// бежать параллельно с закрытием CH/Kafka/Redis-соединений.
@@ -94,6 +99,8 @@ type App struct {
 	dlqReprocDone    <-chan struct{} // §36: done-канал sweeper'а DLQ
 	pausedSweepDone  <-chan struct{} // §3.6: done-канал sweeper'а delay-топика
 	shipperDone      <-chan struct{} // §51: done-канал шиппера служебных логов
+	// §106.3: done-канал задачи дозаполнения client_host (nil, если не запущена).
+	clientHostBackfillDone <-chan struct{}
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
@@ -296,15 +303,13 @@ func (a *App) buildSendUsecase(ctx context.Context) (*usecase.SendUsecase, useca
 		cb, breaker = b, b
 	}
 	// §67: reverse-DNS резолв client_host — асинхронный, кеш Redis + L1,
-	// fail-open (a.redis может быть nil → режим «только L1»).
+	// fail-open (a.redis может быть nil → режим «только L1»); §106.2 —
+	// NetBIOS-этап по конфигу. Проверка на nil обязательна: typed-nil в
+	// интерфейсе HostResolver перестал бы быть nil.
 	var sendOpts []usecase.SendOption
-	if !a.cfg.Sender.RDNS.Disabled {
-		hr := rdns.New(ctx, a.redis, rdns.Config{
-			Timeout:     time.Duration(a.cfg.Sender.RDNS.TimeoutMs) * time.Millisecond,
-			CacheTTL:    time.Duration(a.cfg.Sender.RDNS.CacheTTLSec) * time.Second,
-			NegativeTTL: time.Duration(a.cfg.Sender.RDNS.NegativeTTLSec) * time.Second,
-		}, a.logger)
-		sendOpts = append(sendOpts, usecase.WithHostResolver(hr))
+	a.hostResolver = bootstrap.NewHostResolver(ctx, a.redis, &a.cfg.Sender.RDNS, a.logger)
+	if a.hostResolver != nil {
+		sendOpts = append(sendOpts, usecase.WithHostResolver(a.hostResolver))
 	}
 	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, cb, a.logger, respLimit, sendOpts...)
 
@@ -466,6 +471,8 @@ func (a *App) startBackgroundJobs(ctx context.Context, nodeReader *nodepg.Reader
 			}
 			reloadSub.Register(reloader.SectionGeneral, applyBreaker)
 		}
+		// §106.3: дозаполнение пустых client_host по расписанию из настроек.
+		a.startClientHostBackfill(ctx, nodeReader, chGuard, reloadSub)
 		// §95: справочник маскирования логов изменился в UI → перечитать из PG и
 		// пересобрать набор regexp без рестарта. Сид уже сделан в Start
 		// (seedLogMasks) — здесь только горячее обновление.
@@ -482,6 +489,60 @@ func (a *App) startBackgroundJobs(ctx context.Context, nodeReader *nodepg.Reader
 		a.reloadDone = safego.Go(a.logger, "sender.reloadSubscriber", func() {
 			reloadSub.Run(ctx)
 		})
+	} else {
+		// §51.9: §106.3 без Redis не поднимается — нет ни hot-reload
+		// расписания, ни лока цикла между репликами.
+		a.logger.Debug("client_host backfill not started: redis is not configured")
+	}
+}
+
+// startClientHostBackfill поднимает дозаполнение пустых client_host (§106.3)
+// с расписанием из app_settings.general (§106.4): сид сейчас, дальше — по
+// событию general без рестарта. Вызывается только при живом Redis: без него нет
+// ни hot-reload расписания, ни лока цикла между репликами.
+func (a *App) startClientHostBackfill(ctx context.Context, nodeReader *nodepg.Reader, chGuard *chpf.Guard, reloadSub *reloader.Subscriber) {
+	if a.hostResolver == nil || a.chMgr == nil {
+		// §51.9: задача молча не поднимается — объясняем почему.
+		a.logger.Debug("client_host backfill not started",
+			a.logger.Any("rdns_enabled", a.hostResolver != nil),
+			a.logger.Any("clickhouse_enabled", a.chMgr != nil))
+		return
+	}
+	bf := usecase.NewClientHostBackfill(a.chMgr, nodeReader, a.hostResolver, a.logger).
+		WithManagedFilter(chGuard).
+		WithCycleLock(redislock.New(a.redis, "sender-client-host-backfill"))
+	applySchedule := bootstrap.ClientHostBackfillReloader(a.pg, bf, a.cipher, a.logger)
+	seedErr := applySchedule(ctx)
+	if seedErr != nil {
+		// Fail-closed: расписание по умолчанию НЕ взводится — администратор мог
+		// задачу выключить, и сбой чтения не должен её включать. Чтение
+		// повторяется в фоне; событие general тоже применит расписание.
+		a.logger.Warn("seed client_host backfill schedule failed; backfill stays off, retrying in background",
+			a.logger.Err(seedErr))
+	}
+	reloadSub.Register(reloader.SectionGeneral, applySchedule)
+	a.clientHostBackfillDone = safego.Go(a.logger, "sender.clientHostBackfill", func() {
+		if seedErr != nil {
+			a.retrySeedClientHostBackfill(ctx, applySchedule)
+		}
+		bf.Run(ctx)
+	})
+}
+
+// retrySeedClientHostBackfill повторяет чтение расписания после сбоя на
+// старте (как seedLogMasks §95). Тик, пришедший от события general во время
+// повторов, ждёт в буфере задачи и выполнится, когда стартует Run.
+func (a *App) retrySeedClientHostBackfill(ctx context.Context, apply func(context.Context) error) {
+	ok := retryUntil(ctx, 3*time.Second, 20, func(ctx context.Context) error {
+		if err := apply(ctx); err != nil {
+			a.logger.Debug("client_host backfill schedule still unavailable, will retry", a.logger.Err(err))
+			return err
+		}
+		a.logger.Info("client_host backfill schedule loaded after retry")
+		return nil
+	})
+	if !ok && ctx.Err() == nil {
+		a.logger.Warn("client_host backfill schedule unavailable after retries; backfill stays off until a settings reload")
 	}
 }
 
@@ -745,6 +806,7 @@ func (a *App) awaitBackgroundJobs(ctx context.Context) {
 	defer awaitCancel()
 
 	safego.Await(awaitCtx, a.housekeepingDone, a.logger, "sender.chHousekeeping")
+	safego.Await(awaitCtx, a.clientHostBackfillDone, a.logger, "sender.clientHostBackfill") // §106.3: nil, если не запущена
 	safego.Await(awaitCtx, a.kafkaLagDone, a.logger, "sender.reportKafkaLag")
 	safego.Await(awaitCtx, a.reloadDone, a.logger, "sender.reloadSubscriber")
 	safego.Await(awaitCtx, a.dlqReprocDone, a.logger, "sender.dlqReprocessor")
