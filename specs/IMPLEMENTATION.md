@@ -6536,3 +6536,30 @@ sessionStorage (§54) переживали выход и вход другого
 неочевидности там же). Итоговый стендовый прогон ветки нашёл ещё один дефект, тоже бывший до
 ветки: Esc, закрывавший выпадающий список «Клиент» в «Повторе за период», закрывал и всё окно —
 исправлено в Phase 104.8.
+
+### 4.91 §106 — имя клиента без PTR: NetBIOS-опрос и дозаполнение client_host
+
+Раздел [106-netbios-client-host.md](sections/106-netbios-client-host.md). Ветка
+`feature/netbios-client-host`. Статус ◐ — блоки идут по порядку 106.1–106.6.
+
+Нумерация: коммит `698d4db Phase 106.1: ревизия перед сдачей …` относится к сдаче §103–§105
+(оговорка при закрытии ветки, см. 4.90) и к этому разделу отношения не имеет. Коммиты §106
+подписаны `Phase 106.N: ТЗ §106 — …` / `Phase 106.N: <что сделано>` на ветке
+`feature/netbios-client-host`.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §106 | ✅ Phase 106.1 | [sections/106-netbios-client-host.md](sections/106-netbios-client-host.md) (повод — разбор `vika/dadata_suggestions`, результат пробы UDP/137 с боя), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| §106.2 кодек и клиент NBSTAT | ✅ Phase 106.2 | Пакет [platform/netbios](../internal/platform/netbios/): [packet.go](../internal/platform/netbios/packet.go) — `BuildNodeStatusRequest` (50 байт, имя «*» = `0x20 "CK" "A"×30 0x00`), `ParseNodeStatusResponse` (заголовок: txID, бит R, RCODE, ANCOUNT; пропуск повторённых вопросов и сжатых имён; TYPE NBSTAT; RDLENGTH и NUM_NAMES в границах), `WorkstationName` (первое уникальное `<00>`, `[A-Za-z0-9_-]`, ≤ 15); [client.go](../internal/platform/netbios/client.go) — `Client.NodeStatus`/`Hostname`: подключённый `udp4`-сокет, дедлайн = таймаут клиента, отмена ctx через `context.AfterFunc` (своих горутин нет), чужой номер транзакции — читать дальше до дедлайна. Тесты: [packet_test.go](../internal/platform/netbios/packet_test.go) (golden-запрос, 15 строк разбора, таблица имён с боевой пробы 6.167, `FuzzParseNodeStatusResponse`), [client_test.go](../internal/platform/netbios/client_test.go) (UDP-ответчик на `127.0.0.1:0`: успех, нет уникального имени, таймаут, отмена < 1 с, чужой txID, RCODE, закрытый порт) |
+
+**Неочевидности §106.**
+
+- **Истёкший дедлайн сокета без причины в ctx — это таймаут клиента.** Дедлайн сокета равен
+  дедлайну контекста, и чтение может упереться в него на мгновение раньше, чем таймер контекста
+  пометит его истёкшим. Первая версия теряла `context.DeadlineExceeded` из цепочки ошибки — тест
+  таймаута краснел примерно раз на десяток прогонов под `make test` (`-race`). `withCtxErr`
+  добавляет `DeadlineExceeded` к `os.ErrDeadlineExceeded`: дедлайны сокету ставит только сам
+  клиент.
+- **Закрытый порт на Windows даёт таймаут, а не быструю ошибку.** На Linux ICMP port unreachable
+  приходит в подключённый UDP-сокет как `ECONNREFUSED`, на Windows-машине разработчика тест
+  закрытого порта ждал весь таймаут. Тест проверяет только «ошибка, а не имя».
