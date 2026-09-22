@@ -85,6 +85,12 @@ export function LogsAdvancedFilters({
           {/* §77.3: поиск запускается по завершении ввода — Enter или уход
               фокуса, НЕ на каждую букву (полнотекст по всей истории стоит
               секунды, см. §77.5). Esc возвращает применённое значение. */}
+          {/* Поле стоит в одном ряду с комбобоксами Method/«Клиент» и полями
+              дат — у всех бокс `py-1.5 text-sm` без рамки (32 px). Атом Input
+              несёт свои h-9 и рамку: с ними поле выходило на 4 px выше соседей,
+              и при выравнивании ряда по низу разъезжались верхние края и метки
+              (регресс с перевода на SearchInput в §90.3). h-auto и border-0
+              возвращают бокс соседей. */}
           <SearchInput
             // §77.3: Esc возвращает применённое значение — нативная очистка
             // search-поля перебила бы этот обработчик.
@@ -97,7 +103,7 @@ export function LogsAdvancedFilters({
             }}
             onBlur={() => onCommit(draft)}
             placeholder={t("logs.advanced.q_placeholder")}
-            className="w-full rounded-md bg-bg-muted py-1.5 pl-3 pr-24 text-sm outline-none"
+            className="h-auto w-full rounded-md border-0 bg-bg-muted py-1.5 pl-3 pr-24 text-sm outline-none"
           />
           {/* Кнопки-тумблеры режимов как в VS Code (§48.2) */}
           <div className="absolute inset-y-0 right-1.5 flex items-center gap-0.5">
