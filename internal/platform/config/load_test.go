@@ -430,3 +430,40 @@ func TestApplyDefaults_MaxAsyncBodyBytes(t *testing.T) {
 		})
 	}
 }
+
+// §106.5: боевой config/config.yml включает NetBIOS-этап из .env, а не
+// правкой файла: файл приезжает с тегом, и локальная правка на сервере давала
+// бы версию «-dirty» и конфликт при checkout следующего тега. Без переменных
+// этап выключен, с ними — включён с суффиксом.
+func TestLoad_RepoConfig_NetBIOSFromEnv(t *testing.T) {
+	// t.Parallel() несовместим с t.Setenv.
+	repoConfig := filepath.Join("..", "..", "..", "config", "config.yml")
+	tests := []struct {
+		name        string
+		enabled     string
+		suffix      string
+		wantEnabled bool
+		wantSuffix  string
+	}{
+		{name: "env_absent_disabled"},
+		{name: "env_enabled_with_suffix", enabled: "true", suffix: "vz78.vozovoz.ru",
+			wantEnabled: true, wantSuffix: "vz78.vozovoz.ru"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range map[string]string{"RDNS_NETBIOS_ENABLED": tc.enabled, "RDNS_NETBIOS_SUFFIX": tc.suffix} {
+				if v == "" {
+					t.Setenv(k, "") // регистрирует восстановление прежнего значения
+					require.NoError(t, os.Unsetenv(k))
+					continue
+				}
+				t.Setenv(k, v)
+			}
+			cfg, _, err := Load(Flags{ConfigPath: repoConfig}, t.TempDir())
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantEnabled, cfg.Sender.RDNS.NetBIOS.Enabled)
+			assert.Equal(t, tc.wantSuffix, cfg.Sender.RDNS.NetBIOS.Suffix)
+			assert.Equal(t, 137, cfg.Sender.RDNS.NetBIOS.Port)
+		})
+	}
+}

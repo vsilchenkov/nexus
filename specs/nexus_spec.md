@@ -7014,7 +7014,8 @@ NBSTAT на `<ip>:137` (пакет `platform/netbios`, подключённый 
 транзакции, фаззинг парсера). Имя — первое уникальное `<00>`, `[A-Za-z0-9_-]`, ≤ 15, плюс
 `sender.rdns.netbios.suffix`. Те же кеши и TTL; `source` = `netbios|netbios_negative`. `Lookup`
 остаётся zero-I/O. Отмена ctx посреди цепочки не кешируется. Конфиг `sender.rdns.netbios`
-(`enabled: false`, `port: 137`, `timeout_ms: 1000`, `suffix`) — рестарт sender и receiver.
+(`enabled: false`, `port: 137`, `timeout_ms: 1000`, `suffix`); на бою `enabled`/`suffix`
+из `.env` (`RDNS_NETBIOS_ENABLED`, `RDNS_NETBIOS_SUFFIX`) — пересоздать sender и receiver.
 
 **Дозаполнение.** Задача Sender'а: управляемые таблицы (§64 исключены, мягкий гейт §70.4) →
 до 1000 IP с пустым именем, свежие первыми, без не-IP и loopback

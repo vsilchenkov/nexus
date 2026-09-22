@@ -1731,9 +1731,21 @@ web:
   > `Missing: client_host`.
 - **§106 — имя клиента без PTR: NetBIOS-этап резолва.** Миграций (PG и CH) нет. Новый блок
   конфига `sender.rdns.netbios` (`enabled`/`port`/`timeout_ms`/`suffix`, **выключен по
-  умолчанию**, см. [config/config.example.yml](config/config.example.yml)). Блок общий для
-  Sender'а и Receiver'а (журнал отказов §94) и **не перечитывается на лету** — после правки
-  перезапустить `sender` и `receiver`. Когда PTR для клиента из частной сети (RFC 1918) пуст,
+  умолчанию**, см. [config/config.example.yml](config/config.example.yml)). Включается
+  переменными `.env`, а **не правкой `config/config.yml`**: файл отслеживается git и приезжает с
+  тегом, локальная правка на сервере дала бы версию `-dirty` и конфликт при checkout следующего
+  тега.
+
+  ```bash
+  # .env
+  RDNS_NETBIOS_ENABLED=true
+  RDNS_NETBIOS_SUFFIX=vz78.vozovoz.ru
+  ```
+
+  Блок общий для Sender'а и Receiver'а (журнал отказов §94) и **не перечитывается на лету**.
+  После правки `.env` контейнеры нужно пересоздать — `restart` `.env` не перечитывает:
+  `docker compose up -d sender receiver`, на HA-оверлее §93 по одной реплике:
+  `docker compose up -d sender-1`, затем `sender-2`, `receiver-1`, `receiver-2`. Когда PTR для клиента из частной сети (RFC 1918) пуст,
   резолвер спрашивает NetBIOS Node Status (UDP/137) и дописывает к короткому имени `suffix` (на
   бою `vz78.vozovoz.ru`). Публичные адреса этапом не опрашиваются: UDP/137 наружу из шины не
   уходит.
