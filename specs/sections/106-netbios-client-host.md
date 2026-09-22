@@ -302,4 +302,7 @@ docker run --rm --network container:$(docker compose ps -q sender) alpine:3.20 s
   **Лок цикла живёт 15 минут** и досрочно не снимается: если после старта Sender'а цикл уже
   прошёл (например, в начале часа), тик в пределах 15 минут пропускается с Debug
   `cycle lock held`. Для повторной проверки — подождать или удалить ключ
-  `nexus:lock:sender-client-host-backfill` в Redis стенда.
+  `nexus:lock:sender-client-host-backfill` в Redis стенда. **На Windows-стенде** Sender
+  запускать с `GODEBUG=netdns=go`: системный резолвер Windows сам добирает NetBIOS-имя
+  через PTR-lookup (`source=dns`, нижний регистр, без суффикса), и до этапа §106 дело не
+  доходит. На бою в Linux-контейнере так и работает чистый Go-резолвер.
