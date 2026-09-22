@@ -512,19 +512,38 @@ func (a *App) startClientHostBackfill(ctx context.Context, nodeReader *nodepg.Re
 		WithManagedFilter(chGuard).
 		WithCycleLock(redislock.New(a.redis, "sender-client-host-backfill"))
 	applySchedule := bootstrap.ClientHostBackfillReloader(a.pg, bf, a.cipher, a.logger)
-	if err := applySchedule(ctx); err != nil {
-		// Настройки не прочитались (или в БД негодное выражение) — действует
-		// расписание по умолчанию, следующее событие general его поправит.
-		a.logger.Warn("seed client_host backfill schedule failed; using default schedule",
-			a.logger.Str("cron", domain.ClientHostBackfillDefaultCron), a.logger.Err(err))
-		if err := bf.SetSchedule(domain.ClientHostBackfillDefaultCron); err != nil {
-			a.logger.ErrorWithOp("client_host backfill: default schedule rejected", err, "sender.clientHostBackfill")
-		}
+	seedErr := applySchedule(ctx)
+	if seedErr != nil {
+		// Fail-closed: расписание по умолчанию НЕ взводится — администратор мог
+		// задачу выключить, и сбой чтения не должен её включать. Чтение
+		// повторяется в фоне; событие general тоже применит расписание.
+		a.logger.Warn("seed client_host backfill schedule failed; backfill stays off, retrying in background",
+			a.logger.Err(seedErr))
 	}
 	reloadSub.Register(reloader.SectionGeneral, applySchedule)
 	a.clientHostBackfillDone = safego.Go(a.logger, "sender.clientHostBackfill", func() {
+		if seedErr != nil {
+			a.retrySeedClientHostBackfill(ctx, applySchedule)
+		}
 		bf.Run(ctx)
 	})
+}
+
+// retrySeedClientHostBackfill повторяет чтение расписания после сбоя на
+// старте (как seedLogMasks §95). Тик, пришедший от события general во время
+// повторов, ждёт в буфере задачи и выполнится, когда стартует Run.
+func (a *App) retrySeedClientHostBackfill(ctx context.Context, apply func(context.Context) error) {
+	ok := retryUntil(ctx, 3*time.Second, 20, func(ctx context.Context) error {
+		if err := apply(ctx); err != nil {
+			a.logger.Debug("client_host backfill schedule still unavailable, will retry", a.logger.Err(err))
+			return err
+		}
+		a.logger.Info("client_host backfill schedule loaded after retry")
+		return nil
+	})
+	if !ok && ctx.Err() == nil {
+		a.logger.Warn("client_host backfill schedule unavailable after retries; backfill stays off until a settings reload")
+	}
 }
 
 // serveEndpoints поднимает gRPC и админ-HTTP и блокируется до остановки

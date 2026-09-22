@@ -190,7 +190,7 @@ func (r *Resolver) resolve(ip string) {
 	// одновременного ResolveNow того же IP. Результат кладёт в кеши сам
 	// resolveOnce, возврат не нужен.
 	_, _, _ = r.sf.Do(ip, func() (any, error) {
-		return r.resolveOnce(r.baseCtx, ip), nil
+		return r.resolveOnce(r.baseCtx, ip, true), nil
 	})
 }
 

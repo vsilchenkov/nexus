@@ -77,8 +77,36 @@ type fakeCHConn struct {
 	chdriver.Conn
 	ips      map[string][]string // таблица → IP с пустым client_host
 	queryErr map[string]error
+	pending  map[string]uint64 // имя таблицы без БД → незавершённых мутаций
+	rowErr   error             // сбой запроса к system.mutations
 	mu       sync.Mutex
 	execs    []string
+	rowQs    []string
+}
+
+// fakeRow — ответ count() из system.mutations.
+type fakeRow struct {
+	chdriver.Row
+	n   uint64
+	err error
+}
+
+func (r *fakeRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	*(dest[0].(*uint64)) = r.n
+	return nil
+}
+
+func (c *fakeCHConn) QueryRow(_ context.Context, q string, args ...any) chdriver.Row {
+	c.mu.Lock()
+	c.rowQs = append(c.rowQs, q)
+	c.mu.Unlock()
+	if c.rowErr != nil {
+		return &fakeRow{err: c.rowErr}
+	}
+	return &fakeRow{n: c.pending[args[1].(string)]}
 }
 
 // fakeConnProvider отдаёт fakeCHConn как ConnProvider (у самого fakeCHConn
@@ -162,6 +190,25 @@ func TestClientHostBackfill_BackfillTable(t *testing.T) {
 		{
 			name: "no_names_resolved",
 			conn: &fakeCHConn{ips: map[string][]string{"logs.t": {"192.168.2.5"}}},
+		},
+		// Прошлая мутация ещё идёт — вторую поверх очереди не ставим.
+		{
+			name: "previous_mutation_pending",
+			conn: &fakeCHConn{
+				ips:     map[string][]string{"logs.t": {"192.168.6.167"}},
+				pending: map[string]uint64{"t": 1},
+			},
+			names: map[string]string{"192.168.6.167": "SRV-D-SQLDEV-HQ"},
+		},
+		// Проверка не удалась (нет прав на system.mutations) — fail-open.
+		{
+			name: "pending_check_failed_schedules_anyway",
+			conn: &fakeCHConn{
+				ips:    map[string][]string{"logs.t": {"192.168.6.167"}},
+				rowErr: errors.New("ACCESS_DENIED"),
+			},
+			names: map[string]string{"192.168.6.167": "SRV-D-SQLDEV-HQ"},
+			wantN: 1, wantExecs: 1,
 		},
 		// Деплой-окно: колонки §67 ещё нет — не ошибка.
 		{name: "missing_column", conn: &fakeCHConn{queryErr: map[string]error{"logs.t": missingColumn}}},
@@ -318,6 +365,7 @@ func TestClientHostBackfill_Run_TickAndStop(t *testing.T) {
 		b.Run(ctx)
 	}()
 
+	require.NoError(t, b.SetSchedule("0 3 * * *"))
 	b.fire()
 	require.Eventually(t, func() bool { return lister.calls.Load() == 1 }, 2*time.Second, 10*time.Millisecond)
 
@@ -341,4 +389,102 @@ func TestClientHostBackfill_Fire_DropsExtraTicks(t *testing.T) {
 		b.fire()
 	}
 	assert.Len(t, b.trigger, 1)
+}
+
+// blockingResolver держит резолв до отмены ctx и сообщает, что цикл начался.
+type blockingResolver struct {
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (r *blockingResolver) ResolveNow(ctx context.Context, _ string) string {
+	r.once.Do(func() { close(r.entered) })
+	<-ctx.Done()
+	return "late-host"
+}
+
+// §106.4: очистка расписания прерывает идущий цикл — мутация не ставится,
+// хотя имя «нашлось» уже после отмены. Раньше цикл дорабатывал по всем
+// таблицам, и аварийная процедура DEPLOYMENT «очистить поле» не работала.
+func TestClientHostBackfill_Disable_CancelsRunningCycle(t *testing.T) {
+	t.Parallel()
+	conn := &fakeCHConn{ips: map[string][]string{"logs.t": {"192.168.6.167"}}}
+	res := &blockingResolver{entered: make(chan struct{})}
+	b := NewClientHostBackfill(fakeConnProvider{conn}, &stubTableLister{tables: []string{"logs.t"}}, res, logging.NewNoop())
+	ctx := t.Context()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.Run(ctx)
+	}()
+
+	require.NoError(t, b.SetSchedule("0 3 * * *"))
+	b.fire()
+	select {
+	case <-res.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("цикл не начался")
+	}
+	require.NoError(t, b.SetSchedule(""))
+
+	require.Eventually(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.cancelCycle == nil
+	}, 2*time.Second, 10*time.Millisecond, "цикл завершился")
+	conn.mu.Lock()
+	assert.Empty(t, conn.execs, "мутация после выключения не ставится")
+	conn.mu.Unlock()
+
+	select {
+	case <-done:
+		t.Fatal("Run завершился: выключение останавливает цикл, а не задачу")
+	default:
+	}
+}
+
+// Тик, лёгший в канал до выключения, выбрасывается, а если Run уже вынул его —
+// цикл не открывается.
+func TestClientHostBackfill_Disable_DropsPendingTick(t *testing.T) {
+	t.Parallel()
+	b := NewClientHostBackfill(nilConnProvider{}, &stubTableLister{}, &stubBlockingResolver{}, logging.NewNoop())
+	t.Cleanup(b.shutdown)
+
+	require.NoError(t, b.SetSchedule("0 3 * * *"))
+	b.fire()
+	require.Len(t, b.trigger, 1)
+	require.NoError(t, b.SetSchedule(""))
+	assert.Empty(t, b.trigger, "ожидающий тик выброшен")
+
+	_, _, ok := b.beginCycle(context.Background())
+	assert.False(t, ok, "у выключенной задачи цикл не открывается")
+}
+
+// Выборка IP: свежие первыми, не-IP и loopback отсечены в SQL (§106.3), а
+// проверка незавершённой мутации ищет нашу мутацию по таблице без БД.
+func TestClientHostBackfill_Queries(t *testing.T) {
+	t.Parallel()
+	conn := &fakeCHConn{ips: map[string][]string{"logs.t": {"192.168.6.167"}}}
+	var got string
+	b := NewClientHostBackfill(fakeConnProvider{conn}, &stubTableLister{},
+		&stubBlockingResolver{names: map[string]string{"192.168.6.167": "H"}}, logging.NewNoop())
+	_, err := b.backfillTable(context.Background(), &queryCapture{fakeCHConn: conn, q: &got}, "logs.t")
+	require.NoError(t, err)
+	assert.Contains(t, got, "isIPv4String(IP) OR isIPv6String(IP)")
+	assert.Contains(t, got, "NOT startsWith(IP, '127.')")
+	assert.Contains(t, got, "GROUP BY IP ORDER BY max(date_create) DESC LIMIT 1000")
+	require.Len(t, conn.rowQs, 1)
+	assert.Contains(t, conn.rowQs[0], "system.mutations")
+	assert.Contains(t, conn.rowQs[0], "is_done = 0")
+}
+
+// queryCapture запоминает текст SELECT и отдаёт ответ фейка.
+type queryCapture struct {
+	*fakeCHConn
+	q *string
+}
+
+func (c *queryCapture) Query(ctx context.Context, q string, args ...any) (chdriver.Rows, error) {
+	*c.q = q
+	return c.fakeCHConn.Query(ctx, q, args...)
 }

@@ -26,8 +26,16 @@ const (
 //
 // Свежая запись L1 отдаётся без I/O. Иначе цикл идёт через тот же
 // singleflight, что и фоновые резолвы (одновременный Lookup того же IP
-// второго запроса не породит), и заполняет оба кеша. Отменённый ctx даёт "" и
-// ничего не кеширует. На пути доставки запроса не вызывать — для него Lookup.
+// второго запроса не породит). Результат ложится только в Redis, но не в L1:
+// задача перебирает до тысячи исторических IP на таблицу, и в L1 они
+// вытесняли бы IP живого трафика (переполнение сбрасывает L1 целиком, и
+// первая запись каждого живого IP снова шла бы без имени).
+//
+// Про ctx: если ведущим в singleflight оказался фоновый резолв того же IP,
+// ResolveNow получает его результат, а тот идёт на контексте приложения, не
+// на ctx вызывающего. Если ведущий — сам ResolveNow и ctx отменили посреди
+// цепочки, возвращается то, что успело найтись (или ""), и ничего не
+// кешируется. На пути доставки запроса не вызывать — для него Lookup.
 func (r *Resolver) ResolveNow(ctx context.Context, ip string) string {
 	if skipIP(ip) || ctx.Err() != nil {
 		return ""
@@ -43,19 +51,23 @@ func (r *Resolver) ResolveNow(ctx context.Context, ip string) string {
 	// Для периодической задачи это приемлемо — ничего не закешировано, IP спросят
 	// в следующем цикле.
 	v, _, _ := r.sf.Do(ip, func() (any, error) {
-		return r.resolveOnce(ctx, ip), nil
+		return r.resolveOnce(ctx, ip, false), nil
 	})
 	host, _ := v.(string)
 	return host
 }
 
-// resolveOnce выполняет полный цикл резолва и заполняет оба кеша.
-func (r *Resolver) resolveOnce(ctx context.Context, ip string) string {
+// resolveOnce выполняет полный цикл резолва и кладёт результат в Redis, а при
+// warmL1 — ещё и в L1 (фоновый резолв живого трафика; ResolveNow L1 не трогает).
+func (r *Resolver) resolveOnce(ctx context.Context, ip string, warmL1 bool) string {
 	start := time.Now()
 	if ctx.Err() != nil {
 		return "" // приложение останавливается или вызывающий отменил
 	}
 	if host, ok := r.fromRedis(ctx, ip); ok {
+		if warmL1 {
+			r.l1Set(ip, host, host != "")
+		}
 		return host
 	}
 	host, source, err := r.lookupChain(ctx, ip)
@@ -67,7 +79,9 @@ func (r *Resolver) resolveOnce(ctx context.Context, ip string) string {
 			r.logger.Str("ip", ip), r.logger.Str("source", source))
 		return host
 	}
-	r.l1Set(ip, host, host != "")
+	if warmL1 {
+		r.l1Set(ip, host, host != "")
+	}
 	r.storeRedis(ctx, ip, host)
 	r.logOutcome(ip, host, source, err, start)
 	return host
@@ -85,7 +99,6 @@ func (r *Resolver) fromRedis(ctx context.Context, ip string) (string, bool) {
 	cancel()
 	switch {
 	case err == nil:
-		r.l1Set(ip, val, val != "")
 		r.logger.Debug("rdns: resolved from redis cache",
 			r.logger.Str("ip", ip), r.logger.Str("host", val),
 			r.logger.Str("source", sourceRedis))
@@ -108,9 +121,9 @@ func (r *Resolver) lookupChain(ctx context.Context, ip string) (string, string, 
 	if r.lookupNetBIOS == nil {
 		return "", sourceDNSNegative, err
 	}
-	if parsed := net.ParseIP(ip); parsed == nil || parsed.To4() == nil {
-		// §51.9: NetBIOS — только IPv4, IPv6-клиент остаётся без имени.
-		r.logger.Debug("rdns: netbios skipped (not ipv4)", r.logger.Str("ip", ip))
+	if !netbiosEligible(ip) {
+		// §51.9: NetBIOS — только частные IPv4 (§106.7), остальные без имени.
+		r.logger.Debug("rdns: netbios skipped (not a private ipv4)", r.logger.Str("ip", ip))
 		return "", sourceDNSNegative, err
 	}
 	r.logger.Debug("rdns: ptr empty, trying netbios", r.ptrAttrs(ip, err)...)
@@ -122,6 +135,15 @@ func (r *Resolver) lookupChain(ctx context.Context, ip string) (string, string, 
 		name += "." + r.netbiosSuffix
 	}
 	return name, sourceNetBIOS, nil
+}
+
+// netbiosEligible — NetBIOS спрашивается только у частных IPv4 (RFC 1918).
+// Публичный адрес без PTR — это интернет-клиент или сканер: UDP/137 наружу —
+// типовая сигнатура IDS и почти всегда таймаут. Заодно клиент из LAN не может
+// заголовком X-Forwarded-For направить запрос шины на внешний адрес (§106.7).
+func netbiosEligible(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.To4() != nil && parsed.IsPrivate()
 }
 
 // lookupPTR — PTR-запрос с таймаутом; "" — имени нет (NXDOMAIN, пустой ответ

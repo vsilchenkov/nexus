@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -35,6 +37,19 @@ func newTestResolverNB(lookup func(context.Context, string) ([]string, error), n
 		CacheTTL:    time.Minute,
 		NegativeTTL: time.Minute,
 	}, logging.NewNoop(), WithLookupFunc(lookup), WithNetBIOS(nb, suffix))
+}
+
+// newTestResolverRedis — резолвер с настоящим (in-memory) Redis: ResolveNow
+// кеширует только в Redis, без него кеш в тестах не наблюдаем.
+func newTestResolverRedis(t *testing.T, lookup func(context.Context, string) ([]string, error)) (*Resolver, *miniredis.Miniredis) {
+	t.Helper()
+	srv := miniredis.RunT(t)
+	rc := goredis.NewClient(&goredis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	r := New(context.Background(), rc, Config{
+		Timeout: time.Second, CacheTTL: time.Minute, NegativeTTL: time.Minute,
+	}, logging.NewNoop(), WithLookupFunc(lookup))
+	return r, srv
 }
 
 func TestResolver_NetBIOS_NotCalledWhenPTRSucceeds(t *testing.T) {
@@ -102,6 +117,40 @@ func TestResolver_NetBIOS_SkippedForIPv6(t *testing.T) {
 	assert.Zero(t, nbCalls.Load(), "NetBIOS — только IPv4")
 }
 
+// §106.7: публичный адрес без PTR (интернет-клиент, сканер из журнала отказов
+// §94, подделанный X-Forwarded-For) NetBIOS-запросом не опрашивается —
+// UDP/137 наружу из шины не уходит. Частные сети RFC 1918 — опрашиваются.
+func TestResolver_NetBIOS_OnlyPrivateIPv4(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		ip     string
+		asked  bool
+		wantNB string
+	}{
+		{ip: "10.1.2.3", asked: true, wantNB: "HOST"},
+		{ip: "172.16.0.9", asked: true, wantNB: "HOST"},
+		{ip: "192.168.2.5", asked: true, wantNB: "HOST"},
+		{ip: "8.8.8.8", asked: false},
+		{ip: "100.64.0.1", asked: false}, // CGNAT — не RFC 1918
+		{ip: "169.254.1.1", asked: false},
+		{ip: "::ffff:8.8.8.8", asked: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.ip, func(t *testing.T) {
+			t.Parallel()
+			var ptrCalls, nbCalls atomic.Int32
+			r := newTestResolverNB(nxdomain(&ptrCalls), netbiosStub(&nbCalls, "HOST", nil), "")
+			assert.Equal(t, tc.wantNB, r.ResolveNow(context.Background(), tc.ip))
+			assert.EqualValues(t, 1, ptrCalls.Load(), "PTR спрашивается у любого адреса")
+			if tc.asked {
+				assert.EqualValues(t, 1, nbCalls.Load())
+			} else {
+				assert.Zero(t, nbCalls.Load(), "UDP/137 на не-частный адрес не уходит")
+			}
+		})
+	}
+}
+
 func TestResolver_ResolveNow_ColdCache_Blocking(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
@@ -112,10 +161,35 @@ func TestResolver_ResolveNow_ColdCache_Blocking(t *testing.T) {
 
 	// Холодный кеш: имя возвращается сразу, без ожидания фона.
 	assert.Equal(t, "SRV-P-1C-NODE3.vz78.vozovoz.ru", r.ResolveNow(context.Background(), "192.168.86.246"))
-	// И кладётся в L1: горячий путь отдаёт его без нового запроса.
-	assert.Equal(t, "SRV-P-1C-NODE3.vz78.vozovoz.ru", r.Lookup("192.168.86.246"))
-	assert.Equal(t, "SRV-P-1C-NODE3.vz78.vozovoz.ru", r.ResolveNow(context.Background(), "192.168.86.246"))
 	assert.EqualValues(t, 1, calls.Load())
+}
+
+// §106.3: ResolveNow кладёт имя в Redis, но НЕ в L1. Дозаполнение перебирает
+// до тысячи исторических IP на таблицу: в L1 они вытесняли бы IP живого
+// трафика (переполнение сбрасывает L1 целиком). Горячий путь берёт имя из
+// Redis своим фоновым резолвом — без нового DNS-запроса.
+func TestResolver_ResolveNow_WritesRedisNotL1(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	r, srv := newTestResolverRedis(t, func(context.Context, string) ([]string, error) {
+		calls.Add(1)
+		return []string{"srv-a.example."}, nil
+	})
+
+	assert.Equal(t, "srv-a.example", r.ResolveNow(context.Background(), "10.9.9.9"))
+	r.mu.Lock()
+	_, inL1 := r.l1["10.9.9.9"]
+	r.mu.Unlock()
+	assert.False(t, inL1, "ResolveNow не занимает L1 живого трафика")
+	got, err := srv.Get(keyPrefix + "10.9.9.9")
+	require.NoError(t, err)
+	assert.Equal(t, "srv-a.example", got, "имя в общем кеше реплик")
+
+	// Горячий путь: промах L1 → фоновый резолв находит имя в Redis.
+	assert.Empty(t, r.Lookup("10.9.9.9"))
+	require.Eventually(t, func() bool { return r.Lookup("10.9.9.9") == "srv-a.example" },
+		2*time.Second, 10*time.Millisecond)
+	assert.EqualValues(t, 1, calls.Load(), "повторного DNS-запроса нет — имя из Redis")
 }
 
 func TestResolver_ResolveNow_NonIP_And_Loopback(t *testing.T) {
@@ -170,10 +244,6 @@ func TestResolver_ResolveNow_CancelledCtx_NotCached(t *testing.T) {
 
 	assert.Empty(t, r.ResolveNow(ctx, "10.1.2.4"))
 	assert.Zero(t, calls.Load(), "отменённый ctx — без DNS")
-	r.mu.Lock()
-	_, cached := r.l1["10.1.2.4"]
-	r.mu.Unlock()
-	assert.False(t, cached, "отмена не кешируется")
 }
 
 // Отмена ПОСРЕДИ цепочки: PTR вернул ошибку из-за отмены — негатив не
@@ -182,7 +252,7 @@ func TestResolver_ResolveNow_CancelledMidChain_NotCached(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
 	ctx, cancel := context.WithCancel(context.Background())
-	r := newTestResolver(func(lctx context.Context, _ string) ([]string, error) {
+	r, srv := newTestResolverRedis(t, func(lctx context.Context, _ string) ([]string, error) {
 		if calls.Add(1) == 1 {
 			cancel()
 			<-lctx.Done()
@@ -192,7 +262,7 @@ func TestResolver_ResolveNow_CancelledMidChain_NotCached(t *testing.T) {
 	})
 
 	assert.Empty(t, r.ResolveNow(ctx, "10.1.2.5"))
-	assert.Equal(t, "late.example", r.ResolveNow(context.Background(), "10.1.2.5"),
-		"прерванный резолв не оставил негатив в кеше")
+	assert.False(t, srv.Exists(keyPrefix+"10.1.2.5"), "прерванный резолв не оставил негатив в Redis")
+	assert.Equal(t, "late.example", r.ResolveNow(context.Background(), "10.1.2.5"))
 	assert.EqualValues(t, 2, calls.Load())
 }

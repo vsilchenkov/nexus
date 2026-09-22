@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,8 +44,11 @@ const (
 	// backfillQueryTimeout — таймаут SELECT DISTINCT и постановки мутации.
 	backfillQueryTimeout = 2 * time.Minute
 	// backfillLockTTL — лок цикла между репликами: дольше цикла, короче
-	// любого разумного интервала расписания.
+	// любого разумного интервала расписания. Досрочно не снимается, поэтому
+	// расписание чаще 15 минут фактически срабатывает не чаще раза в 15 минут.
 	backfillLockTTL = 15 * time.Minute
+	// backfillMutationMarker — признак нашей мутации в system.mutations.command.
+	backfillMutationMarker = "client_host = transform("
 )
 
 // ClientHostBackfill дописывает имена клиентов в строки логов, записанные без
@@ -71,6 +75,9 @@ type ClientHostBackfill struct {
 	cron    *cron.Cron
 	curExpr string
 	stopped bool // Run завершён: новое расписание не взводится
+	seeded  bool // первое SetSchedule уже было: Info о выключении — один раз
+	// cancelCycle прерывает идущий цикл, когда задачу выключают (§106.4).
+	cancelCycle context.CancelFunc
 }
 
 // NewClientHostBackfill создаёт задачу без расписания: до SetSchedule циклов нет.
@@ -102,15 +109,42 @@ func (b *ClientHostBackfill) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-b.trigger:
-			b.runCycle(ctx)
+			cctx, done, ok := b.beginCycle(ctx)
+			if !ok {
+				continue
+			}
+			b.runCycle(cctx)
+			done()
 		}
 	}
 }
 
-// SetSchedule применяет расписание (§106.4): "" выключает задачу, то же
-// выражение — no-op, новое пересобирает планировщик (у robfig/cron запись
-// нельзя перенастроить, только пересоздать). Невалидное выражение возвращает
-// ошибку и оставляет прежнее расписание.
+// beginCycle открывает цикл, если задача всё ещё включена: тик мог лечь в
+// канал до того, как расписание очистили. Возвращённый ctx отменяется
+// SetSchedule(""), done снимает регистрацию.
+func (b *ClientHostBackfill) beginCycle(ctx context.Context) (context.Context, func(), bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.cron == nil {
+		// §51.9: тик остался от выключенного расписания — цикл не начинаем.
+		b.logger.Debug("client_host backfill: tick dropped, schedule is off")
+		return nil, nil, false
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	b.cancelCycle = cancel
+	return cctx, func() {
+		b.mu.Lock()
+		b.cancelCycle = nil
+		b.mu.Unlock()
+		cancel()
+	}, true
+}
+
+// SetSchedule применяет расписание (§106.4): "" выключает задачу и прерывает
+// идущий цикл, то же выражение — no-op, новое пересобирает планировщик (у
+// robfig/cron запись нельзя перенастроить, только пересоздать; идущий цикл
+// при этом доработает). Невалидное выражение возвращает ошибку и оставляет
+// прежнее расписание.
 func (b *ClientHostBackfill) SetSchedule(expr string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -119,10 +153,7 @@ func (b *ClientHostBackfill) SetSchedule(expr string) error {
 		return nil
 	}
 	if expr == "" {
-		if b.cron != nil {
-			b.stopLocked()
-			b.logger.Info("client_host backfill disabled")
-		}
+		b.disableLocked()
 		return nil
 	}
 	if expr == b.curExpr && b.cron != nil {
@@ -135,9 +166,31 @@ func (b *ClientHostBackfill) SetSchedule(expr string) error {
 	}
 	b.stopLocked()
 	c.Start()
-	b.cron, b.curExpr = c, expr
+	b.cron, b.curExpr, b.seeded = c, expr, true
 	b.logger.Info("client_host backfill armed", b.logger.Str("cron", expr))
 	return nil
+}
+
+// disableLocked гасит расписание, прерывает идущий цикл и выбрасывает
+// ожидающий тик. Уже поставленные мутации ClickHouse доработают сами —
+// снимаются они только KILL MUTATION (DEPLOYMENT.md, §106).
+func (b *ClientHostBackfill) disableLocked() {
+	wasArmed := b.cron != nil
+	b.stopLocked()
+	select {
+	case <-b.trigger:
+	default:
+	}
+	if b.cancelCycle != nil {
+		b.cancelCycle()
+		b.logger.Info("client_host backfill: running cycle cancelled")
+	}
+	if wasArmed || !b.seeded {
+		// Первое применение тоже пишется: иначе, что задача выключена, на
+		// старте было бы видно лишь по отсутствию строки «armed».
+		b.logger.Info("client_host backfill disabled")
+	}
+	b.seeded = true
 }
 
 // fire — тик cron: исполняется в горутине robfig/cron, поэтому свой recover.
@@ -175,7 +228,11 @@ func (b *ClientHostBackfill) runCycle(ctx context.Context) {
 			return
 		}
 		if !ok {
-			b.logger.Debug("client_host backfill: cycle already taken by another replica")
+			// Лок держит цикл другой реплики или собственный предыдущий:
+			// досрочно лок не снимается, поэтому тик в пределах TTL после
+			// прошлого цикла тоже попадает сюда.
+			b.logger.Debug("client_host backfill: cycle lock held (another replica or previous cycle within lock ttl), skipping",
+				b.logger.Int("lock_ttl_min", int(backfillLockTTL/time.Minute)))
 			return
 		}
 	}
@@ -207,6 +264,9 @@ func (b *ClientHostBackfill) RunOnce(ctx context.Context) error {
 		}
 		n, err := b.backfillTable(ctx, conn, t)
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err() // выключили или остановка сервиса — не сбой таблицы
+			}
 			b.logger.Warn("client_host backfill: table failed", b.logger.Str("table", t), b.logger.Err(err))
 			continue
 		}
@@ -248,11 +308,23 @@ func (b *ClientHostBackfill) backfillTable(ctx context.Context, conn chdriver.Co
 		return 0, nil
 	}
 	hosts := b.resolveAll(ctx, ips)
+	if err := ctx.Err(); err != nil {
+		// Задачу выключили (или сервис останавливается) посреди резолва: имена,
+		// успевшие найтись, в мутацию не идут — выключение значит «хватит».
+		return 0, err
+	}
 	stmt, pairs, ok := buildClientHostMutation(table, hosts)
 	if !ok {
 		// §51.9: ни одного имени — мутацию не ставим, IP переспросят в следующем цикле.
 		b.logger.Debug("client_host backfill: no names resolved",
 			b.logger.Str("table", table), b.logger.Int("empty_ips", len(ips)))
+		return 0, nil
+	}
+	if b.mutationPending(ctx, conn, table) {
+		// Прошлая мутация ещё идёт: её строки пока пусты, и новая мутация
+		// повторила бы ту же работу поверх очереди.
+		b.logger.Info("client_host backfill: previous mutation still running, table skipped",
+			b.logger.Str("table", table))
 		return 0, nil
 	}
 	qctx, cancel := context.WithTimeout(ctx, backfillQueryTimeout)
@@ -265,12 +337,38 @@ func (b *ClientHostBackfill) backfillTable(ctx context.Context, conn chdriver.Co
 	return pairs, nil
 }
 
-// emptyHostIPs — различные IP строк с пустым client_host (не больше backfillMaxIPs).
+// mutationPending — есть ли на таблице незавершённая мутация дозаполнения.
+// Сбой запроса (нет прав на system.mutations и т. п.) — fail-open: мутация
+// ставится, как до проверки; худший исход — повтор работы, не потеря данных.
+func (b *ClientHostBackfill) mutationPending(ctx context.Context, conn chdriver.Conn, table string) bool {
+	db, name, _ := strings.Cut(table, ".") // формат db.table гарантирует IsValidCHTableName
+	qctx, cancel := context.WithTimeout(ctx, backfillQueryTimeout)
+	defer cancel()
+	var n uint64
+	err := conn.QueryRow(qctx, "SELECT count() FROM system.mutations "+
+		"WHERE database = ? AND table = ? AND is_done = 0 AND position(command, ?) > 0",
+		db, name, backfillMutationMarker).Scan(&n)
+	if err != nil {
+		// §51.9: проглоченная ошибка проверки — Debug с причиной.
+		b.logger.Debug("client_host backfill: pending mutation check failed, scheduling anyway",
+			b.logger.Str("table", table), b.logger.Err(err))
+		return false
+	}
+	return n > 0
+}
+
+// emptyHostIPs — различные IP строк с пустым client_host, не больше
+// backfillMaxIPs, сначала встречавшиеся позже всех. Не-IP значения
+// (rabbitmq://… у pull-узлов) и loopback отсекаются в SQL: резолвер их всё
+// равно не спросит, а место в выборке они занимали бы каждый цикл.
 func (b *ClientHostBackfill) emptyHostIPs(ctx context.Context, conn chdriver.Conn, table string) ([]string, error) {
 	qctx, cancel := context.WithTimeout(ctx, backfillQueryTimeout)
 	defer cancel()
 	// table проверен domain.IsValidCHTableName: имена таблиц CH не параметризуются.
-	q := fmt.Sprintf("SELECT DISTINCT IP FROM %s WHERE client_host = '' AND IP != '' LIMIT %d", table, backfillMaxIPs)
+	q := fmt.Sprintf("SELECT IP FROM %s WHERE client_host = '' "+
+		"AND (isIPv4String(IP) OR isIPv6String(IP)) "+
+		"AND NOT startsWith(IP, '127.') AND IP NOT IN ('::1', '0.0.0.0', '::') "+
+		"GROUP BY IP ORDER BY max(date_create) DESC LIMIT %d", table, backfillMaxIPs)
 	rows, err := conn.Query(qctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("select empty client_host: %w", err)

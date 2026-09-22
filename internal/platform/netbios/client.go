@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/safego"
 )
 
 // readBufSize вмещает ответ с максимальной таблицей имён (NUM_NAMES = 255:
@@ -25,7 +26,9 @@ type Config struct {
 	Timeout time.Duration // таймаут одного запроса; клиент владеет этим дедлайном
 }
 
-// Client шлёт запросы NBSTAT. Потокобезопасен; своих горутин не создаёт.
+// Client шлёт запросы NBSTAT. Потокобезопасен. Долгоживущих горутин не
+// создаёт; единственная короткая — колбэк context.AfterFunc, который снимает
+// блокировку чтения при завершении ctx (см. nodeStatus).
 type Client struct {
 	cfg    Config
 	logger logging.Logger
@@ -104,9 +107,12 @@ func (c *Client) nodeStatus(ctx context.Context, ip string) ([]Name, error) {
 			return nil, fmt.Errorf("netbios: set deadline: %w", err)
 		}
 	}
-	// Отмена ctx снимает блокировку чтения немедленно. Горутины не нужно:
-	// AfterFunc сработает только при отмене, stop() снимает регистрацию.
+	// Отмена ctx снимает блокировку чтения немедленно. AfterFunc запускает
+	// колбэк в СВОЕЙ горутине, когда ctx завершается, — а это и собственный
+	// таймаут клиента, то есть штатный путь молчащего хоста. Поэтому в колбэке
+	// safego.Recover (§30.2); stop() снимает регистрацию на пути ответа.
 	stop := context.AfterFunc(ctx, func() {
+		defer safego.Recover(c.logger, "netbios.cancelRead")
 		// Ошибка неинтересна: сокет закрывается следом по defer.
 		_ = conn.SetDeadline(time.Now())
 	})
