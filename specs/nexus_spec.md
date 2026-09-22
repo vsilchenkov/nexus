@@ -4406,6 +4406,9 @@ Redis `nexus:rdns:<ip>` (общий для реплик; TTL позитив `cac
 (TTL ≤ 5 мин). Дедуп pending+singleflight; fail-open при сбоях Redis/DNS; Debug-логи §51.9.
 Кросс-репличный дедуп и Prometheus-метрики — сознательно нет. Конфиг `sender.rdns`
 (`disabled` default false). Требуются PTR-записи в корпоративном DNS.
+Развито §106: хостам без PTR — второй этап NetBIOS Node Status по UDP/137 (opt-in,
+`sender.rdns.netbios`), блокирующий `ResolveNow`, отменённый резолв не кешируется; пустые
+`client_host` дописываются задачей Sender'а по cron из «Настройки → Общие».
 
 **Фильтр.** Facet `GET /api/nodes/{id}/logs/client-hosts` (DISTINCT, кап 200, деградации как
 у `/logs/methods`); `LogQuery.ClientHost` — exact match в Search/Count/live-tail; query-параметр
