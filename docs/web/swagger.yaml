@@ -2950,6 +2950,14 @@ definitions:
           Диапазон — тот же, что у поля узла (1..100): расхождение границ дало бы
           значение, которое принимают глобально и отвергают на узле. Не секрет.
         type: integer
+      client_host_backfill_cron:
+        description: |-
+          ClientHostBackfillCron — расписание дозаполнения пустых client_host в
+          логах узлов (§106.4), стандартный 5-полевой cron по времени контейнера
+          Sender'а. nil — не задано, действует ClientHostBackfillDefaultCron;
+          "" — дозаполнение выключено (указатель на пустую строку omitempty не
+          выбрасывает, поэтому «выключено» переживает запись в JSONB). Не секрет.
+        type: string
       max_async_body_bytes:
         description: |-
           MaxAsyncBodyBytes — рабочий лимит тела асинхронного приёма (§97), байты:

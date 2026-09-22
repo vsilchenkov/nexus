@@ -146,6 +146,24 @@ func createNodeLogTable(t *testing.T, ctx context.Context, conn chdriver.Conn, t
 	require.NoError(t, conn.Exec(ctx, ddl), "create log table %s", table)
 }
 
+// waitCHMutations ждёт, пока у таблицы db.name не останется невыполненных
+// мутаций: ALTER … UPDATE в ClickHouse асинхронный.
+func waitCHMutations(t *testing.T, ctx context.Context, conn chdriver.Conn, db, name string) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		var pending uint64
+		require.NoError(t, conn.QueryRow(ctx,
+			"SELECT count() FROM system.mutations WHERE database = ? AND table = ? AND is_done = 0",
+			db, name).Scan(&pending))
+		if pending == 0 {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatal("mutations not finished in time")
+}
+
 // TestClickHouse_WriteAndRead — sender.chlog.Writer пишет батч; затем
 // LogReaderCH из Web-стороны видит запись через GetByID и Search.
 //

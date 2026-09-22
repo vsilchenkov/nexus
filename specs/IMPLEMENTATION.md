@@ -6552,6 +6552,7 @@ sessionStorage (§54) переживали выход и вход другого
 | ТЗ §106 | ✅ Phase 106.1 | [sections/106-netbios-client-host.md](sections/106-netbios-client-host.md) (повод — разбор `vika/dadata_suggestions`, результат пробы UDP/137 с боя), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
 | §106.2 кодек и клиент NBSTAT | ✅ Phase 106.2 | Пакет [platform/netbios](../internal/platform/netbios/): [packet.go](../internal/platform/netbios/packet.go) — `BuildNodeStatusRequest` (50 байт, имя «*» = `0x20 "CK" "A"×30 0x00`), `ParseNodeStatusResponse` (заголовок: txID, бит R, RCODE, ANCOUNT; пропуск повторённых вопросов и сжатых имён; TYPE NBSTAT; RDLENGTH и NUM_NAMES в границах), `WorkstationName` (первое уникальное `<00>`, `[A-Za-z0-9_-]`, ≤ 15); [client.go](../internal/platform/netbios/client.go) — `Client.NodeStatus`/`Hostname`: подключённый `udp4`-сокет, дедлайн = таймаут клиента, отмена ctx через `context.AfterFunc` (своих горутин нет), чужой номер транзакции — читать дальше до дедлайна. Тесты: [packet_test.go](../internal/platform/netbios/packet_test.go) (golden-запрос, 15 строк разбора, таблица имён с боевой пробы 6.167, `FuzzParseNodeStatusResponse`), [client_test.go](../internal/platform/netbios/client_test.go) (UDP-ответчик на `127.0.0.1:0`: успех, нет уникального имени, таймаут, отмена < 1 с, чужой txID, RCODE, закрытый порт) |
 | §106.2 второй этап резолвера, `ResolveNow`, конфиг `netbios` | ✅ Phase 106.3 | [rdns/resolve_chain.go](../internal/platform/rdns/resolve_chain.go) — цепочка `resolveOnce` = Redis → `lookupChain` (PTR → для IPv4 NetBIOS + суффикс) → guard «отмена не кешируется» → L1 + Redis → одна Debug-строка `rdns: resolved` с `source` (`redis/dns/dns_negative/netbios/netbios_negative`); `ResolveNow` — блокирующий резолв для фоновых задач через общий с `Lookup` singleflight. [rdns/resolver.go](../internal/platform/rdns/resolver.go) — `WithNetBIOS(fn, suffix)`, `skipIP`. Конфиг `sender.rdns.netbios.{enabled,port,timeout_ms,suffix}` ([config.go](../internal/platform/config/config.go), дефолты 137/1000 в [defaults.go](../internal/platform/config/defaults.go), `validateRDNS` в [validate.go](../internal/platform/config/validate.go): порт, таймаут, суффикс по DNS-алфавиту ≤ 237, заодно `rdns.*` ≥ 1), три YAML в `config/`. Общая сборка [bootstrap/rdns.go](../internal/platform/bootstrap/rdns.go) `NewHostResolver` — её используют [sender/app.go](../internal/sender/app.go) (поле `App.hostResolver`) и [receiver/app.go](../internal/receiver/app.go) (`startRejectLog`). Тесты: [resolver_netbios_test.go](../internal/platform/rdns/resolver_netbios_test.go) (этап не зовётся при PTR, суффикс, выключен, двойной негатив кешируется, IPv6, `ResolveNow` холодный/не-IP/дедуп с фоном/отмена до и посреди цепочки), [bootstrap/rdns_test.go](../internal/platform/bootstrap/rdns_test.go), `TestValidate`/`TestApplyDefaults_RDNSNetBIOS`, integration `TestRDNS_ResolveNow_WritesRedis` |
+| §106.3–§106.4 дозаполнение client_host по cron из настроек | ✅ Phase 106.4 | Настройка `general.client_host_backfill_cron` ([domain/app_settings.go](../internal/domain/app_settings.go): поле, `ClientHostBackfillDefaultCron = "0 * * * *"` — раз в час, `ClientHostBackfillCronOrDefault`; сентинел `ErrClientHostBackfillCronInvalid`), валидация `cron.ParseStandard` + merge + `changedSections` в [web/usecase/app_settings.go](../internal/web/usecase/app_settings.go), 400 в [app_settings_handler.go](../internal/web/adapter/in/http/app_settings_handler.go), поле узкого overlay и `ClientHostBackfillReloader`/`ScheduleSwitch` в [bootstrap/reload.go](../internal/platform/bootstrap/reload.go). Задача [sender/usecase/client_host_backfill.go](../internal/sender/usecase/client_host_backfill.go) (`SetSchedule`, `Run`, `RunOnce`, лок `sender-client-host-backfill` 15 мин, `SELECT DISTINCT IP … LIMIT 1000`, `ResolveNow` по 8) и [client_host_backfill_sql.go](../internal/sender/usecase/client_host_backfill_sql.go) (`buildClientHostMutation` — одна мутация `transform()`). Общий [platform/clickhouse/errors.go](../internal/platform/clickhouse/errors.go) `IsMissingColumnErr` (перенос из Web log_reader). Wiring — `startClientHostBackfill` в [sender/app.go](../internal/sender/app.go) внутри ветки Redis, сид + `SectionGeneral`, ожидание в `awaitBackgroundJobs`. Swagger перегенерирован. Тесты: [client_host_backfill_test.go](../internal/sender/usecase/client_host_backfill_test.go) (фейковые `Conn`/`Rows` драйвера: деплой-окно, подмножество имён, фильтр таблиц, лок, `SetSchedule`, тик → цикл, лишние тики), домен/usecase/handler/overlay, integration `TestClickHouse_ClientHostBackfill` и `TestAppSettingsRepo_ClientHostBackfillCron_E2E` (PG → overlay → планировщик); ожидание мутаций вынесено в `waitCHMutations` |
 
 **Неочевидности §106.**
 
@@ -6569,10 +6570,29 @@ sessionStorage (§54) переживали выход и вход другого
   отдаёт "", поэтому задача дозаполнения через него получала бы пустоту на каждом первом
   обращении. `ResolveNow` идёт через тот же singleflight, что и фон, — одновременный `Lookup`
   того же IP второго запроса не порождает. Присоединившийся к чужому полёту получает его исход,
-  в том числе "" при отмене ведущего; для суточной задачи это приемлемо.
+  в том числе "" при отмене ведущего; для периодической задачи это приемлемо.
 - **Typed-nil.** `NewHostResolver` возвращает `*rdns.Resolver`, nil при `disabled`. Оба `app.go`
   проверяют nil до передачи в опцию с интерфейсом — иначе интерфейс стал бы «непустым» и упал
   на первом `Lookup`.
+- **Cron только сигналит, цикл выполняет `Run`.** Планировщик кладёт тик в канал с буфером 1,
+  а цикл идёт в горутине `Run` на контексте приложения. Так контекст не хранится в структуре и
+  не захватывается замыканием reloader'а, циклы одной реплики не накладываются друг на друга
+  (лишний тик отбрасывается с Debug), а выход `Run` значит, что цикл закончен и ClickHouse
+  можно закрывать. После выхода `Run` новые `SetSchedule` расписание не взводят.
+- **Дефолт — раз в час (решение пользователя 2026-09-22).** Первоначально планировался
+  `0 3 * * *`; пользователь попросил раз в час. Цена — ежечасный `SELECT DISTINCT` по колонкам
+  `IP`/`client_host` каждой управляемой таблицы. Лок цикла 15 минут не снимается досрочно,
+  поэтому расписание чаще 15 минут фактически выполняется раз в 15 минут.
+- **`""` ≠ nil.** Выключенная задача хранится как указатель на пустую строку: `omitempty`
+  выбрасывает только nil-указатель, поэтому «выключено» переживает JSONB. Это же поле обязано
+  быть в узком overlay `bootstrap` — без него Sender читал бы nil и включал расписание по
+  умолчанию (та же грабля, что у §97 и §98.5). Проверено integration-тестом от репозитория Web
+  до `SetSchedule`.
+- **Негодное выражение из БД.** Через API его не сохранить (400), но при правке в обход API
+  reloader возвращает ошибку, прежнее расписание остаётся. На старте прежнего нет — сид падает,
+  и Sender взводит расписание по умолчанию с Warn.
+- **Без Redis задачи нет.** Ни hot-reload расписания, ни лока между репликами — как у политики
+  защиты узла §98.5. Причина пишется Debug-строкой.
 - **Закрытый порт на Windows даёт таймаут, а не быструю ошибку.** На Linux ICMP port unreachable
   приходит в подключённый UDP-сокет как `ECONNREFUSED`, на Windows-машине разработчика тест
   закрытого порта ждал весь таймаут. Тест проверяет только «ошибка, а не имя».

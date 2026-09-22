@@ -55,6 +55,10 @@ type appSettingsOverlay struct {
 		// заданных в интерфейсе — грабля, отдельно проверявшаяся в §97.
 		CircuitBreakerThreshold   *int `json:"circuit_breaker_threshold,omitempty"`
 		CircuitBreakerCooldownSec *int `json:"circuit_breaker_cooldown_sec,omitempty"`
+		// §106.4: расписание дозаполнения client_host. Та же грабля: без поля
+		// здесь Sender читал бы nil и включал бы расписание по умолчанию,
+		// даже когда администратор задачу выключил.
+		ClientHostBackfillCron *string `json:"client_host_backfill_cron,omitempty"`
 	} `json:"general"`
 }
 

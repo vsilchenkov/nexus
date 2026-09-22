@@ -99,6 +99,8 @@ type App struct {
 	dlqReprocDone    <-chan struct{} // §36: done-канал sweeper'а DLQ
 	pausedSweepDone  <-chan struct{} // §3.6: done-канал sweeper'а delay-топика
 	shipperDone      <-chan struct{} // §51: done-канал шиппера служебных логов
+	// §106.3: done-канал задачи дозаполнения client_host (nil, если не запущена).
+	clientHostBackfillDone <-chan struct{}
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
@@ -469,6 +471,8 @@ func (a *App) startBackgroundJobs(ctx context.Context, nodeReader *nodepg.Reader
 			}
 			reloadSub.Register(reloader.SectionGeneral, applyBreaker)
 		}
+		// §106.3: дозаполнение пустых client_host по расписанию из настроек.
+		a.startClientHostBackfill(ctx, nodeReader, chGuard, reloadSub)
 		// §95: справочник маскирования логов изменился в UI → перечитать из PG и
 		// пересобрать набор regexp без рестарта. Сид уже сделан в Start
 		// (seedLogMasks) — здесь только горячее обновление.
@@ -485,7 +489,42 @@ func (a *App) startBackgroundJobs(ctx context.Context, nodeReader *nodepg.Reader
 		a.reloadDone = safego.Go(a.logger, "sender.reloadSubscriber", func() {
 			reloadSub.Run(ctx)
 		})
+	} else {
+		// §51.9: §106.3 без Redis не поднимается — нет ни hot-reload
+		// расписания, ни лока цикла между репликами.
+		a.logger.Debug("client_host backfill not started: redis is not configured")
 	}
+}
+
+// startClientHostBackfill поднимает дозаполнение пустых client_host (§106.3)
+// с расписанием из app_settings.general (§106.4): сид сейчас, дальше — по
+// событию general без рестарта. Вызывается только при живом Redis: без него нет
+// ни hot-reload расписания, ни лока цикла между репликами.
+func (a *App) startClientHostBackfill(ctx context.Context, nodeReader *nodepg.Reader, chGuard *chpf.Guard, reloadSub *reloader.Subscriber) {
+	if a.hostResolver == nil || a.chMgr == nil {
+		// §51.9: задача молча не поднимается — объясняем почему.
+		a.logger.Debug("client_host backfill not started",
+			a.logger.Any("rdns_enabled", a.hostResolver != nil),
+			a.logger.Any("clickhouse_enabled", a.chMgr != nil))
+		return
+	}
+	bf := usecase.NewClientHostBackfill(a.chMgr, nodeReader, a.hostResolver, a.logger).
+		WithManagedFilter(chGuard).
+		WithCycleLock(redislock.New(a.redis, "sender-client-host-backfill"))
+	applySchedule := bootstrap.ClientHostBackfillReloader(a.pg, bf, a.cipher, a.logger)
+	if err := applySchedule(ctx); err != nil {
+		// Настройки не прочитались (или в БД негодное выражение) — действует
+		// расписание по умолчанию, следующее событие general его поправит.
+		a.logger.Warn("seed client_host backfill schedule failed; using default schedule",
+			a.logger.Str("cron", domain.ClientHostBackfillDefaultCron), a.logger.Err(err))
+		if err := bf.SetSchedule(domain.ClientHostBackfillDefaultCron); err != nil {
+			a.logger.ErrorWithOp("client_host backfill: default schedule rejected", err, "sender.clientHostBackfill")
+		}
+	}
+	reloadSub.Register(reloader.SectionGeneral, applySchedule)
+	a.clientHostBackfillDone = safego.Go(a.logger, "sender.clientHostBackfill", func() {
+		bf.Run(ctx)
+	})
 }
 
 // serveEndpoints поднимает gRPC и админ-HTTP и блокируется до остановки
@@ -748,6 +787,7 @@ func (a *App) awaitBackgroundJobs(ctx context.Context) {
 	defer awaitCancel()
 
 	safego.Await(awaitCtx, a.housekeepingDone, a.logger, "sender.chHousekeeping")
+	safego.Await(awaitCtx, a.clientHostBackfillDone, a.logger, "sender.clientHostBackfill") // §106.3: nil, если не запущена
 	safego.Await(awaitCtx, a.kafkaLagDone, a.logger, "sender.reportKafkaLag")
 	safego.Await(awaitCtx, a.reloadDone, a.logger, "sender.reloadSubscriber")
 	safego.Await(awaitCtx, a.dlqReprocDone, a.logger, "sender.dlqReprocessor")

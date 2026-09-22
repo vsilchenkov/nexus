@@ -7020,7 +7020,7 @@ NBSTAT на `<ip>:137` (пакет `platform/netbios`, подключённый 
 таблица без колонки — Debug и пропуск; Redis-лок `sender-client-host-backfill`; без Redis задача
 не запускается.
 
-**Расписание.** `app_settings.general.client_host_backfill_cron`: не задано — `0 3 * * *`, `""` —
+**Расписание.** `app_settings.general.client_host_backfill_cron`: не задано — `0 * * * *` (раз в час), `""` —
 выключено, иначе 5-полевой cron (время контейнера Sender'а). Поле в «Настройки → Общие»;
 сохранение публикует `general`, Sender пересобирает планировщик без перезапуска. Невалидное
 выражение — 400.

@@ -141,6 +141,8 @@ var settingsValidationErrors = []error{
 	// §98.5
 	domain.ErrBreakerThresholdInvalid,
 	domain.ErrBreakerCooldownInvalid,
+	// §106.4
+	domain.ErrClientHostBackfillCronInvalid,
 	// §88
 	domain.ErrMailHostInvalid,
 	domain.ErrMailPortInvalid,

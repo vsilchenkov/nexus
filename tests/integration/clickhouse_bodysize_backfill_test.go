@@ -90,20 +90,7 @@ func TestClickHouse_BodySizeBackfill(t *testing.T) {
 	clickhouse.BackfillBodySizes(ctx, conn, tables, logger)
 
 	// Мутации асинхронные — ждём завершения.
-	waitMutations := func() {
-		deadline := time.Now().Add(60 * time.Second)
-		for time.Now().Before(deadline) {
-			var pending uint64
-			require.NoError(t, conn.QueryRow(ctx,
-				"SELECT count() FROM system.mutations WHERE database = ? AND table = ? AND is_done = 0",
-				db, name).Scan(&pending))
-			if pending == 0 {
-				return
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-		t.Fatal("mutations not finished in time")
-	}
+	waitMutations := func() { waitCHMutations(t, ctx, conn, db, name) }
 	waitMutations()
 
 	var reqSize, respSize int64
