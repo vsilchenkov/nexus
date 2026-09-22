@@ -6551,6 +6551,7 @@ sessionStorage (§54) переживали выход и вход другого
 |---|---|---|
 | ТЗ §106 | ✅ Phase 106.1 | [sections/106-netbios-client-host.md](sections/106-netbios-client-host.md) (повод — разбор `vika/dadata_suggestions`, результат пробы UDP/137 с боя), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
 | §106.2 кодек и клиент NBSTAT | ✅ Phase 106.2 | Пакет [platform/netbios](../internal/platform/netbios/): [packet.go](../internal/platform/netbios/packet.go) — `BuildNodeStatusRequest` (50 байт, имя «*» = `0x20 "CK" "A"×30 0x00`), `ParseNodeStatusResponse` (заголовок: txID, бит R, RCODE, ANCOUNT; пропуск повторённых вопросов и сжатых имён; TYPE NBSTAT; RDLENGTH и NUM_NAMES в границах), `WorkstationName` (первое уникальное `<00>`, `[A-Za-z0-9_-]`, ≤ 15); [client.go](../internal/platform/netbios/client.go) — `Client.NodeStatus`/`Hostname`: подключённый `udp4`-сокет, дедлайн = таймаут клиента, отмена ctx через `context.AfterFunc` (своих горутин нет), чужой номер транзакции — читать дальше до дедлайна. Тесты: [packet_test.go](../internal/platform/netbios/packet_test.go) (golden-запрос, 15 строк разбора, таблица имён с боевой пробы 6.167, `FuzzParseNodeStatusResponse`), [client_test.go](../internal/platform/netbios/client_test.go) (UDP-ответчик на `127.0.0.1:0`: успех, нет уникального имени, таймаут, отмена < 1 с, чужой txID, RCODE, закрытый порт) |
+| §106.2 второй этап резолвера, `ResolveNow`, конфиг `netbios` | ✅ Phase 106.3 | [rdns/resolve_chain.go](../internal/platform/rdns/resolve_chain.go) — цепочка `resolveOnce` = Redis → `lookupChain` (PTR → для IPv4 NetBIOS + суффикс) → guard «отмена не кешируется» → L1 + Redis → одна Debug-строка `rdns: resolved` с `source` (`redis/dns/dns_negative/netbios/netbios_negative`); `ResolveNow` — блокирующий резолв для фоновых задач через общий с `Lookup` singleflight. [rdns/resolver.go](../internal/platform/rdns/resolver.go) — `WithNetBIOS(fn, suffix)`, `skipIP`. Конфиг `sender.rdns.netbios.{enabled,port,timeout_ms,suffix}` ([config.go](../internal/platform/config/config.go), дефолты 137/1000 в [defaults.go](../internal/platform/config/defaults.go), `validateRDNS` в [validate.go](../internal/platform/config/validate.go): порт, таймаут, суффикс по DNS-алфавиту ≤ 237, заодно `rdns.*` ≥ 1), три YAML в `config/`. Общая сборка [bootstrap/rdns.go](../internal/platform/bootstrap/rdns.go) `NewHostResolver` — её используют [sender/app.go](../internal/sender/app.go) (поле `App.hostResolver`) и [receiver/app.go](../internal/receiver/app.go) (`startRejectLog`). Тесты: [resolver_netbios_test.go](../internal/platform/rdns/resolver_netbios_test.go) (этап не зовётся при PTR, суффикс, выключен, двойной негатив кешируется, IPv6, `ResolveNow` холодный/не-IP/дедуп с фоном/отмена до и посреди цепочки), [bootstrap/rdns_test.go](../internal/platform/bootstrap/rdns_test.go), `TestValidate`/`TestApplyDefaults_RDNSNetBIOS`, integration `TestRDNS_ResolveNow_WritesRedis` |
 
 **Неочевидности §106.**
 
@@ -6560,6 +6561,18 @@ sessionStorage (§54) переживали выход и вход другого
   таймаута краснел примерно раз на десяток прогонов под `make test` (`-race`). `withCtxErr`
   добавляет `DeadlineExceeded` к `os.ErrDeadlineExceeded`: дедлайны сокету ставит только сам
   клиент.
+- **Пустой ответ из-за отмены — не факт об IP.** До §106 `resolveOnce` клал в негативный кеш
+  любой пустой исход, и остановка сервиса посреди PTR-запроса оставляла IP без имени в Redis на
+  `negative_ttl_sec`. С `ResolveNow` отмену делает ещё и вызывающий (конец цикла дозаполнения),
+  поэтому после `lookupChain` стоит проверка `ctx.Err()`: отменённый резолв ничего не кеширует.
+- **`ResolveNow` вместо ожидания фона.** `Lookup` по контракту §67 не делает I/O и на холодном IP
+  отдаёт "", поэтому задача дозаполнения через него получала бы пустоту на каждом первом
+  обращении. `ResolveNow` идёт через тот же singleflight, что и фон, — одновременный `Lookup`
+  того же IP второго запроса не порождает. Присоединившийся к чужому полёту получает его исход,
+  в том числе "" при отмене ведущего; для суточной задачи это приемлемо.
+- **Typed-nil.** `NewHostResolver` возвращает `*rdns.Resolver`, nil при `disabled`. Оба `app.go`
+  проверяют nil до передачи в опцию с интерфейсом — иначе интерфейс стал бы «непустым» и упал
+  на первом `Lookup`.
 - **Закрытый порт на Windows даёт таймаут, а не быструю ошибку.** На Linux ICMP port unreachable
   приходит в подключённый UDP-сокет как `ECONNREFUSED`, на Windows-машине разработчика тест
   закрытого порта ждал весь таймаут. Тест проверяет только «ошибка, а не имя».

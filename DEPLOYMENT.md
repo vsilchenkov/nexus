@@ -1729,6 +1729,28 @@ web:
   > До ALTER: чтение логов такого узла падает, новые записи буферизуются в `nexus.logs.retry`
   > (§38) и доигрываются после ALTER (потери нет); `POST /api/ch-tables/verify` показывает
   > `Missing: client_host`.
+- **§106 — имя клиента без PTR: NetBIOS-этап резолва.** Миграций (PG и CH) нет. Новый блок
+  конфига `sender.rdns.netbios` (`enabled`/`port`/`timeout_ms`/`suffix`, **выключен по
+  умолчанию**, см. [config/config.example.yml](config/config.example.yml)). Блок общий для
+  Sender'а и Receiver'а (журнал отказов §94) и **не перечитывается на лету** — после правки
+  перезапустить `sender` и `receiver`. Когда PTR для IPv4-клиента пуст, резолвер спрашивает
+  NetBIOS Node Status (UDP/137) и дописывает к короткому имени `suffix` (на бою
+  `vz78.vozovoz.ru`).
+
+  Инфраструктура: UDP/137 из контейнеров `sender` **и** `receiver` до клиентских подсетей; на
+  клиентских Windows-хостах — NetBIOS over TCP/IP и входящее правило «NB-Name-In» с областью,
+  включающей адрес сервера шины. Проба до включения (на HA-оверлее сервис — `sender-1`):
+
+  ```sh
+  docker run --rm --network container:$(docker compose ps -q sender) alpine:3.20 sh -c \
+    'apk add -q --no-cache samba-client && for ip in 192.168.2.5 192.168.6.167; do nmblookup -A $ip; done'
+  ```
+
+  Таблица имён (`SRV-D-SQLDEV-HQ <00> - B <ACTIVE>`) — этап для этого хоста сработает;
+  `No reply from …` — хост серверу шины не отвечает (область правила NB-Name-In на хосте или ACL
+  между VLAN), имя для него даст только PTR. Проба на бою 2026-09-22: ответил только
+  192.168.6.167. Наблюдение после включения — Info `rdns: netbios stage enabled` на старте и
+  Debug `rdns: resolved … source=netbios` в консоли «Логи» (§51).
 - **§55 — dry-run с реальным вызовом target.** Миграций (PG и CH) нет. Появляется **новая
   зависимость `Web → Sender` по gRPC** и новая секция конфига `web.sender_grpc` (по образцу
   `receiver.sender_grpc`, см. [config/config.example.yml](config/config.example.yml)):

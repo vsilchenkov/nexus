@@ -275,6 +275,14 @@ func applyDefaults(c *Config) {
 	if c.Sender.RDNS.NegativeTTLSec == 0 {
 		c.Sender.RDNS.NegativeTTLSec = 600
 	}
+	// §106.5: NetBIOS-этап выключен по умолчанию (Enabled=false), но порт и
+	// таймаут заполняем всегда — включение одним флагом даёт рабочий этап.
+	if c.Sender.RDNS.NetBIOS.Port == 0 {
+		c.Sender.RDNS.NetBIOS.Port = 137
+	}
+	if c.Sender.RDNS.NetBIOS.TimeoutMs == 0 {
+		c.Sender.RDNS.NetBIOS.TimeoutMs = 1000
+	}
 	// §81.3: политика circuit breaker'а. Значения те же, что были литералами в
 	// коде до §81 — обновление конфигурацию не меняет.
 	if c.Sender.CircuitBreaker.Threshold == 0 {

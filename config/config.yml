@@ -295,6 +295,14 @@ sender:
     timeout_ms: 2000             # Таймаут одного PTR-lookup (фоновый).
     cache_ttl_sec: 3600          # TTL позитивного кеша IP→hostname (Redis).
     negative_ttl_sec: 600        # TTL негативного кеша (IP без PTR / ошибка DNS).
+    # §106.2: второй этап — NetBIOS Node Status (UDP/137) для IPv4-хостов без PTR.
+    # Opt-in: нужен UDP/137 из контейнеров sender И receiver до клиентских подсетей
+    # (проба — DEPLOYMENT, §106). Секция НЕ hot-reload: после правки рестарт sender и receiver.
+    netbios:
+      enabled: false             # Включить этап (по умолчанию выключен).
+      port: 137                  # UDP-порт NetBIOS Name Service.
+      timeout_ms: 1000           # Таймаут одного запроса (фоновый, латентность запросов не трогает).
+      suffix: ""                 # DNS-суффикс к короткому имени (например vz78.vozovoz.ru); "" — имя как есть.
   # §81.3: circuit breaker узла — сколько отказов подряд закрывают доставку и
   # сколько ждать до пробного запроса. Отказом считается 5xx, истёкший
   # timeout_ms узла или отказ соединения; уход клиента шины отказом НЕ считается

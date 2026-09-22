@@ -28,7 +28,6 @@ import (
 	otelpf "nexus/internal/platform/otel"
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/platform/ratelimit"
-	"nexus/internal/platform/rdns"
 	recoverypf "nexus/internal/platform/recovery"
 	redispf "nexus/internal/platform/redis"
 	"nexus/internal/platform/redislock"
@@ -181,7 +180,9 @@ func (a *App) startPullerManager(ctx context.Context) {
 // Резолвер PTR-имён берётся с параметрами секции sender.rdns — кеш имён у
 // Sender и Receiver общий (nexus:rdns:<ip> в Redis), и два набора настроек для
 // одного кеша только разошлись бы. Выключенный там резолв выключает имена и
-// здесь: журнал покажет адреса без hostname.
+// здесь: журнал покажет адреса без hostname. Включённый там NetBIOS-этап
+// (§106.2) работает и здесь, поэтому UDP/137 до клиентских подсетей нужен
+// контейнеру Receiver'а так же, как Sender'а.
 //
 // Сбор включается СРАЗУ по флагу конфигурации, а не по настройке срока
 // хранения: до первого чтения app_settings (§94.5) отказы уже могут случиться,
@@ -193,12 +194,8 @@ func (a *App) startRejectLog(ctx context.Context) {
 		return
 	}
 	opts := []rejectlog.Option{rejectlog.WithDropSink(a.metrics)}
-	if !a.cfg.Sender.RDNS.Disabled {
-		opts = append(opts, rejectlog.WithHostResolver(rdns.New(ctx, a.redis, rdns.Config{
-			Timeout:     time.Duration(a.cfg.Sender.RDNS.TimeoutMs) * time.Millisecond,
-			CacheTTL:    time.Duration(a.cfg.Sender.RDNS.CacheTTLSec) * time.Second,
-			NegativeTTL: time.Duration(a.cfg.Sender.RDNS.NegativeTTLSec) * time.Second,
-		}, a.logger)))
+	if hr := bootstrap.NewHostResolver(ctx, a.redis, &a.cfg.Sender.RDNS, a.logger); hr != nil {
+		opts = append(opts, rejectlog.WithHostResolver(hr))
 	}
 	a.rejectLog = rejectlog.New(rejectlog.NewRepo(a.pg), rejectlog.Config{
 		FlushInterval: time.Duration(a.cfg.Receiver.RejectLog.FlushIntervalSec) * time.Second,

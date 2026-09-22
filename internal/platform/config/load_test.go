@@ -129,6 +129,25 @@ func TestApplyDefaults_NotOverwritingNonZero(t *testing.T) {
 		"ping без активных стримов должен быть разрешён по умолчанию (флаг инвертирован намеренно)")
 }
 
+// §106.5: пустая секция netbios даёт выключенный этап с рабочими порт и
+// таймаутом — включение одним флагом enabled не требует других ключей.
+func TestApplyDefaults_RDNSNetBIOS(t *testing.T) {
+	t.Parallel()
+	c := &Config{}
+	applyDefaults(c)
+	assert.False(t, c.Sender.RDNS.NetBIOS.Enabled, "этап opt-in")
+	assert.Equal(t, 137, c.Sender.RDNS.NetBIOS.Port)
+	assert.Equal(t, 1000, c.Sender.RDNS.NetBIOS.TimeoutMs)
+	assert.Empty(t, c.Sender.RDNS.NetBIOS.Suffix)
+
+	c = &Config{}
+	c.Sender.RDNS.NetBIOS.Port = 1137
+	c.Sender.RDNS.NetBIOS.TimeoutMs = 300
+	applyDefaults(c)
+	assert.Equal(t, 1137, c.Sender.RDNS.NetBIOS.Port, "явное значение не затирается")
+	assert.Equal(t, 300, c.Sender.RDNS.NetBIOS.TimeoutMs)
+}
+
 func TestValidate(t *testing.T) {
 	t.Parallel()
 
@@ -218,6 +237,39 @@ func TestValidate(t *testing.T) {
 		// Клиент с keepalive_time_sec=0 не пингует вообще (grpc-go подставляет
 		// бесконечность) и нарушителем стать не может — политика любой строгости
 		// для него безопасна.
+		// §67/§106.5: sender.rdns. Нули заменяют дефолты, отрицательное — только
+		// явный конфиг: нулевой таймаут или мгновенно истекающий кеш.
+		{"rdns_timeout_negative",
+			func(c *Config) { c.Sender.RDNS.TimeoutMs = -1 },
+			"sender.rdns.timeout_ms"},
+		{"rdns_negative_ttl_negative",
+			func(c *Config) { c.Sender.RDNS.NegativeTTLSec = -5 },
+			"sender.rdns.negative_ttl_sec"},
+		{"netbios_port_out_of_range",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Port = 70_000 },
+			"sender.rdns.netbios.port"},
+		{"netbios_timeout_out_of_range",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.TimeoutMs = 60_001 },
+			"sender.rdns.netbios.timeout_ms"},
+		{"netbios_suffix_ok",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = "vz78.vozovoz.ru" },
+			""},
+		{"netbios_suffix_fqdn_dots_ok",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = ".vz78.vozovoz.ru." },
+			""},
+		// Суффикс уходит в client_host и в ALTER TABLE … UPDATE дозаполнения.
+		{"netbios_suffix_quote",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = "vz78'x" },
+			"sender.rdns.netbios.suffix"},
+		{"netbios_suffix_space",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = "vz78 vozovoz.ru" },
+			"sender.rdns.netbios.suffix"},
+		{"netbios_suffix_empty_label",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = "vz78..ru" },
+			"sender.rdns.netbios.suffix"},
+		{"netbios_suffix_too_long",
+			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = strings.Repeat("a", 238) },
+			"sender.rdns.netbios.suffix"},
 		{"grpc_keepalive_client_disabled_ok",
 			func(c *Config) {
 				c.Receiver.SenderGRPC.KeepaliveTimeSec = 0

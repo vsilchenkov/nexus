@@ -85,6 +85,11 @@ type App struct {
 	// обновляется reloader'ом секции general без рестарта.
 	breakerPolicy *circuitbreaker.PolicyProvider
 
+	// hostResolver — резолвер имени клиента (§67, второй этап NetBIOS §106.2).
+	// nil при sender.rdns.disabled. Кроме доставки им пользуется дозаполнение
+	// пустых client_host (§106.3) — отсюда поле, а не локальная переменная.
+	hostResolver *rdns.Resolver
+
 	// done-каналы фоновых горутин — Stop дожидается их завершения
 	// (Phase AUD.3): housekeeping/lag-reporter/reload-callbacks не должны
 	// бежать параллельно с закрытием CH/Kafka/Redis-соединений.
@@ -296,15 +301,13 @@ func (a *App) buildSendUsecase(ctx context.Context) (*usecase.SendUsecase, useca
 		cb, breaker = b, b
 	}
 	// §67: reverse-DNS резолв client_host — асинхронный, кеш Redis + L1,
-	// fail-open (a.redis может быть nil → режим «только L1»).
+	// fail-open (a.redis может быть nil → режим «только L1»); §106.2 —
+	// NetBIOS-этап по конфигу. Проверка на nil обязательна: typed-nil в
+	// интерфейсе HostResolver перестал бы быть nil.
 	var sendOpts []usecase.SendOption
-	if !a.cfg.Sender.RDNS.Disabled {
-		hr := rdns.New(ctx, a.redis, rdns.Config{
-			Timeout:     time.Duration(a.cfg.Sender.RDNS.TimeoutMs) * time.Millisecond,
-			CacheTTL:    time.Duration(a.cfg.Sender.RDNS.CacheTTLSec) * time.Second,
-			NegativeTTL: time.Duration(a.cfg.Sender.RDNS.NegativeTTLSec) * time.Second,
-		}, a.logger)
-		sendOpts = append(sendOpts, usecase.WithHostResolver(hr))
+	a.hostResolver = bootstrap.NewHostResolver(ctx, a.redis, &a.cfg.Sender.RDNS, a.logger)
+	if a.hostResolver != nil {
+		sendOpts = append(sendOpts, usecase.WithHostResolver(a.hostResolver))
 	}
 	sendUC := usecase.NewSendUsecase(httpc, a.chWriter, cb, a.logger, respLimit, sendOpts...)
 
