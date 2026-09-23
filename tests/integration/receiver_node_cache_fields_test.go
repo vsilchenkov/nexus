@@ -112,7 +112,7 @@ func nonDefaultRequestNode(teamID string) *domain.Node {
 	return &domain.Node{
 		Path:                      "guard/all_fields",
 		RootMethod:                domain.RootMethodRequest,
-		IncomingMethod:            domain.HTTPMethodPUT,
+		IncomingMethod:            domain.HTTPMethodGET, // SSEDecline требует GET или ANY (§107.2)
 		OutgoingMethod:            domain.HTTPMethodDELETE,
 		URLMode:                   domain.URLModeStatic,
 		TargetURL:                 "http://upstream.example/api",

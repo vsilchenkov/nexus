@@ -81,8 +81,10 @@ func TestNode_DeclineStream(t *testing.T) {
 	}{
 		{"flag off passes subscription", Node{RootMethod: RootMethodRequest, IncomingMethod: HTTPMethodAny}, "GET", "", false},
 		{"ANY node", Node{RootMethod: RootMethodRequest, SSEDecline: true, IncomingMethod: HTTPMethodAny}, "GET", allowForAnyMethod, true},
-		{"POST node", Node{RootMethod: RootMethodRequest, SSEDecline: true, IncomingMethod: HTTPMethodPOST}, "GET", "POST", true},
-		{"empty method means POST", Node{RootMethod: RootMethodRequest, SSEDecline: true}, "GET", "POST", true},
+		// Узел без GET отвечает на подписку отказом метода §40 и без флага:
+		// устаревший флаг (ручная правка БД) не подменяет этот отказ своим 405.
+		{"POST node ignores stale flag", Node{RootMethod: RootMethodRequest, SSEDecline: true, IncomingMethod: HTTPMethodPOST}, "GET", "", false},
+		{"empty method means POST, flag ignored", Node{RootMethod: RootMethodRequest, SSEDecline: true}, "GET", "", false},
 		{"GET-only node", Node{RootMethod: RootMethodRequest, SSEDecline: true, IncomingMethod: HTTPMethodGET}, "GET", "", true},
 		{"tool call passes", Node{RootMethod: RootMethodRequest, SSEDecline: true, IncomingMethod: HTTPMethodAny}, "POST", "", false},
 		{"async node ignores stale flag", Node{RootMethod: RootMethodRequestAsync, SSEDecline: true}, "GET", "", false},

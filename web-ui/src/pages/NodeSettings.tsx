@@ -220,6 +220,13 @@ const emptyForm: Form = {
   ...ackFormDefaults,
 };
 
+// §107.2: отказ от SSE-подписки осмыслен только у sync-узла, принимающего GET
+// (входящий GET или ANY) — зеркало domain.sseDeclineApplies. Узел с другим
+// методом и без флага отвечает на GET отказом «метод не принимается».
+function sseDeclineApplies(f: Pick<Form, "root_method" | "incoming_method">): boolean {
+  return f.root_method === "request" && (f.incoming_method === "GET" || f.incoming_method === "ANY");
+}
+
 export default function NodeSettings() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
@@ -454,10 +461,10 @@ export default function NodeSettings() {
     delete p.ack_on_error;
     delete p.ack_body;
     p.async_ack_spec = ackSpecFromForm(form, form.root_method);
-    // §107.2: отказ от SSE-подписки есть только у sync-узла. Сервер сбросил бы
-    // флаг и сам, но с записью «сброшено несовместимое поле» в аудите — а здесь
-    // переключатель просто скрыт вместе с типом узла.
-    if (form.root_method !== "request") p.sse_decline = false;
+    // §107.2: отказ от SSE-подписки есть только у sync-узла, принимающего GET.
+    // Сервер сбросил бы флаг и сам, но с записью «сброшено несовместимое поле»
+    // в аудите — а здесь переключатель просто скрыт вместе с типом или методом.
+    if (!sseDeclineApplies(form)) p.sse_decline = false;
     return p;
   }
 
@@ -816,9 +823,10 @@ export default function NodeSettings() {
                 </Select>
               </Field>
             )}
-            {/* §107.2: отказ от SSE-подписки — только у sync-узла: async-узел
-                отвечает клиенту сам, не дожидаясь получателя, у pull-узла входа нет. */}
-            {form.root_method === "request" && (
+            {/* §107.2: отказ от SSE-подписки — только у sync-узла, принимающего
+                GET: async-узел отвечает клиенту сам, у pull-узла входа нет, а узел
+                без GET и так отвечает на подписку отказом метода. */}
+            {sseDeclineApplies(form) && (
               <div className="mt-3">
                 <div className="flex items-center gap-1">
                   <Toggle

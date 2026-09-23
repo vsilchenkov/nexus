@@ -27,7 +27,7 @@ func TestNode_NormalizeForRootMethod_SSEDecline(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			n := &Node{RootMethod: tt.root, SSEDecline: true, BreakerIgnoreTimeouts: true}
+			n := &Node{RootMethod: tt.root, IncomingMethod: HTTPMethodAny, SSEDecline: true, BreakerIgnoreTimeouts: true}
 
 			cleared := n.NormalizeForRootMethod()
 
@@ -35,6 +35,38 @@ func TestNode_NormalizeForRootMethod_SSEDecline(t *testing.T) {
 			assert.Equal(t, tt.wantCleared, slices.Contains(cleared, "sse_decline"),
 				"сброс обязан попасть в cleared_incompatible_fields аудита")
 			assert.True(t, n.BreakerIgnoreTimeouts, "флаг таймаутов нормализация не трогает")
+		})
+	}
+}
+
+// TestNode_NormalizeForRootMethod_SSEDeclineNeedsGET — флаг осмыслен, только
+// если sync-узел принимает GET: входящий ANY или GET. Узел с другим методом
+// отвечает на GET отказом §40, и скрытый в форме флаг не должен молча
+// подменять этот отказ своим 405 (замечание со стенда §107).
+func TestNode_NormalizeForRootMethod_SSEDeclineNeedsGET(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		incoming HTTPMethod
+		wantSSE  bool
+	}{
+		{"ANY keeps flag", HTTPMethodAny, true},
+		{"GET keeps flag", HTTPMethodGET, true},
+		{"POST clears flag", HTTPMethodPOST, false},
+		{"PUT clears flag", HTTPMethodPUT, false},
+		{"DELETE clears flag", HTTPMethodDELETE, false},
+		{"empty means POST, clears flag", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			n := &Node{RootMethod: RootMethodRequest, IncomingMethod: tt.incoming, SSEDecline: true}
+
+			cleared := n.NormalizeForRootMethod()
+
+			assert.Equal(t, tt.wantSSE, n.SSEDecline)
+			assert.Equal(t, !tt.wantSSE, slices.Contains(cleared, "sse_decline"))
 		})
 	}
 }

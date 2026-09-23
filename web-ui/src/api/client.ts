@@ -71,7 +71,9 @@ export const api = {
 };
 
 export type RootMethod = "request" | "requestAsync" | "RabbitMQAsync";
-export type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE";
+// §40: ANY — узел принимает любой метод (входящий) либо зеркалит входящий
+// (исходящий). Сервер отдаёт его как есть, и без него тип врал бы.
+export type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "ANY";
 
 // §27: runtime-health Puller-воркера узла RabbitMQAsync (только для него).
 export type RMQStatus = {

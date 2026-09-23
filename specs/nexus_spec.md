@@ -7053,11 +7053,12 @@ HTTP). Клиент после подключения открывает GET-к�
 отказом §94, бейдж «Логи» горит постоянно, отрезаются DELETE и OPTIONS.
 
 **«Не открывать поток (SSE) на GET».** `nodes.sse_decline BOOLEAN NOT NULL DEFAULT false`, только
-`request` (нормализация сбрасывает у async/pull). `domain.IsSSESubscribe`: GET и в `Accept`
+`request` с входящим `ANY` или `GET` (нормализация сбрасывает у async/pull и у узла без GET: тот и
+так отвечает на GET отказом §40; в форме переключатель у них скрыт). `domain.IsSSESubscribe`: GET и в `Accept`
 медиатип `text/event-stream` с q≠0 (разбор `mime.ParseMediaType` по элементам). Проверка в
 `checkNodeAcceptsSync` после `Disabled` (404) и до паузы, метода и авторизации — подписка на
 паузном узле не уходит в очередь; клиент без токена получит 405, а не 401 (граница). Ответ `405`
-с `Allow` (`ANY` → `POST, PUT, PATCH, DELETE, HEAD, OPTIONS`; иначе входящий метод, если не GET)
+с `Allow` (`ANY` → `POST, PUT, PATCH, DELETE, HEAD, OPTIONS`; `GET` → пустой)
 и `{"error":"event stream is not supported by this node"}`, помечен `MarkProxiedResponse`: не в
 журнале отказов, не в ClickHouse, брейкер и статус узла не трогаются (Sender не вызывается);
 виден в `nexus_requests_total{service="receiver",status="405"}` и Debug-строке. Обе формы адреса

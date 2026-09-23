@@ -73,26 +73,32 @@ func acceptsEventStream(item string) bool {
 
 // DeclineStream — §107.2: nil, если запрос идёт дальше; *StreamDeclinedError,
 // если узел с включённым SSEDecline получил подписку на поток событий.
-// Действует только у sync-узла: у остальных флаг сбрасывает
-// NormalizeForRootMethod, а проверка типа здесь страхует от ручной правки БД.
+// Действует только там, где флаг применим (sseDeclineApplies): у остальных
+// узлов его сбрасывает NormalizeForRootMethod, а проверка здесь страхует от
+// ручной правки БД.
 func (n *Node) DeclineStream(method string, h http.Header) error {
-	if !n.SSEDecline || n.RootMethod != RootMethodRequest || !IsSSESubscribe(method, h) {
+	if !n.SSEDecline || !n.sseDeclineApplies() || !IsSSESubscribe(method, h) {
 		return nil
 	}
 	return &StreamDeclinedError{Allow: allowWithoutGET(n.IncomingMethod)}
 }
 
-// allowWithoutGET — методы узла для заголовка Allow, кроме GET.
+// sseDeclineApplies — флаг §107.2 осмыслен: sync-узел, принимающий GET.
+// async-узел отвечает клиенту сам, не дожидаясь получателя, — подписка не
+// висит на входе; у pull-узла входа нет вовсе. Узел с другим входящим методом
+// (POST, PUT, …; пустой = POST) отвечает на GET отказом §40 и без флага —
+// скрытый в форме флаг подменял бы этот отказ молча.
+func (n *Node) sseDeclineApplies() bool {
+	return n.RootMethod == RootMethodRequest &&
+		(n.IncomingMethod == HTTPMethodAny || n.IncomingMethod == HTTPMethodGET)
+}
+
+// allowWithoutGET — методы узла для заголовка Allow, кроме GET. Флаг действует
+// только при входящем ANY или GET (sseDeclineApplies), поэтому других веток
+// нет: узел, принимающий лишь GET, другого метода не предлагает — Allow пустой.
 func allowWithoutGET(incoming HTTPMethod) string {
-	switch incoming {
-	case HTTPMethodAny:
+	if incoming == HTTPMethodAny {
 		return allowForAnyMethod
-	case "":
-		// Пустой входящий метод Receiver трактует как POST (MethodMatches).
-		return http.MethodPost
-	case HTTPMethodGET:
-		return ""
-	default:
-		return string(incoming)
 	}
+	return ""
 }

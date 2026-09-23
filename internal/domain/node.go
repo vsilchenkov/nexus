@@ -44,8 +44,8 @@ type Node struct {
 	// §107.2: «Не открывать поток (SSE) на GET». true — Receiver сам отвечает
 	// 405 на подписку (GET + Accept: text/event-stream, см. IsSSESubscribe), не
 	// вызывая получателя: шина не передаёт бесконечный поток, и подписка висела
-	// бы до таймаута узла. Только для root_method=request — у остальных типов
-	// NormalizeForRootMethod флаг сбрасывает.
+	// бы до таймаута узла. Только у sync-узла, принимающего GET (входящий метод
+	// ANY или GET), — у остальных NormalizeForRootMethod флаг сбрасывает.
 	SSEDecline bool
 
 	AuthType               AuthType
@@ -192,13 +192,11 @@ func (n *Node) UnmarshalJSON(data []byte) error {
 // Для pull-узлов (RabbitMQAsync) нет входящего HTTP-запроса: incoming-авторизация
 // и url_mode=from_request бессмысленны, динамическая исходящая авторизация
 // (*_from_request) тоже — её неоткуда брать. Отказ от SSE-подписки (§107.2)
-// осмыслен только у sync-узла и сбрасывается у всех остальных. Вызывается в
-// usecase.Create/Update до Validate.
+// осмыслен только у sync-узла, принимающего GET, и сбрасывается у всех
+// остальных. Вызывается в usecase.Create/Update до Validate.
 func (n *Node) NormalizeForRootMethod() []string {
 	var cleared []string
-	if n.SSEDecline && n.RootMethod != RootMethodRequest {
-		// §107.2: async-узел отвечает клиенту сам, не дожидаясь получателя, —
-		// подписка не висит на входе; у pull-узла входа нет вовсе.
+	if n.SSEDecline && !n.sseDeclineApplies() {
 		n.SSEDecline = false
 		cleared = append(cleared, "sse_decline")
 	}

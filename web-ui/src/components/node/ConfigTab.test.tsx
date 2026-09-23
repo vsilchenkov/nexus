@@ -209,7 +209,12 @@ describe("ConfigTab — флаги §107", () => {
   }
 
   it("sync-узел с обоими флагами показывает обе строки", async () => {
-    renderFlags({ root_method: "request", sse_decline: true, breaker_ignore_timeouts: true });
+    renderFlags({
+      root_method: "request",
+      incoming_method: "ANY",
+      sse_decline: true,
+      breaker_ignore_timeouts: true,
+    });
     await waitFor(() => expect(screen.getByText("node.fields.sse_decline")).toBeInTheDocument());
     expect(screen.getByText("node.fields.sse_decline_value")).toBeInTheDocument();
     expect(screen.getByText("node.fields.breaker_ignore_timeouts_value")).toBeInTheDocument();
@@ -227,6 +232,14 @@ describe("ConfigTab — флаги §107", () => {
     await waitFor(() =>
       expect(screen.getByText("node.fields.breaker_ignore_timeouts")).toBeInTheDocument(),
     );
+    expect(screen.queryByText("node.fields.sse_decline")).toBeNull();
+  });
+
+  // Узел без GET отвечает на подписку отказом метода — строка «отклоняется
+  // (405)» по устаревшему флагу обещала бы то, чего сервер не делает.
+  it("у узла с входящим POST строки SSE нет даже при устаревшем флаге", async () => {
+    renderFlags({ root_method: "request", incoming_method: "POST", sse_decline: true });
+    await waitFor(() => expect(screen.getByText("node.form.incoming_method")).toBeInTheDocument());
     expect(screen.queryByText("node.fields.sse_decline")).toBeNull();
   });
 });

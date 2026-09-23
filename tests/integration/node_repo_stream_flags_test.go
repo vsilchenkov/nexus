@@ -39,10 +39,11 @@ func TestNodeRepoStreamFlags_E2E(t *testing.T) {
 
 	// Узел без флагов — прежнее поведение (DEFAULT false в миграции).
 	n := &domain.Node{
-		Path:       "mcp-1c/dev",
-		RootMethod: domain.RootMethodRequest,
-		URLMode:    domain.URLModeStatic,
-		TargetURL:  "http://mcp.example:8172/mcp",
+		Path:           "mcp-1c/dev",
+		RootMethod:     domain.RootMethodRequest,
+		IncomingMethod: domain.HTTPMethodAny,
+		URLMode:        domain.URLModeStatic,
+		TargetURL:      "http://mcp.example:8172/mcp",
 	}
 	require.NoError(t, nodeUC.Create(ctx, usecase.SystemActor(), n))
 	got, err := nodeRepo.Get(ctx, n.ID)
@@ -58,6 +59,22 @@ func TestNodeRepoStreamFlags_E2E(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got.SSEDecline, "sse_decline не сохранился")
 	assert.True(t, got.BreakerIgnoreTimeouts, "breaker_ignore_timeouts не сохранился")
+
+	// Входящий метод без GET: узел и так отвечает на GET отказом §40 — флаг
+	// сбрасывается, чтобы скрытая в форме настройка не действовала молча.
+	postOnly := *got
+	postOnly.IncomingMethod = domain.HTTPMethodPOST
+	require.NoError(t, nodeUC.Update(ctx, usecase.SystemActor(), &postOnly, defaultTeam))
+	got, err = nodeRepo.Get(ctx, n.ID)
+	require.NoError(t, err)
+	assert.False(t, got.SSEDecline, "у узла без GET флаг SSE обязан сброситься")
+
+	got.IncomingMethod = domain.HTTPMethodAny
+	got.SSEDecline = true
+	require.NoError(t, nodeUC.Update(ctx, usecase.SystemActor(), got, defaultTeam))
+	got, err = nodeRepo.Get(ctx, n.ID)
+	require.NoError(t, err)
+	require.True(t, got.SSEDecline)
 
 	// Перевод в requestAsync: подписка у async-узла на входе не висит — флаг
 	// SSE сбрасывается нормализацией, флаг таймаутов остаётся (брейкер общий).

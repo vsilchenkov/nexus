@@ -114,4 +114,28 @@ describe("NodeSettings — флаги §107", () => {
     await waitFor(() => expect(apiPut).toHaveBeenCalled());
     expect(apiPut.mock.calls[0][1]).toMatchObject({ sse_decline: false });
   });
+
+  // Замечание со стенда: узел без GET отвечает на подписку отказом метода и без
+  // флага — переключатель у него скрыт, а скрытый флаг не должен действовать.
+  it("входящий метод без GET скрывает SSE-переключатель, флаг уходит выключенным", async () => {
+    // Исходящий метод другой, чтобы «ANY» в форме был только у входящего.
+    apiGet.mockImplementation((url: string) => {
+      if (url === "/api/nodes/n1") return Promise.resolve({ ...NODE, outgoing_method: "PUT" });
+      if (url === "/api/auth/me") return Promise.resolve({ user: { role: "admin" } });
+      return Promise.resolve({ items: [] });
+    });
+    renderForm();
+    await waitFor(() => expect(sseSwitch()).toHaveAttribute("aria-checked", "true"));
+
+    fireEvent.change(screen.getByDisplayValue("ANY"), { target: { value: "POST" } });
+    expect(sseSwitch()).toBeNull();
+
+    fireEvent.change(screen.getByDisplayValue("POST"), { target: { value: "GET" } });
+    expect(sseSwitch()).toHaveAttribute("aria-checked", "true");
+
+    fireEvent.change(screen.getByDisplayValue("GET"), { target: { value: "POST" } });
+    fireEvent.click(screen.getByRole("button", { name: /common\.save/ }));
+    await waitFor(() => expect(apiPut).toHaveBeenCalled());
+    expect(apiPut.mock.calls[0][1]).toMatchObject({ incoming_method: "POST", sse_decline: false });
+  });
 });
