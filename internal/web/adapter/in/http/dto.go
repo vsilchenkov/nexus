@@ -64,9 +64,11 @@ type CreateNodeRequest struct {
 	DLQTTLSeconds             int32    `json:"dlq_ttl_seconds" binding:"omitempty,min=60,max=2592000"`
 	DLQRetryDelaySeconds      int32    `json:"dlq_retry_delay_seconds" binding:"omitempty,min=1,max=86400"`
 	// §81.3: политика circuit breaker'а узла. 0/отсутствие = «как в конфигурации».
-	CircuitBreakerThreshold   int32  `json:"circuit_breaker_threshold" binding:"omitempty,min=0,max=100"`
-	CircuitBreakerCooldownSec int32  `json:"circuit_breaker_cooldown_sec" binding:"omitempty,min=0,max=3600"`
-	Comment                   string `json:"comment" binding:"omitempty,max=2000"`
+	CircuitBreakerThreshold   int32 `json:"circuit_breaker_threshold" binding:"omitempty,min=0,max=100"`
+	CircuitBreakerCooldownSec int32 `json:"circuit_breaker_cooldown_sec" binding:"omitempty,min=0,max=3600"`
+	// §107.3: таймаут при установленном соединении не засчитывается breaker'у.
+	BreakerIgnoreTimeouts bool   `json:"breaker_ignore_timeouts"`
+	Comment               string `json:"comment" binding:"omitempty,max=2000"`
 	// §99: группа узла; пусто = «без группы». Ссылка по id на node_groups.
 	GroupID         string `json:"group_id" binding:"omitempty,uuid"`
 	Status          string `json:"status" binding:"omitempty,oneof=enabled disabled paused"`
@@ -81,6 +83,10 @@ type CreateNodeRequest struct {
 
 	// §39: path-passthrough — приклеивать хвост входящего пути к target URL.
 	PathPassthrough bool `json:"path_passthrough"`
+
+	// §107.2: GET-подписка SSE получает 405 от Receiver'а, не доходя до
+	// получателя. Только request — у остальных типов сбрасывается нормализацией.
+	SSEDecline bool `json:"sse_decline"`
 
 	// §83: шаблон ответа приёма. Указатель: отсутствие поля и явный null
 	// означают «узел отвечает как раньше», и это же значение приходит от формы,
@@ -149,6 +155,7 @@ type NodeResponse struct {
 	DLQRetryDelaySeconds      int32    `json:"dlq_retry_delay_seconds"`
 	CircuitBreakerThreshold   int32    `json:"circuit_breaker_threshold"`
 	CircuitBreakerCooldownSec int32    `json:"circuit_breaker_cooldown_sec"`
+	BreakerIgnoreTimeouts     bool     `json:"breaker_ignore_timeouts"`
 	Comment                   string   `json:"comment"`
 	GroupID                   string   `json:"group_id"`
 	Status                    string   `json:"status"`
@@ -160,6 +167,7 @@ type NodeResponse struct {
 	MaxBodySizeEnabled        bool     `json:"max_body_size_enabled"`
 	MaxBodySize               int32    `json:"max_body_size"`
 	PathPassthrough           bool     `json:"path_passthrough"`
+	SSEDecline                bool     `json:"sse_decline"`
 
 	// §83: шаблон ответа приёма; null — узел отвечает как раньше. Секретом не
 	// является (его пишет оператор и он же уходит клиенту), поэтому отдаётся
@@ -266,6 +274,7 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		DLQRetryDelaySeconds:      r.DLQRetryDelaySeconds,
 		CircuitBreakerThreshold:   r.CircuitBreakerThreshold,
 		CircuitBreakerCooldownSec: r.CircuitBreakerCooldownSec,
+		BreakerIgnoreTimeouts:     r.BreakerIgnoreTimeouts,
 		Comment:                   r.Comment,
 		GroupID:                   r.GroupID,
 		Status:                    domain.NodeStatus(r.Status),
@@ -276,6 +285,7 @@ func reqToDomain(r CreateNodeRequest) *domain.Node {
 		MaxBodySizeEnabled:        r.MaxBodySizeEnabled,
 		MaxBodySize:               r.MaxBodySize,
 		PathPassthrough:           r.PathPassthrough,
+		SSEDecline:                r.SSEDecline,
 		AsyncAck:                  r.AsyncAckSpec,
 		RMQHost:                   r.RMQHost,
 		RMQPort:                   r.RMQPort,
@@ -326,6 +336,7 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		DLQRetryDelaySeconds:      n.DLQRetryDelaySeconds,
 		CircuitBreakerThreshold:   n.CircuitBreakerThreshold,
 		CircuitBreakerCooldownSec: n.CircuitBreakerCooldownSec,
+		BreakerIgnoreTimeouts:     n.BreakerIgnoreTimeouts,
 		Comment:                   n.Comment,
 		GroupID:                   n.GroupID,
 		Status:                    string(n.Status),
@@ -337,6 +348,7 @@ func nodeToResponse(n *domain.Node) NodeResponse {
 		MaxBodySizeEnabled:        n.MaxBodySizeEnabled,
 		MaxBodySize:               n.MaxBodySize,
 		PathPassthrough:           n.PathPassthrough,
+		SSEDecline:                n.SSEDecline,
 		AsyncAckSpec:              n.AsyncAck,
 		RMQHost:                   n.RMQHost,
 		RMQPort:                   n.RMQPort,

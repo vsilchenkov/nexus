@@ -6653,6 +6653,7 @@ sessionStorage (§54) переживали выход и вход другого
 |---|---|---|
 | ТЗ §107 | ✅ Phase 107.0 | [sections/107-node-streams-and-slow-timeouts.md](sections/107-node-streams-and-slow-timeouts.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); §80.5 п. 2 и §81.6 помечены закрытыми §107 |
 | §107.6 кеш Receiver читает все поля узла | ✅ Phase 107.1 | [nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go) — `incoming_auth_dynamic_source/field` в SELECT и Scan; сторож [receiver_node_cache_fields_test.go](../tests/integration/receiver_node_cache_fields_test.go) |
+| §107.2/§107.3 модель: флаги `sse_decline`, `breaker_ignore_timeouts` | ✅ Phase 107.2 | миграция [0043](../migrations/0043_node_sse_breaker_timeout.up.sql); [domain/node.go](../internal/domain/node.go) (`SSEDecline` сбрасывается `NormalizeForRootMethod` не у `request`); Web [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), [dto.go](../internal/web/adapter/in/http/dto.go), аудит `diffNodes`; колонки в кеше Receiver'а; тесты [node_sse_test.go](../internal/domain/node_sse_test.go), [node_sse_audit_test.go](../internal/web/usecase/node_sse_audit_test.go), integration [node_repo_stream_flags_test.go](../tests/integration/node_repo_stream_flags_test.go) |
 
 **Неочевидности §107:**
 

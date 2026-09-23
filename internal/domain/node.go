@@ -41,6 +41,13 @@ type Node struct {
 	// Неприменимо к pull-узлам (RabbitMQAsync) — нет входящего HTTP-пути.
 	PathPassthrough bool
 
+	// §107.2: «Не открывать поток (SSE) на GET». true — Receiver сам отвечает
+	// 405 на подписку (GET + Accept: text/event-stream, см. IsSSESubscribe), не
+	// вызывая получателя: шина не передаёт бесконечный поток, и подписка висела
+	// бы до таймаута узла. Только для root_method=request — у остальных типов
+	// NormalizeForRootMethod флаг сбрасывает.
+	SSEDecline bool
+
 	AuthType               AuthType
 	AuthCredentials        string // plaintext в памяти, шифр в БД
 	AuthDynamicSource      AuthDynSource
@@ -88,6 +95,11 @@ type Node struct {
 	// sync получает политику в составе запроса к отправителю.
 	CircuitBreakerThreshold   int32
 	CircuitBreakerCooldownSec int32
+	// §107.3: таймаут при установленном соединении (получатель принял запрос,
+	// но не ответил за TimeoutMs) не засчитывается breaker'у — воздержание, а не
+	// отказ. Отказ соединения, DNS, TLS и таймаут соединения считаются как
+	// прежде. Все типы узлов; статус узла и ответ клиенту флаг не меняет.
+	BreakerIgnoreTimeouts bool
 
 	Status NodeStatus
 	TeamID string
@@ -179,13 +191,20 @@ func (n *Node) UnmarshalJSON(data []byte) error {
 // и возвращает имена молча сброшенных несовместимых полей (для audit, §27.6).
 // Для pull-узлов (RabbitMQAsync) нет входящего HTTP-запроса: incoming-авторизация
 // и url_mode=from_request бессмысленны, динамическая исходящая авторизация
-// (*_from_request) тоже — её неоткуда брать. Вызывается в usecase.Create/Update
-// до Validate.
+// (*_from_request) тоже — её неоткуда брать. Отказ от SSE-подписки (§107.2)
+// осмыслен только у sync-узла и сбрасывается у всех остальных. Вызывается в
+// usecase.Create/Update до Validate.
 func (n *Node) NormalizeForRootMethod() []string {
-	if !n.RootMethod.IsPull() {
-		return nil
-	}
 	var cleared []string
+	if n.SSEDecline && n.RootMethod != RootMethodRequest {
+		// §107.2: async-узел отвечает клиенту сам, не дожидаясь получателя, —
+		// подписка не висит на входе; у pull-узла входа нет вовсе.
+		n.SSEDecline = false
+		cleared = append(cleared, "sse_decline")
+	}
+	if !n.RootMethod.IsPull() {
+		return cleared
+	}
 	if n.IncomingAuthType != "" && n.IncomingAuthType != IncomingAuthTypeNone {
 		n.IncomingAuthType = IncomingAuthTypeNone
 		n.IncomingAuthCredentials = ""

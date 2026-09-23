@@ -200,7 +200,8 @@ SELECT
 	n.created_at, n.updated_at,
 	n.incoming_method, n.outgoing_method,
 	n.circuit_breaker_threshold, n.circuit_breaker_cooldown_sec,
-	n.async_ack_spec
+	n.async_ack_spec,
+	n.sse_decline, n.breaker_ignore_timeouts
 FROM nodes n
 JOIN teams t ON t.id = n.team_id
 WHERE t.slug = $1 AND n.path = $2`
@@ -235,6 +236,7 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 		&incomingMethod, &outgoingMethod,
 		&cbThreshold, &cbCooldown,
 		&ackRaw,
+		&n.SSEDecline, &n.BreakerIgnoreTimeouts,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

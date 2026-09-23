@@ -249,6 +249,13 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   замороженную §86.10) трогать не требуется — при доработках это свойство надо сохранять. В общий
   `test/setup.ts` добавлена заглушка `Element.prototype.scrollIntoView`: jsdom его не реализует, а
   cmdk зовёт — без неё падает любой тест, открывающий комбобокс справочника (§24 и §99 одинаково).
+- **Новое поле узла (§107.1) — решить судьбу в Receiver'е.** Кеш узла Receiver'а читает
+  PostgreSQL своим урезанным SELECT'ом (`internal/receiver/adapter/out/nodecache/reader.go`), и
+  забытая колонка молча становится нулём после каждого сохранения узла. Сторож
+  `TestNodeCache_ReceiverReadsAllFieldsFromPostgres` (`tests/integration/receiver_node_cache_fields_test.go`)
+  падает, пока новое поле `domain.Node` не получит ненулевое значение в фикстуре и не окажется
+  либо в SELECT/Scan Receiver'а, либо в `receiverCacheSkippedFields()` с причиной. Поле нужно
+  Sender'у — отдельно проверьте `internal/sender/adapter/out/nodepg/reader.go`: у него своя выборка.
 
 ---
 
