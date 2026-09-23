@@ -6642,3 +6642,13 @@ sessionStorage (§54) переживали выход и вход другого
 - **Закрытый порт на Windows даёт таймаут, а не быструю ошибку.** На Linux ICMP port unreachable
   приходит в подключённый UDP-сокет как `ECONNREFUSED`, на Windows-машине разработчика тест
   закрытого порта ждал весь таймаут. Тест проверяет только «ошибка, а не имя».
+
+### 4.92 §107 — потоковые подписки и медленные ответы: SSE на GET и таймауты вне breaker
+
+Раздел [107-node-streams-and-slow-timeouts.md](sections/107-node-streams-and-slow-timeouts.md).
+Ветка `feature/node-sse-breaker-timeout`. Статус ◐ — в работе. Повод — разбор боевой команды
+`mcp` 23.09.2026 (MCP-серверы за шиной: GET-канал SSE висел до таймаута и открывал брейкер).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §107 | ✅ Phase 107.0 | [sections/107-node-streams-and-slow-timeouts.md](sections/107-node-streams-and-slow-timeouts.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); §80.5 п. 2 и §81.6 помечены закрытыми §107 |
