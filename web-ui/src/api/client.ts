@@ -97,6 +97,8 @@ export type Node = {
   target_url: string;
   // §39: path-passthrough — приклеивать хвост входящего пути к target URL.
   path_passthrough?: boolean;
+  // §107.2: GET-подписка SSE получает 405 от Nexus (только request).
+  sse_decline?: boolean;
   status: "enabled" | "disabled" | "paused";
   auth_type: string;
   // §41: динамическая авторизация (исходящая token/basic_from_request).
@@ -140,6 +142,8 @@ export type Node = {
   // §81.3: политика защиты узла. 0/отсутствие = «как в конфигурации сервиса».
   circuit_breaker_threshold?: number;
   circuit_breaker_cooldown_sec?: number;
+  // §107.3: таймаут при установленном соединении не засчитывается защите.
+  breaker_ignore_timeouts?: boolean;
   // §29: произвольный комментарий-описание узла.
   comment?: string;
   // §99: группа узла для группировки списка. Пусто/отсутствие = «без группы».
