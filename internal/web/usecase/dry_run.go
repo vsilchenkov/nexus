@@ -38,6 +38,21 @@ type DryRunRequest struct {
 	UseMock  bool
 }
 
+// streamDeclinedStep — шаг отчёта для подписки, отклонённой настройкой узла
+// (§107.2): то же, что увидит клиент на бою, — 405 и заголовок Allow.
+func streamDeclinedStep(err error) DryRunStep {
+	var declined *domain.StreamDeclinedError
+	allow := ""
+	if errors.As(err, &declined) {
+		allow = declined.Allow
+	}
+	return DryRunStep{
+		Name: "stream.declined", Status: "failed",
+		Message: "405: event stream is not supported by this node (sse_decline)",
+		Detail:  map[string]any{"status": http.StatusMethodNotAllowed, "allow": allow},
+	}
+}
+
 // DryRunStep — один шаг отчёта (§7.5.1 ТЗ).
 type DryRunStep struct {
 	Name    string `json:"name"`
@@ -89,6 +104,16 @@ func (u *DryRunUsecase) Run(ctx context.Context, actor Actor, req DryRunRequest)
 	}
 
 	rep := &DryRunReport{ID: uuid.NewString(), OK: true}
+
+	// §107.2: подписка на поток событий у узла с отказом от SSE — боевой
+	// Receiver отвечает 405 сам, до метода и авторизации, и получателя не зовёт.
+	// Шаг появляется только у такой подписки: отчёт обычного запроса не меняется.
+	if err := req.Node.DeclineStream(req.Method, req.Headers); err != nil {
+		rep.Steps = append(rep.Steps, streamDeclinedStep(err))
+		rep.OK = false
+		u.writeAudit(ctx, actor, req.Node, rep, "failed:stream.declined")
+		return rep, nil //nolint:nilerr // dry-run: отказ узла — это результат, а не сбой операции
+	}
 
 	// 0. §40: метод. Боевой Receiver сперва проверяет, принимает ли узел такой
 	// входящий метод, и только потом вычисляет исходящий (ANY = зеркалить

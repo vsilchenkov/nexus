@@ -6654,6 +6654,7 @@ sessionStorage (§54) переживали выход и вход другого
 | ТЗ §107 | ✅ Phase 107.0 | [sections/107-node-streams-and-slow-timeouts.md](sections/107-node-streams-and-slow-timeouts.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); §80.5 п. 2 и §81.6 помечены закрытыми §107 |
 | §107.6 кеш Receiver читает все поля узла | ✅ Phase 107.1 | [nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go) — `incoming_auth_dynamic_source/field` в SELECT и Scan; сторож [receiver_node_cache_fields_test.go](../tests/integration/receiver_node_cache_fields_test.go) |
 | §107.2/§107.3 модель: флаги `sse_decline`, `breaker_ignore_timeouts` | ✅ Phase 107.2 | миграция [0043](../migrations/0043_node_sse_breaker_timeout.up.sql); [domain/node.go](../internal/domain/node.go) (`SSEDecline` сбрасывается `NormalizeForRootMethod` не у `request`); Web [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), [dto.go](../internal/web/adapter/in/http/dto.go), аудит `diffNodes`; колонки в кеше Receiver'а; тесты [node_sse_test.go](../internal/domain/node_sse_test.go), [node_sse_audit_test.go](../internal/web/usecase/node_sse_audit_test.go), integration [node_repo_stream_flags_test.go](../tests/integration/node_repo_stream_flags_test.go) |
+| §107.2 Receiver отвечает 405 на SSE-подписку | ✅ Phase 107.3 | [domain/node_stream.go](../internal/domain/node_stream.go) (`IsSSESubscribe`, `Node.DeclineStream`, `StreamDeclinedError{Allow}`); [route.go](../internal/receiver/usecase/route.go) `checkNodeAcceptsSync` — после `Disabled`, до `Paused`/метода/авторизации; [handler.go](../internal/receiver/adapter/in/http/handler.go) `replySyncRouteError` → `replyStreamDeclined` (405 + `Allow` + `MarkProxiedResponse`); dry-run шаг `stream.declined` ([dry_run.go](../internal/web/usecase/dry_run.go)); swagger Receiver — `405`; тесты [node_stream_test.go](../internal/domain/node_stream_test.go) (+ `FuzzIsSSESubscribe`), [route_sse_test.go](../internal/receiver/usecase/route_sse_test.go), [handler_sse_test.go](../internal/receiver/adapter/in/http/handler_sse_test.go), [dry_run_sse_test.go](../internal/web/usecase/dry_run_sse_test.go), integration [receiver_sse_decline_test.go](../tests/integration/receiver_sse_decline_test.go) |
 
 **Неочевидности §107:**
 
@@ -6673,3 +6674,20 @@ sessionStorage (§54) переживали выход и вход другого
 
   Имя начинается с `TestNodeCache`, чтобы попасть в группу `test-int-pg`: префикс `TestReceiver`
   без подчёркивания не ловит ни один фильтр `make test-integration`.
+- **405 на SSE-подписку — не отказ шины, поэтому `MarkProxiedResponse`.** Статус задала настройка
+  узла, как статус получателя или шаблона приёма §83. Без пометки `RejectLogMiddleware` записал бы
+  каждую подписку MCP-клиента в журнал §94 как `method_not_allowed`, и бейдж «Логи → Отказы» горел
+  бы постоянно. Ровно из-за этого пользователь отверг вариант «входящий метод = POST».
+  В `nexus_requests_total{status="405"}` ответ попадает сам: пометка на счётчик запросов не влияет.
+  `TestHandleSync_SSEDecline` падает, если пометку убрать.
+- **Порядок в `checkNodeAcceptsSync`: `Disabled` → SSE → `Paused` → метод → авторизация.**
+  - До паузы: иначе подписка к узлу на паузе ушла бы в очередь (§3.6), и Sender висел бы на
+    бесконечном потоке уже в async-пути.
+  - До авторизации: 405 не зовёт получателя. Цена — клиент без токена получает 405, а не 401.
+  - После `Disabled`: выключенный узел по-прежнему отвечает «узла нет».
+- **Пустой `Allow` пишется через `c.Writer.Header().Set`, а не `c.Header`.** В gin `c.Header(k, "")`
+  удаляет заголовок. У узла, принимающего только GET, другого метода нет, но заголовок в 405
+  обязателен (RFC 9110 §15.5.6).
+- **POST с `Accept: text/event-stream` — не подписка.** Так MCP-клиент вызывает инструменты. Сервер
+  вправе ответить коротким SSE, у такого ответа есть конец, и шина отдаёт его целиком. Флаг
+  трогает только GET.
