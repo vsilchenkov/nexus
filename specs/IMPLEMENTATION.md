@@ -6652,3 +6652,23 @@ sessionStorage (§54) переживали выход и вход другого
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §107 | ✅ Phase 107.0 | [sections/107-node-streams-and-slow-timeouts.md](sections/107-node-streams-and-slow-timeouts.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); §80.5 п. 2 и §81.6 помечены закрытыми §107 |
+| §107.6 кеш Receiver читает все поля узла | ✅ Phase 107.1 | [nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go) — `incoming_auth_dynamic_source/field` в SELECT и Scan; сторож [receiver_node_cache_fields_test.go](../tests/integration/receiver_node_cache_fields_test.go) |
+
+**Неочевидности §107:**
+
+- **Кеш узла Receiver'а читает PostgreSQL урезанным SELECT'ом, и промах Redis — штатный путь, а не
+  редкость.** После каждого сохранения узла Receiver по событию §57 удаляет ключ, так что первое же
+  чтение идёт в PG. Забытая колонка тихо становится zero value — ровно после правки узла. Так
+  дважды терялись поля: колонки breaker'а (§81.9) и входящей авторизации §41
+  (`incoming_auth_dynamic_source/field`, до §107.1). Узел с токеном в `?api_key=` после любого
+  сохранения начинал искать его в заголовке `Authorization` и отвечал 401. Истечение TTL не
+  лечит: write-back кладёт в Redis уже урезанный узел. Unit-тест на текст SELECT такого не ловит
+  (он проверяет одну колонку). Поэтому стоит integration-сторож `TestNodeCache_ReceiverReadsAllFieldsFromPostgres`:
+  - эталон — узел, прочитанный Web-репозиторием;
+  - поля `domain.Node` сравниваются рефлексией, и при промахе, и после write-back в Redis;
+  - исключения перечислены **с причинами** в `receiverCacheSkippedFields()`;
+  - нулевое значение в фикстуре роняет тест. Новое поле узла без решения «читать» или «исключить»
+    не проходит, иначе забытая колонка и фикстура дали бы одинаковый ноль.
+
+  Имя начинается с `TestNodeCache`, чтобы попасть в группу `test-int-pg`: префикс `TestReceiver`
+  без подчёркивания не ловит ни один фильтр `make test-integration`.
