@@ -3,6 +3,7 @@ package port
 
 import (
 	"context"
+	"errors"
 
 	"nexus/internal/domain"
 )
@@ -18,9 +19,19 @@ type LogWriter interface {
 
 // HTTPCaller — outbound HTTP-вызов внешнего узла.
 // Внутри: пул соединений (keep-alive), таймаут, метрики попыток.
+//
+// Истёкший таймаут вызова при УЖЕ установленном соединении реализация обязана
+// обернуть в ErrResponseTimeout, сохранив исходную ошибку в цепочке (§107.3).
 type HTTPCaller interface {
 	Do(ctx context.Context, req *HTTPRequest) (*HTTPResponse, error)
 }
+
+// ErrResponseTimeout — §107.3: таймаут вызова истёк ПОСЛЕ установки соединения:
+// получатель принял запрос, но не ответил или не дослал тело. Отличается от
+// таймаута на подключении (DNS, dial, TLS), который значит «получателя, может
+// быть, нет». Обёртка сохраняет цепочку: errors.Is(err, context.DeadlineExceeded)
+// остаётся истинным, поэтому причина upstream_timeout и 504 клиенту не меняются.
+var ErrResponseTimeout = errors.New("sender: response timeout after connection established")
 
 // HTTPRequest — параметры исходящего запроса.
 type HTTPRequest struct {

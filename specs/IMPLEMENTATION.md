@@ -6655,6 +6655,7 @@ sessionStorage (§54) переживали выход и вход другого
 | §107.6 кеш Receiver читает все поля узла | ✅ Phase 107.1 | [nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go) — `incoming_auth_dynamic_source/field` в SELECT и Scan; сторож [receiver_node_cache_fields_test.go](../tests/integration/receiver_node_cache_fields_test.go) |
 | §107.2/§107.3 модель: флаги `sse_decline`, `breaker_ignore_timeouts` | ✅ Phase 107.2 | миграция [0043](../migrations/0043_node_sse_breaker_timeout.up.sql); [domain/node.go](../internal/domain/node.go) (`SSEDecline` сбрасывается `NormalizeForRootMethod` не у `request`); Web [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), [dto.go](../internal/web/adapter/in/http/dto.go), аудит `diffNodes`; колонки в кеше Receiver'а; тесты [node_sse_test.go](../internal/domain/node_sse_test.go), [node_sse_audit_test.go](../internal/web/usecase/node_sse_audit_test.go), integration [node_repo_stream_flags_test.go](../tests/integration/node_repo_stream_flags_test.go) |
 | §107.2 Receiver отвечает 405 на SSE-подписку | ✅ Phase 107.3 | [domain/node_stream.go](../internal/domain/node_stream.go) (`IsSSESubscribe`, `Node.DeclineStream`, `StreamDeclinedError{Allow}`); [route.go](../internal/receiver/usecase/route.go) `checkNodeAcceptsSync` — после `Disabled`, до `Paused`/метода/авторизации; [handler.go](../internal/receiver/adapter/in/http/handler.go) `replySyncRouteError` → `replyStreamDeclined` (405 + `Allow` + `MarkProxiedResponse`); dry-run шаг `stream.declined` ([dry_run.go](../internal/web/usecase/dry_run.go)); swagger Receiver — `405`; тесты [node_stream_test.go](../internal/domain/node_stream_test.go) (+ `FuzzIsSSESubscribe`), [route_sse_test.go](../internal/receiver/usecase/route_sse_test.go), [handler_sse_test.go](../internal/receiver/adapter/in/http/handler_sse_test.go), [dry_run_sse_test.go](../internal/web/usecase/dry_run_sse_test.go), integration [receiver_sse_decline_test.go](../tests/integration/receiver_sse_decline_test.go) |
+| §107.3 таймаут ответа не засчитывается breaker'у | ✅ Phase 107.4 | sentinel `port.ErrResponseTimeout` ([port/log_writer.go](../internal/sender/usecase/port/log_writer.go)); [httpclient/client.go](../internal/sender/adapter/out/httpclient/client.go) `withConnTrace` (`httptrace` `GetConn`/`GotConn`) + `markResponseTimeout` (ошибка `Do` и ошибка чтения тела); [breaker_vote.go](../internal/sender/usecase/breaker_vote.go) `classifyUpstream(…, ignoreTimeouts)` → `voteAbstain`, `logAbstain`; `SendInput.BreakerIgnoreTimeouts`; proto `breaker_ignore_timeouts = 34` ([sender.proto](../proto/sender/v1/sender.proto)); маппинг: Receiver `buildSendRequest`, gRPC-адаптер Sender'а, async `buildSendInput`, [nodepg](../internal/sender/adapter/out/nodepg/reader.go); тесты [client_timeout_test.go](../internal/sender/adapter/out/httpclient/client_timeout_test.go), `TestClassifyUpstream` и `TestSend_ResponseTimeout_*` ([breaker_vote_test.go](../internal/sender/usecase/breaker_vote_test.go)), маппинги (`TestServer_Send_BreakerIgnoreTimeoutsReachesUsecase`, `TestRoute_BreakerIgnoreTimeoutsForwarded`, `TestBuildSendInput_BreakerPolicyFromNode`), integration [circuitbreaker_ignore_timeouts_test.go](../tests/integration/circuitbreaker_ignore_timeouts_test.go) |
 
 **Неочевидности §107:**
 
@@ -6691,3 +6692,23 @@ sessionStorage (§54) переживали выход и вход другого
 - **POST с `Accept: text/event-stream` — не подписка.** Так MCP-клиент вызывает инструменты. Сервер
   вправе ответить коротким SSE, у такого ответа есть конец, и шина отдаёт его целиком. Флаг
   трогает только GET.
+- **«Таймаут ответа» отличается от «таймаута подключения» только через `httptrace.GotConn`.** Опыт
+  на net/http: `context deadline exceeded` одинаково дают получатель, который принял запрос и молчит,
+  заглохшее тело SSE (ошибка уже в `io.ReadAll`) и «чёрная дыра» при подключении (SYN без ответа,
+  зависшее TLS-рукопожатие). По тексту или типу ошибки их не различить, а третий случай §80.5
+  требует считать отказом: получателя, может быть, нет. `GotConn` срабатывает после TCP и TLS (у
+  HTTP/2 transport вызывает его сам), `GetConn` сбрасывает признак на каждом переходе редиректа.
+  Метка — обёртка `%w: %w`: цепочка `DeadlineExceeded` цела, и `failureReason`, `504` и
+  `out.Timeout` не меняются. `TestClient_Do_ResponseTimeoutMarking` гоняет все четыре случая на
+  настоящем транспорте.
+- **Флаг даёт воздержание, а не успех.** `RecordSuccess` обнулял бы счёт настоящих отказов:
+  чередование «отказ соединения / таймаут ответа» никогда не открыло бы защиту.
+- **Статус узла флаг не трогает.** `out.ParentGone` зависит только от `ctx.Err()` родителя
+  ([send.go](../internal/sender/usecase/send.go)), поэтому исход таймаута по-прежнему пишется в бейдж
+  §52 и gauge §41. Медленный узел остаётся виден медленным. `TestSend_ResponseTimeout_IgnoredByNodeFlag`
+  держит `ParentGone=false`.
+- **Sync-путь Sender'а узел из БД не читает — флаг едет полем 34 запроса.** Потерянный маппинг в
+  `buildSendRequest` или gRPC-адаптере сделал бы настройку косметической именно на sync-узлах
+  (MCP), поэтому оба конца покрыты тестом. Старый Sender поле игнорирует (proto3), и флаг не
+  действует, пока Sender не обновлён. Новый Sender читает колонку в `nodepg` и на схеме без 0043
+  падал бы на каждом async-сообщении, отсюда порядок выката Receiver → Sender → Web (DEPLOYMENT §9.1.5).

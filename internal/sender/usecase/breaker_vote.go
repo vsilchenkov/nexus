@@ -59,7 +59,11 @@ func breakerKey(nodeID, nodePath string) string {
 // Порядок веток обязателен: живость родителя проверяется РАНЬШЕ признака
 // истёкшего дедлайна, иначе чужой дедлайн, появившись выше по стеку, снова
 // будет засчитан приёмнику.
-func classifyUpstream(ctx context.Context, resp *port.HTTPResponse, lastErr error) breakerVote {
+//
+// ignoreTimeouts — флаг узла §107.3: таймаут при установленном соединении
+// (port.ErrResponseTimeout) — воздержание, а не отказ. Успехом он не считается
+// намеренно: иначе обнулял бы счёт настоящих отказов соединения.
+func classifyUpstream(ctx context.Context, resp *port.HTTPResponse, lastErr error, ignoreTimeouts bool) breakerVote {
 	switch {
 	case lastErr == nil && resp != nil && resp.StatusCode < 500:
 		// ЛЮБОЙ ответ < 500 — узел жив и отвечает: 4xx это ошибка данных или
@@ -73,9 +77,13 @@ func classifyUpstream(ctx context.Context, resp *port.HTTPResponse, lastErr erro
 		return voteUnhealthy // 5xx
 	case ctx.Err() != nil:
 		return voteAbstain // родительский контекст умер: ответа уже не ждут
+	case ignoreTimeouts && errors.Is(lastErr, port.ErrResponseTimeout):
+		// §107.3: узел медленный по природе — получатель на связи, просто не
+		// уложился в срок. Таймаут соединения сюда не попадает (нет метки).
+		return voteAbstain
 	case errors.Is(lastErr, context.DeadlineExceeded):
 		// Наш per-node timeout_ms: узел не уложился в собственный срок — это счёт
-		// к нему. Настраиваемый вклад таймаута в счётчик — §80.5 п. 2, вне §81.
+		// к нему. Исключение по флагу узла — ветка выше (§107.3).
 		return voteUnhealthy
 	default:
 		return voteUnhealthy // DNS, connection refused, TLS — адрес мёртв
@@ -100,15 +108,11 @@ func (u *SendUsecase) voteBreaker(ctx context.Context, in SendInput, resp *port.
 		return
 	}
 
-	vote := classifyUpstream(ctx, resp, lastErr)
+	vote := classifyUpstream(ctx, resp, lastErr, in.BreakerIgnoreTimeouts)
 	if vote == voteAbstain {
 		// Ни RecordFailure, ни RecordSuccess: поток обрывов не должен ни открывать
 		// breaker живого приёмника, ни удерживать закрытым breaker мёртвого.
-		u.logger.Debug("send: parent context died, breaker vote abstained",
-			u.logger.Str("id", in.ID),
-			u.logger.Str("node", in.NodePath),
-			u.logger.Int("duration_ms", int(rec.Duration)),
-			u.logger.Err(ctx.Err()))
+		u.logAbstain(ctx, in, rec)
 		return
 	}
 
@@ -143,6 +147,25 @@ func (u *SendUsecase) voteBreaker(ctx context.Context, in SendInput, resp *port.
 		u.logger.Str("node", in.NodePath),
 		u.logger.Int("status", int(rec.Status)),
 		u.logger.Str("reason", rec.Reason))
+}
+
+// logAbstain — след воздержания на debug (§51.9): из двух причин живость
+// родителя различает их однозначно — при мёртвом родителе воздерживаются всегда,
+// при живом воздержаться мог только флаг узла §107.3.
+func (u *SendUsecase) logAbstain(ctx context.Context, in SendInput, rec *domain.LogRecord) {
+	if ctx.Err() == nil {
+		u.logger.Debug("send: response timeout not counted by node setting, breaker vote abstained",
+			u.logger.Str("id", in.ID),
+			u.logger.Str("node", in.NodePath),
+			u.logger.Int("duration_ms", int(rec.Duration)),
+			u.logger.Str("reason", rec.Reason))
+		return
+	}
+	u.logger.Debug("send: parent context died, breaker vote abstained",
+		u.logger.Str("id", in.ID),
+		u.logger.Str("node", in.NodePath),
+		u.logger.Int("duration_ms", int(rec.Duration)),
+		u.logger.Err(ctx.Err()))
 }
 
 // failureReason — причина для лога и ответа клиенту, когда вызов не состоялся.

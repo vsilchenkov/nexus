@@ -66,6 +66,8 @@ func (s *Server) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		// Старый Receiver поля не пришлёт: нули = глобальная политика.
 		BreakerThreshold:   req.GetCircuitBreakerThreshold(),
 		BreakerCooldownSec: req.GetCircuitBreakerCooldownSec(),
+		// §107.3: у старого Receiver'а поля нет — false, прежнее поведение.
+		BreakerIgnoreTimeouts: req.GetBreakerIgnoreTimeouts(),
 	})
 
 	// §55: тестовый вызов (dry-run из UI) не оставляет следов на узле — ни в

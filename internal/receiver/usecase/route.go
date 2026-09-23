@@ -286,6 +286,7 @@ func (u *RouteUsecase) buildSendRequest(
 		// Sync-путь узел из БД не читает — политику несёт запрос.
 		CircuitBreakerThreshold:   node.CircuitBreakerThreshold,
 		CircuitBreakerCooldownSec: node.CircuitBreakerCooldownSec,
+		BreakerIgnoreTimeouts:     node.BreakerIgnoreTimeouts,
 	}, nil
 }
 

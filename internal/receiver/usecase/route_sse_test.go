@@ -78,3 +78,22 @@ func TestRoute_SSEDecline(t *testing.T) {
 		})
 	}
 }
+
+// TestRoute_BreakerIgnoreTimeoutsForwarded (§107.3): sync-путь Sender'а узел из
+// БД не читает — флаг обязан уехать полем запроса. Потеряй его buildSendRequest,
+// настройка в карточке узла не действовала бы на sync-узлах вовсе.
+func TestRoute_BreakerIgnoreTimeoutsForwarded(t *testing.T) {
+	t.Parallel()
+	for _, flag := range []bool{true, false} {
+		node := methodTestNode()
+		node.BreakerIgnoreTimeouts = flag
+		sender := &capturingSender{}
+		u := NewRouteUsecase(stubNodeReader{node: node}, sender, 5, logging.NewNoop())
+
+		_, err := u.Route(context.Background(), RouteInput{NodePath: node.Path, Method: "POST"})
+
+		require.NoError(t, err)
+		require.NotNil(t, sender.last)
+		assert.Equal(t, flag, sender.last.GetBreakerIgnoreTimeouts())
+	}
+}
