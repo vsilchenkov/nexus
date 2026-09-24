@@ -6749,3 +6749,12 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
   (MCP), поэтому оба конца покрыты тестом. Старый Sender поле игнорирует (proto3), и флаг не
   действует, пока Sender не обновлён. Новый Sender читает колонку в `nodepg` и на схеме без 0043
   падал бы на каждом async-сообщении, отсюда порядок выката Receiver → Sender → Web (DEPLOYMENT §9.1.5).
+
+### 4.93 §108 — отмена изменения узла из журнала аудита
+
+Раздел [108-audit-revert.md](sections/108-audit-revert.md). Ветка `feature/audit-revert`. Статус ◐ —
+в работе. Миграций и конфига нет, выкат только Web.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §108 | ✅ Phase 108.0 | [sections/108-audit-revert.md](sections/108-audit-revert.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md), `node.revert` в §7.13 ([07-web-ui.md](sections/07-web-ui.md)) |
