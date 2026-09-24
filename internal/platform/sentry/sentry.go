@@ -129,6 +129,7 @@ func beforeSend(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 		}
 		event.Breadcrumbs[i].Data = maskAny(event.Breadcrumbs[i].Data)
 	}
+	maskEventTokens(event)
 	// §42: режем большие строки, чтобы тело запроса/ответа не уезжало в Sentry
 	// целиком (через message / exception value / extra / breadcrumb).
 	capEventStrings(event)
@@ -148,9 +149,10 @@ func beforeSendTransaction(event *sentry.Event, hint *sentry.EventHint) *sentry.
 		if sp == nil {
 			continue
 		}
-		sp.Tags = maskMap(sp.Tags)
-		sp.Data = truncateAny(maskAny(sp.Data))
-		sp.Description = truncateValue(sp.Description)
+		sp.Tags = maskTokensStr(maskMap(sp.Tags))
+		sp.Data = truncateAny(maskTokensAny(maskAny(sp.Data)))
+		sp.Name = sensitive.MaskBotTokens(sp.Name)
+		sp.Description = truncateValue(sensitive.MaskBotTokens(sp.Description))
 	}
 	return event
 }
@@ -159,9 +161,59 @@ func beforeBreadcrumb(b *sentry.Breadcrumb, _ *sentry.BreadcrumbHint) *sentry.Br
 	if b == nil {
 		return nil
 	}
-	b.Data = truncateAny(maskAny(b.Data))
-	b.Message = truncateValue(b.Message)
+	b.Data = truncateAny(maskTokensAny(maskAny(b.Data)))
+	b.Message = truncateValue(sensitive.MaskBotTokens(b.Message))
 	return b
+}
+
+// maskEventTokens маскирует токены ботов в значениях события независимо от
+// имени поля (§109.6). Маскирование по имени (maskMap/maskAny) их не видит:
+// токен приходит в пути URL passthrough-узла, а тег node, message, текст
+// ошибки или имя транзакции (у несматченного маршрута это сырой путь) о
+// секрете ничего не говорят. До §101.13 так утекли токены 11 ботов — это
+// защита в глубину на случай регресса.
+func maskEventTokens(event *sentry.Event) {
+	event.Message = sensitive.MaskBotTokens(event.Message)
+	event.Transaction = sensitive.MaskBotTokens(event.Transaction)
+	for i := range event.Exception {
+		event.Exception[i].Value = sensitive.MaskBotTokens(event.Exception[i].Value)
+	}
+	if event.Request != nil {
+		event.Request.URL = sensitive.MaskBotTokens(event.Request.URL)
+	}
+	maskTokensStr(event.Tags)
+	for name := range event.Contexts {
+		maskTokensAny(event.Contexts[name])
+	}
+	for _, b := range event.Breadcrumbs {
+		if b == nil {
+			continue
+		}
+		b.Message = sensitive.MaskBotTokens(b.Message)
+		maskTokensAny(b.Data)
+	}
+}
+
+// maskTokensStr маскирует токены ботов в значениях map'а на месте.
+func maskTokensStr(m map[string]string) map[string]string {
+	for k, v := range m {
+		m[k] = sensitive.MaskBotTokens(v)
+	}
+	return m
+}
+
+// maskTokensAny маскирует токены ботов в строковых значениях map'а на месте,
+// заходя во вложенные map'ы: контексты Sentry (trace, slog-поля) вложенные.
+func maskTokensAny(m map[string]any) map[string]any {
+	for k, v := range m {
+		switch val := v.(type) {
+		case string:
+			m[k] = sensitive.MaskBotTokens(val)
+		case map[string]any: // sentry.Context — алиас этого же типа
+			maskTokensAny(val)
+		}
+	}
+	return m
 }
 
 // capEventStrings режет до maxSentryValueBytes все строковые поля события, куда
