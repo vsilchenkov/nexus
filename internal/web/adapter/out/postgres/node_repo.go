@@ -33,6 +33,7 @@ var (
 	_ port.NodeRepo         = (*NodeRepoPg)(nil)
 	_ port.NodeTableUsage   = (*NodeRepoPg)(nil)
 	_ port.NodePathResolver = (*NodeRepoPg)(nil)
+	_ port.NodeBatchReader  = (*NodeRepoPg)(nil)
 	_ port.NodeKeyResolver  = (*NodeRepoPg)(nil)
 )
 
@@ -69,6 +70,32 @@ const nodeGroupFKConstraint = "nodes_group_id_fkey"
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
 	return r.scan(row)
+}
+
+// GetByIDs реализует port.NodeBatchReader (§108.7): узлы по набору id одним
+// запросом, без team-скоупа (см. godoc порта). Креды расшифровываются тем же
+// scan, что у Get, — узел в памяти всегда plaintext.
+func (r *NodeRepoPg) GetByIDs(ctx context.Context, ids []string) (map[string]*domain.Node, error) {
+	out := make(map[string]*domain.Node, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("get nodes by ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		n, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[n.ID] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get nodes by ids rows: %w", err)
+	}
+	return out, nil
 }
 
 func (r *NodeRepoPg) GetByPath(ctx context.Context, path string) (*domain.Node, error) {

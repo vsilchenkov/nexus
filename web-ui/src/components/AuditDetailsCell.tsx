@@ -1,15 +1,32 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Info, RotateCcw } from "lucide-react";
+
+import { cn } from "../lib/cn";
+import { formatAuditValue as formatValue } from "./audit/revert";
 
 // AuditDetailsCell — рендер ячейки `details` в Audit log (§7.13).
-// Для action="node.update" details имеет форму {field: {before, after}}
-// (см. internal/web/usecase/node.go diffNodes) — показываем компактную
-// двухколоночную таблицу. Для остальных action — JSON в раскрывающемся
-// блоке (как раньше).
+// Для action="node.update" и "node.revert" (§108) details имеет форму
+// {field: {before, after}} (см. internal/web/usecase/node.go diffNodes) —
+// показываем компактную двухколоночную таблицу. Для остальных action — JSON в
+// раскрывающемся блоке (как раньше).
+//
+// overwritten — текущие значения полей, перебитых после записи (разметка
+// §108.7, только у admin): их «Стало» зачёркнуто, текущее — в подсказке.
+// muted — строка неактуальна, diff приглушается.
 type Props = {
   action: string;
   details: Record<string, unknown> | null | undefined;
+  overwritten?: Record<string, unknown>;
+  muted?: boolean;
 };
+
+// DIFF_ACTIONS — действия, чьи details — diff полей узла.
+const DIFF_ACTIONS = new Set(["node.update", "node.revert"]);
+
+// REVERT_META_KEYS — служебные ключи строки node.revert (§108.6): полями узла
+// не являются, вместо них показывается строка «отмена записи от …».
+const REVERT_META_KEYS = new Set(["reverted_from", "reverted_from_at"]);
 
 type Diff = { before: unknown; after: unknown };
 
@@ -22,20 +39,15 @@ function isDiff(v: unknown): v is Diff {
   );
 }
 
-function formatValue(v: unknown): string {
-  if (v === null || v === undefined) return "—";
-  if (typeof v === "string") return v === "" ? "(empty)" : v;
-  if (typeof v === "boolean" || typeof v === "number") return String(v);
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
-}
-
-function DiffTable({ details }: { details: Record<string, unknown> }) {
+function DiffTable({
+  details,
+  overwritten,
+}: {
+  details: Record<string, unknown>;
+  overwritten?: Record<string, unknown>;
+}) {
   const { t } = useTranslation();
-  const fields = Object.entries(details);
+  const fields = Object.entries(details).filter(([k]) => !REVERT_META_KEYS.has(k));
   if (fields.length === 0) {
     return (
       <span className="text-fg-muted text-xs">
@@ -68,7 +80,17 @@ function DiffTable({ details }: { details: Record<string, unknown> }) {
                   {formatValue(v.before)}
                 </td>
                 <td className="py-0.5 text-ok break-all">
-                  {formatValue(v.after)}
+                  {overwritten && k in overwritten ? (
+                    <span
+                      className="text-fg-muted"
+                      title={t("audit.diff.now", { value: formatValue(overwritten[k]) })}
+                    >
+                      <s>{formatValue(v.after)}</s>
+                      <Info className="ml-1 inline h-3 w-3 text-warn" />
+                    </span>
+                  ) : (
+                    formatValue(v.after)
+                  )}
                 </td>
               </tr>
             );
@@ -90,14 +112,31 @@ function DiffTable({ details }: { details: Record<string, unknown> }) {
   );
 }
 
-export function AuditDetailsCell({ action, details }: Props) {
+export function AuditDetailsCell({ action, details, overwritten, muted }: Props) {
   if (!details || Object.keys(details).length === 0) {
     return <span className="text-fg-muted text-xs">—</span>;
   }
-  if (action === "node.update") {
-    return <DiffTable details={details} />;
+  if (DIFF_ACTIONS.has(action)) {
+    return (
+      <div className={cn(muted && "opacity-60")}>
+        {action === "node.revert" && <RevertSource at={details.reverted_from_at} />}
+        <DiffTable details={details} overwritten={overwritten} />
+      </div>
+    );
   }
   return <LazyJson details={details} />;
+}
+
+// RevertSource — «отмена записи от …» над diff строки node.revert (§108.6).
+function RevertSource({ at }: { at: unknown }) {
+  const { t } = useTranslation();
+  const when = typeof at === "string" ? new Date(at).toLocaleString() : "—";
+  return (
+    <div className="mb-1 flex items-center gap-1 text-[11px] text-fg-muted">
+      <RotateCcw className="h-3 w-3" />
+      {t("audit.revert_source", { at: when })}
+    </div>
+  );
 }
 
 // LazyJson — сериализует и рендерит JSON-тело деталей ТОЛЬКО при раскрытии

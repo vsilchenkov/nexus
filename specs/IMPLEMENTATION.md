@@ -6749,3 +6749,43 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
   (MCP), поэтому оба конца покрыты тестом. Старый Sender поле игнорирует (proto3), и флаг не
   действует, пока Sender не обновлён. Новый Sender читает колонку в `nodepg` и на схеме без 0043
   падал бы на каждом async-сообщении, отсюда порядок выката Receiver → Sender → Web (DEPLOYMENT §9.1.5).
+
+### 4.93 §108 — отмена изменения узла из журнала аудита
+
+Раздел [108-audit-revert.md](sections/108-audit-revert.md). Ветка `feature/audit-revert`. Статус ✅ —
+сдано (гейты, ревизия, стенд), в `dev` не слито. Миграций и конфига нет, выкат только Web.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §108 | ✅ Phase 108.0 | [sections/108-audit-revert.md](sections/108-audit-revert.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md), `node.revert` в §7.13 ([07-web-ui.md](sections/07-web-ui.md)) |
+| §108.2 реестр полей узла: diff аудита и отмена из одного списка | ✅ Phase 108.1 | [node_fields.go](../internal/web/usecase/node_fields.go) — `nodeFieldRegistry` (24 поля: `get` в типе записи журнала, `set` через JSON в типизированное поле, `applies` для `rmq_*`/`pull_*`), `nodeSecretRegistry` (креды + связанные поля), `diffSecretsAndAck`; `diffNodes` ([node.go](../internal/web/usecase/node.go)) строится по реестру; тесты [node_fields_test.go](../internal/web/usecase/node_fields_test.go) — golden формата (написан и зелёный до рефакторинга), полнота, round-trip через float64, отказы `set`, `applies` |
+| §108.3–§108.6 usecase отмены: классификация полей, применение, разметка выдачи | ✅ Phase 108.2 | `ActionNodeRevert`, ошибки `ErrAudit*` ([domain/audit.go](../internal/domain/audit.go), [errors.go](../internal/domain/errors.go)); `AuditFilter.ID` ([port/audit_repo.go](../internal/web/usecase/port/audit_repo.go), `auditWhere`); порт `NodeBatchReader` + `NodeRepoPg.GetByIDs`; [node_save.go](../internal/web/usecase/node_save.go) — `Update`/`SetStatus` разрезаны на `prepareChanged`/`commitChanged`/`commitStatus`/`writeNodeChange` (поведение прежнее); [node_revert.go](../internal/web/usecase/node_revert.go) — `Revert`/`PreviewRevert`, `cloneNode`, `RevertNotHeldError`; [audit_revert_classify.go](../internal/web/usecase/audit_revert_classify.go) — статусы полей, состояние строки; [audit_revert.go](../internal/web/usecase/audit_revert.go) — `AuditRevertUsecase` (`Preview`/`Apply`/`Annotate`); тесты [audit_revert_classify_test.go](../internal/web/usecase/audit_revert_classify_test.go), [node_revert_test.go](../internal/web/usecase/node_revert_test.go), [audit_revert_test.go](../internal/web/usecase/audit_revert_test.go) |
+| §108.7 API: предпросмотр, применение, разметка `GET /api/audit` | ✅ Phase 108.3 | [audit_revert_handler.go](../internal/web/adapter/in/http/audit_revert_handler.go) — `GET/POST /api/audit/revert/:id` (`authedAdmin` + `RequireSessionOnly`, [routes.go](../internal/web/adapter/in/http/routes.go)), карта ошибок `revertErrorReply` (общая для ответа POST и `dry_run` предпросмотра); [audit_handler.go](../internal/web/adapter/in/http/audit_handler.go) — `WithRevert` + поле `revert` у строк выдачи только для admin-сессии (`viaAPIToken` в [api_token_middleware.go](../internal/web/adapter/in/http/api_token_middleware.go)); провязка в [app.go](../internal/web/app.go); ключи `audit.revert.*` в [i18n.go](../internal/platform/i18n/i18n.go); тесты [audit_revert_handler_test.go](../internal/web/adapter/in/http/audit_revert_handler_test.go), роли в [routes_role_test.go](../internal/web/adapter/in/http/routes_role_test.go), integration [audit_revert_test.go](../tests/integration/audit_revert_test.go) (группа `test-int-misc`) |
+| §108.8 интерфейс: колонка отмены, подсветка, диалог | ✅ Phase 108.4 | [AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx) — колонка ↺ у admin (`useRoleAtLeast("admin")`), фон `bg-warn/5` + чип «неактуально»/«узел удалён», `node.revert` в фильтре и тон `warning`; [AuditDetailsCell.tsx](../web-ui/src/components/AuditDetailsCell.tsx) — diff и для `node.revert`, строка «отмена записи от …» вместо `reverted_from*`, зачёркнутое «Стало» с подсказкой «сейчас: X», приглушённый diff неактуальной строки; [components/audit/RevertAuditDialog.tsx](../web-ui/src/components/audit/RevertAuditDialog.tsx) + [revert.ts](../web-ui/src/components/audit/revert.ts) (типы, выбор по умолчанию, формат значения); ключи `audit.revert.*`, `audit.state.*`, `audit.diff.now`, `audit.revert_source` в `en.json`/`ru.json`; тесты [AuditLog.revert.test.tsx](../web-ui/src/pages/AuditLog.revert.test.tsx), [RevertAuditDialog.test.tsx](../web-ui/src/components/audit/RevertAuditDialog.test.tsx), [AuditDetailsCell.test.tsx](../web-ui/src/components/AuditDetailsCell.test.tsx); бандл `internal/web/static` пересобран |
+| Сдача: ревизия diff'а, гейты, стенд | ✅ Phase 108.5 | Ревизия нашла: после 409 кнопка применения оставалась активной, пока предпросмотр перечитывается, — повторное нажатие слало прежний `updated_at` (исправлено, регрессионный тест красный на старом коде). Гейты: `make test`, `golangci-lint`, полный `-race` в контейнере `golang:1.26.6` (60 пакетов), `make test-integration` (10 групп, 184 теста), фронт lint + 953 теста (98 файлов). Стенд (Web нативно на стеке `services`, браузер): подсветка и зачёркивание, диалог по эскизу, 409 при параллельной правке с перечитанным предпросмотром, POST с `updated_at` байт в байт из предпросмотра, повтор изменения через `node.revert`, лёгкий путь статуса, «узел удалён» без кнопки, оператор — 6 колонок, без `revert` в ответе, предпросмотр 403 |
+
+**Неочевидности §108 (пополняется по блокам):**
+
+- `expected_updated_at` разбирается `time.RFC3339Nano` из строки, пришедшей в предпросмотре;
+  сериализация `time.Time` в JSON отдаёт микросекунды PostgreSQL без потерь, поэтому сравнение
+  `Equal` сходится. Integration-тест гоняет значение через `Format`/`Parse`, как это делает HTTP.
+- Пробный прогон предпросмотра **не видит** занятость пути: уникальность `(team_id, path)` проверяет
+  только запись (23505 → `ErrNodeAlreadyExists` → 409). Строка отмены откатывается вместе с узлом
+  (UoW) — проверено integration-тестом.
+- Внутренняя ошибка пробного прогона (сбой ClickHouse при проверке таблицы) предпросмотр не роняет:
+  `dry_run.code = error.internal`, причина — в лог Warn, текст наружу не уходит.
+- Текст ошибки `ShouldBindJSON` в ответ не вклеивается (`invalid request body`): `encoding/json`
+  цитирует куски тела.
+- Выбор полей в диалоге хранится вместе с версией предпросмотра (`dataUpdatedAt`), а не
+  выставляется эффектом: после 409 предпросмотр перечитывается, и выбор сам возвращается к
+  умолчанию нового состояния узла. `refetchOnWindowFocus: false` — иначе возврат фокуса в окно
+  молча сбрасывал бы отмеченные поля.
+- Кнопка отмены в строке — `<button>` с `title`, а не Radix-`Tooltip`: так же сделаны кнопки строк
+  справочников, и страница не требует `TooltipProvider` в тестах.
+- В тестах страницы журнала строки берутся через `table.tBodies[0].rows`: селектор `tbody tr`
+  цепляет и строки вложенных таблиц diff в ячейке «Детали».
+- Строка `node.update` с пустым diff (правка только комментария/группы/логирования — полей вне
+  `diffNodes`) у живого узла разметки не получает (`none`), а у удалённого — чип «узел удалён»:
+  `gone` проверяется раньше сравнимости полей, и это верно — узла действительно нет.
+- При окне уже ~1100px правые колонки таблицы журнала («Стало» и кнопка отмены) уходят под
+  горизонтальный скролл. Это было и до §108: колонка «Стало» не помещалась и без новой колонки.

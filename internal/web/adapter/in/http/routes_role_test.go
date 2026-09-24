@@ -69,6 +69,7 @@ func newRoleEngine(role domain.UserRole, viaToken bool) *gin.Engine {
 		CHSchema:      &CHSchemaHandler{},
 		Kafka:         &KafkaHandler{},
 		Team:          &TeamHandler{},
+		AuditRevert:   &AuditRevertHandler{},
 	}
 	RegisterAPI(r, h, mw)
 	return r
@@ -229,6 +230,49 @@ func TestCatalogUsageRoutes_APITokenForbidden(t *testing.T) {
 	for _, path := range catalogUsageRoutes {
 		t.Run(path, func(t *testing.T) {
 			assert.Equal(t, http.StatusForbidden, roleStatus(r, http.MethodGet, path))
+		})
+	}
+}
+
+// auditRevertRoutes — отмена изменения узла из журнала аудита (§108.7).
+var auditRevertRoutes = []struct{ method, path string }{
+	{http.MethodGet, "/api/audit/revert/e1"},
+	{http.MethodPost, "/api/audit/revert/e1"},
+}
+
+// TestAuditRevertRoutes_AdminOnly: журнал читают operator+, а отменять из него
+// может только admin (§108.1). ≠404 — маршрут зарегистрирован (см. комментарий
+// в начале файла).
+func TestAuditRevertRoutes_AdminOnly(t *testing.T) {
+	t.Parallel()
+	for _, role := range []domain.UserRole{
+		domain.UserRoleViewer, domain.UserRoleOperator, domain.UserRoleManager,
+	} {
+		r := roleEngine(role)
+		for _, rt := range auditRevertRoutes {
+			t.Run(string(role)+" "+rt.method, func(t *testing.T) {
+				assert.Equal(t, http.StatusForbidden, roleStatus(r, rt.method, rt.path))
+			})
+		}
+	}
+	r := roleEngine(domain.UserRoleAdmin)
+	for _, rt := range auditRevertRoutes {
+		t.Run("admin "+rt.method, func(t *testing.T) {
+			code := roleStatus(r, rt.method, rt.path)
+			assert.NotEqual(t, http.StatusForbidden, code)
+			assert.NotEqual(t, http.StatusNotFound, code, "маршрут %s %s не зарегистрирован", rt.method, rt.path)
+		})
+	}
+}
+
+// TestAuditRevertRoutes_APITokenForbidden: предпросмотр раскрывает узлы любой
+// команды, а API-токен однокомандный — даже токен администратора отклоняется.
+func TestAuditRevertRoutes_APITokenForbidden(t *testing.T) {
+	t.Parallel()
+	r := newRoleEngine(domain.UserRoleAdmin, true)
+	for _, rt := range auditRevertRoutes {
+		t.Run(rt.method, func(t *testing.T) {
+			assert.Equal(t, http.StatusForbidden, roleStatus(r, rt.method, rt.path))
 		})
 	}
 }

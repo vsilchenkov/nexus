@@ -329,4 +329,20 @@ var (
 	// не разбирается как стандартный cron (§106.4). Пустая строка допустима:
 	// она выключает дозаполнение.
 	ErrClientHostBackfillCronInvalid = errors.New("domain: invalid client_host backfill cron expression")
+
+	// Отмена изменения узла из журнала аудита (§108)
+	ErrAuditEntryNotFound = errors.New("domain: audit entry not found")
+	// ErrAuditNotRevertible — у записи нет отменяемого diff: действие не
+	// node.update/node.revert или цель не узел (§108.1).
+	ErrAuditNotRevertible = errors.New("domain: audit entry cannot be reverted")
+	// ErrAuditRevertFieldInvalid — выбрано поле, которого нет в записи или
+	// которое вернуть нельзя: секрет, сводка шаблона, неприменимое к узлу,
+	// уже равное «Было» (§108.3).
+	ErrAuditRevertFieldInvalid = errors.New("domain: audit entry field cannot be reverted")
+	// ErrAuditRevertConflict — узел изменился после предпросмотра: updated_at
+	// не совпал с присланным (§108.5).
+	ErrAuditRevertConflict = errors.New("domain: node changed since the revert preview")
+	// ErrAuditRevertNotHeld — нормализация узла сбросила возвращаемое значение
+	// (§108.4); список полей несёт usecase.RevertNotHeldError.
+	ErrAuditRevertNotHeld = errors.New("domain: reverted value would not be kept")
 )

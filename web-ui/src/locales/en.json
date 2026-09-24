@@ -1096,7 +1096,8 @@
     "diff": {
       "before": "Before",
       "after": "After",
-      "no_changes": "No field changes recorded"
+      "no_changes": "No field changes recorded",
+      "now": "now: {{value}}"
     },
     "columns": {
       "when": "When",
@@ -1105,6 +1106,41 @@
       "target": "Target",
       "ip": "IP",
       "details": "Details"
+    },
+    "revert_source": "revert of the entry from {{at}}",
+    "state": {
+      "stale": "outdated",
+      "gone": "node deleted"
+    },
+    "revert": {
+      "button": "Revert change",
+      "title": "Revert change",
+      "node": "Node",
+      "moved": "The node was moved to another team after this entry",
+      "gone": "The node has been deleted — there is nothing to revert",
+      "nothing": "Nothing to revert in this entry",
+      "col_field": "Field",
+      "col_now": "Now",
+      "col_becomes": "Will become",
+      "overwritten": "changed later",
+      "credentials": "credentials won't be restored",
+      "status": {
+        "already": "already this value",
+        "inapplicable": "not applicable to this node type",
+        "unrecoverable": "cannot be restored from the log",
+        "secret": "secret — its value is not stored in the log"
+      },
+      "dry_run": "Check of the default selection: {{message}}",
+      "dry_not_held": "node settings would reset {{fields}}",
+      "note": "The revert is recorded in the log as a new node.revert entry",
+      "submit": "Revert changes ({{count}})",
+      "conflict_refreshed": "The node has changed — the preview has been refreshed, review the changes again",
+      "entry_not_found": "Audit entry not found",
+      "not_revertible": "This audit entry cannot be reverted",
+      "field_invalid": "Selected field cannot be reverted",
+      "conflict": "The node has changed since the preview",
+      "not_held": "Some values would not be kept by the node settings",
+      "node_gone": "The node has been deleted"
     }
   },
   "replay_period": {
