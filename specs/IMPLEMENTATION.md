@@ -6789,3 +6789,25 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
   `gone` проверяется раньше сравнимости полей, и это верно — узла действительно нет.
 - При окне уже ~1100px правые колонки таблицы журнала («Стало» и кнопка отмены) уходят под
   горизонтальный скролл. Это было и до §108: колонка «Стало» не помещалась и без новой колонки.
+
+### 4.94 §109 — устойчивость sync к рестарту Sender и шум Sentry
+
+Раздел [109-sender-restart-resilience.md](sections/109-sender-restart-resilience.md). Ветка
+`feature/sender-restart-resilience`. Статус ◐ — в работе. Миграций нет; новый ключ
+`sender_grpc.ready_wait_ms` с рабочим дефолтом.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §109 + инструмент разбора Sentry | ✅ Phase 109.0 | [sections/109-sender-restart-resilience.md](sections/109-sender-restart-resilience.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); скилл [sentry-fix](../.claude/skills/sentry-fix/SKILL.md) + [sentry.ps1](../.claude/skills/sentry-fix/scripts/sentry.ps1) (список за 7 сут через орг-endpoint, разбор issue по видам ошибок, маска токенов ботов в выводе), ссылка из [nexus-sentry](../.claude/skills/nexus-sentry/SKILL.md) |
+| §109.5 невалидный UTF-8 в пути → 404 | ⛔ | — |
+| §109.4 уход клиента: 499 Receiver, Debug Web | ⛔ | — |
+| §109.2 быстрый старт Sender, фоновый backfill | ⛔ | — |
+| §109.3 переподключение, ожидание готовности, 503 | ⛔ | — |
+| §109.6 scrubbing `bot<id>:<secret>` в Sentry | ⛔ | — |
+| §109.7 образ ClickHouse для integration, кандидат 26.3 | ⛔ | — |
+
+**Неочевидности §109 (пополняется по блокам):**
+
+- Sentry группирует issue по стеку, а не по тексту: в NEXUS-S лежат и `Unavailable` выката, и
+  `Canceled` ушедшего клиента. Виды ошибок видны только по событиям (`sentry.ps1 -Issue`), не по
+  заголовку issue.

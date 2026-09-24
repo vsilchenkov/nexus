@@ -61,6 +61,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 curl -s -H "Authorization: Bearer $TOKEN" "$BASE/issues/<issue_id>/events/latest/" | jq '{culprit, tags, entries}'
 ```
 
+> **Готовый скрипт** — скилл [sentry-fix](../sentry-fix/SKILL.md):
+> `powershell -NoProfile -File .claude/skills/sentry-fix/scripts/sentry.ps1 -List -StatsPeriod 7d`,
+> `… -Issue NEXUS-T` (распределение тегов, **виды ошибок по последним событиям**, стек, breadcrumbs),
+> `… -Issue <id> -Resolve resolvedInNextRelease`. Токен сам берёт из памяти. Проектный endpoint выше
+> принимает `statsPeriod` только `''`/`24h`/`14d` — за 7 суток ходи через организационный
+> (`/organizations/vzv/issues/?project=52&statsPeriod=7d`), как делает скрипт.
+
 Из события бери: `culprit`/stacktrace → файл и `op` (логируется через `ErrorWithOp`), теги
 `request_id`/`node`/`root_method`/`service` → какой узел/сервис/запрос, breadcrumbs → последовательность.
 `X-Request-Id` коррелирует Sentry-событие с логами.
