@@ -42,7 +42,7 @@ type orphanItemResp struct {
 func (h *OrphanHandler) List(c *gin.Context) {
 	items, err := h.scanner.Scan(c.Request.Context())
 	if err != nil {
-		h.logger.ErrorWithOp("orphan scan failed", err, "settings.orphan_scan")
+		logServerError(c, h.logger, "orphan scan failed", err, "settings.orphan_scan")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -79,7 +79,7 @@ func (h *OrphanHandler) Drop(c *gin.Context) {
 		return
 	}
 	if err := h.scanner.Drop(c.Request.Context(), actorFromCtx(c), table); err != nil {
-		h.logger.ErrorWithOp("orphan drop failed", err, "settings.orphan_drop")
+		logServerError(c, h.logger, "orphan drop failed", err, "settings.orphan_drop")
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

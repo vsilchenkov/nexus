@@ -32,14 +32,17 @@ package grpcsender
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	// Пустой импорт обязателен для healthCheckConfig в balancerServiceConfig:
 	// клиентская health-проверка регистрируется через init() этого пакета, и
@@ -147,7 +150,23 @@ func (c *Client) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 		return nil, fmt.Errorf("grpcsender: no clients")
 	}
 	idx := c.next.Add(1) % uint64(len(c.clients))
-	return c.clients[idx].Send(ctx, req)
+	resp, err := c.clients[idx].Send(ctx, req)
+	if err != nil {
+		return nil, translateError(ctx, err)
+	}
+	return resp, nil
+}
+
+// translateError переводит транспортные коды gRPC в ошибки, которые слои выше
+// понимают без импорта gRPC. Статус-ошибка gRPC не оборачивает причину, и
+// errors.Is(err, context.Canceled) для вызова, оборванного отменой контекста
+// вызывающего, ложен — поэтому уход клиента (§109.4) выглядел сбоем шины.
+// Исходная ошибка остаётся в цепочке: код и текст видны в логах как прежде.
+func translateError(ctx context.Context, err error) error {
+	if status.Code(err) == codes.Canceled && errors.Is(ctx.Err(), context.Canceled) {
+		return fmt.Errorf("%w: %w", context.Canceled, err)
+	}
+	return err
 }
 
 func (c *Client) Close() error {

@@ -1,8 +1,11 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -330,4 +333,62 @@ func TestReadBody_LimitAndErrorMapping(t *testing.T) {
 	c3.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 	replyReadBodyError(c3, errBodyTooLarge)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}
+
+// TestReplyClientGone — §109.4 (Sentry NEXUS-S): запрос, который оборвал сам
+// клиент, получает 499, строку лога Debug и не попадает в журнал отказов §94;
+// раньше — 502 «internal routing error» и ERROR в Sentry. Отмена при ЖИВОМ
+// контексте запроса и другие ошибки при ушедшем клиенте остаются прежними.
+func TestReplyClientGone(t *testing.T) {
+	t.Parallel()
+
+	canceledSend := fmt.Errorf("sender.Send: %w", context.Canceled)
+	cases := []struct {
+		name       string
+		clientGone bool
+		err        error
+		async      bool
+		wantStatus int
+		wantError  bool // строка уровня ERROR (уходит в Sentry)
+		wantReject bool
+	}{
+		{name: "sync: клиент ушёл", clientGone: true, err: canceledSend, wantStatus: statusClientClosedRequest},
+		{name: "async: клиент ушёл", clientGone: true, err: canceledSend, async: true, wantStatus: statusClientClosedRequest},
+		{name: "клиент ушёл, но ошибка другая → прежний 502", clientGone: true, err: assert.AnError, wantStatus: http.StatusBadGateway, wantError: true},
+		{name: "отмена при живом запросе → прежний 502", err: canceledSend, wantStatus: http.StatusBadGateway, wantError: true},
+		{name: "клиент ушёл во время поиска узла (PG/Redis) → 499", clientGone: true, err: fmt.Errorf("lookup: %w", context.Canceled), wantStatus: statusClientClosedRequest},
+		{name: "404 при живом запросе → в журнал", err: domain.ErrNodeNotFound, wantStatus: http.StatusNotFound, wantReject: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var logBuf bytes.Buffer
+			logger := logging.NewLogger(slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			h := &Handler{logger: logger}
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/vika/telephony", nil)
+			sink, m, w := runReject(t, req, func(c *gin.Context) {
+				ctx, cancel := context.WithCancel(c.Request.Context())
+				defer cancel()
+				if tc.clientGone {
+					cancel()
+				}
+				c.Request = c.Request.WithContext(ctx)
+				if tc.async {
+					h.replyAsyncError(c, tc.err, "telephony", "test")
+				} else {
+					h.replyDomainError(c, tc.err, "telephony", "test")
+				}
+			})
+
+			assert.Equal(t, tc.wantStatus, w.Code)
+			assert.Equal(t, tc.wantError, strings.Contains(logBuf.String(), `"level":"ERROR"`), logBuf.String())
+			if tc.wantReject {
+				assert.Len(t, sink.samples, 1)
+				return
+			}
+			assert.Empty(t, sink.samples, "в журнал отказов не пишется")
+			assert.Empty(t, m.calls)
+		})
+	}
 }

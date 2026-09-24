@@ -59,7 +59,7 @@ func NewAppSettingsHandler(uc *usecase.AppSettingsUsecase, tester *usecase.Setti
 func (h *AppSettingsHandler) Get(c *gin.Context) {
 	s, err := h.uc.Get(c.Request.Context())
 	if err != nil {
-		h.logger.ErrorWithOp("app_settings get failed", err, "settings.get")
+		logServerError(c, h.logger, "app_settings get failed", err, "settings.get")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
@@ -78,7 +78,7 @@ func (h *AppSettingsHandler) Get(c *gin.Context) {
 func (h *AppSettingsHandler) GetPublic(c *gin.Context) {
 	s, err := h.uc.Get(c.Request.Context())
 	if err != nil {
-		h.logger.ErrorWithOp("app_settings public get failed", err, "settings.get_public")
+		logServerError(c, h.logger, "app_settings public get failed", err, "settings.get_public")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
@@ -194,7 +194,7 @@ func (h *AppSettingsHandler) Update(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
 			return
 		}
-		h.logger.ErrorWithOp("app_settings update failed", err, "settings.update")
+		logServerError(c, h.logger, "app_settings update failed", err, "settings.update")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
@@ -225,7 +225,7 @@ func (h *AppSettingsHandler) TestClickHouse(c *gin.Context) {
 	}
 	res, err := h.tester.TestClickHouse(c.Request.Context(), &patch)
 	if err != nil {
-		h.logger.ErrorWithOp("clickhouse test failed", err, "settings.test_clickhouse")
+		logServerError(c, h.logger, "clickhouse test failed", err, "settings.test_clickhouse")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
@@ -256,7 +256,7 @@ func (h *AppSettingsHandler) TestSentry(c *gin.Context) {
 	}
 	res, err := h.tester.TestSentry(c.Request.Context(), &patch)
 	if err != nil {
-		h.logger.ErrorWithOp("sentry test failed", err, "settings.test_sentry")
+		logServerError(c, h.logger, "sentry test failed", err, "settings.test_sentry")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
@@ -287,7 +287,7 @@ func (h *AppSettingsHandler) TestTelegram(c *gin.Context) {
 	}
 	res, err := h.tester.TestTelegram(c.Request.Context(), &patch)
 	if err != nil {
-		h.logger.ErrorWithOp("telegram test failed", err, "settings.test_telegram")
+		logServerError(c, h.logger, "telegram test failed", err, "settings.test_telegram")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
@@ -332,7 +332,7 @@ func (h *AppSettingsHandler) TestMail(c *gin.Context) {
 	}
 	res, err := h.tester.TestMail(c.Request.Context(), &req.MailSettings, req.To)
 	if err != nil {
-		h.logger.ErrorWithOp("mail test failed", err, "settings.test_mail")
+		logServerError(c, h.logger, "mail test failed", err, "settings.test_mail")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}

@@ -112,7 +112,7 @@ func (h *CatalogUsageHandler) nodes(c *gin.Context, kind usecase.CatalogKind, no
 		localizedError(c, http.StatusNotFound, notFoundKey)
 		return
 	case err != nil:
-		h.logger.ErrorWithOp("web handler error", err, "catalog_usage."+string(kind),
+		logServerError(c, h.logger, "web handler error", err, "catalog_usage."+string(kind),
 			h.logger.Str("path", c.Request.URL.Path))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return

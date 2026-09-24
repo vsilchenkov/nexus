@@ -177,7 +177,7 @@ func (h *AuditHandler) listEntries(c *gin.Context, f port.AuditFilter, op string
 		entries, err = h.uc.List(ctx, f)
 	}
 	if err != nil {
-		h.logger.ErrorWithOp("audit list failed", err, op)
+		logServerError(c, h.logger, "audit list failed", err, op)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return nil, false
 	}
@@ -278,7 +278,7 @@ func (h *AuditHandler) Count(c *gin.Context) {
 		n, err = h.uc.Count(ctx, f)
 	}
 	if err != nil {
-		h.logger.ErrorWithOp("audit count failed", err, "audit.count")
+		logServerError(c, h.logger, "audit count failed", err, "audit.count")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -327,7 +327,7 @@ func (h *AuditHandler) ExportCSV(c *gin.Context) {
 
 	// BOM для корректного открытия в Excel (UTF-8).
 	if _, err := c.Writer.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
-		h.logger.ErrorWithOp("audit export bom failed", err, "audit.export")
+		logServerError(c, h.logger, "audit export bom failed", err, "audit.export")
 		return
 	}
 	header := []string{
@@ -335,7 +335,7 @@ func (h *AuditHandler) ExportCSV(c *gin.Context) {
 		"target_type", "target_id", "ip_address", "details",
 	}
 	if err := w.Write(header); err != nil {
-		h.logger.ErrorWithOp("audit export header failed", err, "audit.export")
+		logServerError(c, h.logger, "audit export header failed", err, "audit.export")
 		return
 	}
 	for _, e := range entries {
@@ -358,7 +358,7 @@ func (h *AuditHandler) ExportCSV(c *gin.Context) {
 			details,
 		}
 		if err := w.Write(row); err != nil {
-			h.logger.ErrorWithOp("audit export row failed", err, "audit.export")
+			logServerError(c, h.logger, "audit export row failed", err, "audit.export")
 			return
 		}
 	}

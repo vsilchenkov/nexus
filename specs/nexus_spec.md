@@ -7151,8 +7151,10 @@ Sender'а — 46–96 с полного отказа sync (до 441 запрос
   `nexus_sender_ready_wait_total{outcome}`.
 - `codes.Unavailable` → `domain.ErrSenderUnavailable` → **503** + `Retry-After: 5`, WARN, не в
   журнал отказов (раньше 502 «internal routing error»).
-- Уход клиента: Receiver — 499 + Debug, без журнала отказов и Sentry; Web — хелпер вместо
-  `ErrorWithOp` для отмены при отменённом контексте запроса.
+- Уход клиента (`platform/clientgone`: контекст запроса отменён и ошибка — отмена; gRPC
+  `Canceled` клиент Sender'а переводит в `context.Canceled`): Receiver — 499 + Debug, без журнала
+  отказов и Sentry; Web — хелпер `logServerError` вместо `ErrorWithOp`, прокси `/api/v1/*` — 499;
+  спан Sentry для 499 — `cancelled`.
 - Невалидный UTF-8 в слоге/пути → `ErrNodeNotFound` без обращения к хранилищу (passthrough §39
   с хвостом в чужой кодировке продолжает работать). Коллектор журнала отказов §94 приводит
   образец к виду, который примут колонки (U+FFFD, `request_id` ≤ 64, не-адрес → `0.0.0.0`):

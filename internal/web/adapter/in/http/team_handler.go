@@ -88,7 +88,7 @@ func toTeamResp(t *domain.Team) teamResponse {
 func (h *TeamHandler) List(c *gin.Context) {
 	teams, err := h.uc.List(c.Request.Context())
 	if err != nil {
-		h.logger.ErrorWithOp("list teams", err, "team.list")
+		logServerError(c, h.logger, "list teams", err, "team.list")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -202,7 +202,7 @@ func (h *TeamHandler) Delete(c *gin.Context) {
 func (h *TeamHandler) ListMembers(c *gin.Context) {
 	members, err := h.uc.ListMembers(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		h.logger.ErrorWithOp("list members", err, "team.members.list")
+		logServerError(c, h.logger, "list members", err, "team.members.list")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -319,7 +319,7 @@ func (h *TeamHandler) replyTeamError(c *gin.Context, err error) {
 	case errors.Is(err, domain.ErrPermissionDenied):
 		c.JSON(http.StatusForbidden, gin.H{"error": "operation not allowed"})
 	default:
-		h.logger.ErrorWithOp("team handler", err, "team.error")
+		logServerError(c, h.logger, "team handler", err, "team.error")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 	}
 }

@@ -266,7 +266,7 @@ func (h *HostAllowlistHandler) replyDomainError(c *gin.Context, err error, op st
 }
 
 func (h *HostAllowlistHandler) replyServerError(c *gin.Context, err error, op string) {
-	h.logger.ErrorWithOp("host allowlist handler error", err, op,
+	logServerError(c, h.logger, "host allowlist handler error", err, op,
 		h.logger.Str("path", c.Request.URL.Path))
 	localizedError(c, http.StatusInternalServerError, "error.internal")
 }

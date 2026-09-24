@@ -58,7 +58,7 @@ func (h *CHTableVerifyHandler) Verify(c *gin.Context) {
 	case errors.Is(err, usecase.ErrCHUnavailable):
 		localizedError(c, http.StatusServiceUnavailable, "ch_template.unavailable")
 	default:
-		h.logger.ErrorWithOp("ch table verify failed", err, "node.ch_table_verify")
+		logServerError(c, h.logger, "ch table verify failed", err, "node.ch_table_verify")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
 }

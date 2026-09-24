@@ -6800,7 +6800,7 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
 |---|---|---|
 | ТЗ §109 + инструмент разбора Sentry | ✅ Phase 109.0 | [sections/109-sender-restart-resilience.md](sections/109-sender-restart-resilience.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); скилл [sentry-fix](../.claude/skills/sentry-fix/SKILL.md) + [sentry.ps1](../.claude/skills/sentry-fix/scripts/sentry.ps1) (список за 7 сут через орг-endpoint, разбор issue по видам ошибок, маска токенов ботов в выводе), ссылка из [nexus-sentry](../.claude/skills/nexus-sentry/SKILL.md) |
 | §109.5 невалидный UTF-8 в пути → 404; журнал отказов не теряет пачку на мусоре | ✅ Phase 109.1 | обёртка `validUTF8Reader` + `errInvalidUTF8Path` в [receiver/usecase/resolver.go](../internal/receiver/usecase/resolver.go) (тест `TestResolveNode_InvalidUTF8`); санитизация образца `Collector.sanitize`/`clientIP` в [rejectlog/collector.go](../internal/receiver/adapter/out/rejectlog/collector.go), `truncateRunes` приводит к валидному UTF-8, `TruncateRequestID` в [domain/rejected.go](../internal/domain/rejected.go) (тест `TestCollectorSanitizesSample`, integration `TestRejectedFlush_GarbageSampleKeepsBatch_E2E`) |
-| §109.4 уход клиента: 499 Receiver, Debug Web | ⛔ | — |
+| §109.4 уход клиента: 499 Receiver, Debug Web | ✅ Phase 109.2 | предикат [platform/clientgone](../internal/platform/clientgone/clientgone.go); перевод gRPC `Canceled` — `translateError` в [grpcsender/client.go](../internal/platform/grpcsender/client.go); Receiver `replyClientGone` + `statusClientClosedRequest` в [handler.go](../internal/receiver/adapter/in/http/handler.go), пропуск 499 в `rejectReason` ([reject_middleware.go](../internal/receiver/adapter/in/http/reject_middleware.go)); Web `logServerError` в [server_error.go](../internal/web/adapter/in/http/server_error.go) (58 мест), 499 в [receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go), replay — тот же предикат; спан 499 → `cancelled` в [sentry/middleware.go](../internal/platform/sentry/middleware.go). Тесты: `TestIs`, `TestGRPCSender_CallerCancelIsContextCanceled`, `TestReplyClientGone`, `TestLogServerError`, `TestReceiverProxy_ClientGone` |
 | §109.2 быстрый старт Sender, фоновый backfill | ⛔ | — |
 | §109.3 переподключение, ожидание готовности, 503 | ⛔ | — |
 | §109.6 scrubbing `bot<id>:<secret>` в Sentry | ⛔ | — |
@@ -6824,3 +6824,14 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
   одним запросом раз в интервал журнал можно было ослепить. Санитизация — в `Collector.Add`
   (граница с хранилищем), не только в middleware; не-адрес пишется как `0.0.0.0` (реальным клиентом
   быть не может, PTR для него не резолвится). Integration-тест на старом коде давал 0 групп из 2.
+- **§109.4: gRPC-статус `Canceled` не оборачивает `context.Canceled`.** `errors.Is(err,
+  context.Canceled)` для вызова Sender'а, оборванного уходом клиента, ложен — поэтому
+  `grpcsender.Client.Send` переводит код сам (`translateError`), и только при отменённом контексте
+  вызывающего: `Canceled` при живом контексте — чужая отмена, её прятать нельзя. Истёкший срок
+  (`DeadlineExceeded`) уходом клиента не считается нигде.
+- **§109.4: 499 в Receiver обязан быть исключён из журнала отказов явно.** `rejectReason` пишет
+  любой 4xx без причины по статусу — без исключения каждый ушедший клиент стал бы «отказом шины»
+  в §94 и метрике `nexus_ingress_rejected_total`.
+- **§109.4: в Web 499 ставит только прокси.** Обработчики после ошибки пишут `localizedError(c,
+  500, …)`, и `c.Status(499)` до него был бы молча перезаписан; переписывать ответ в 58 местах ради
+  метрики ушедшего клиента не стали — границы в §109.8.

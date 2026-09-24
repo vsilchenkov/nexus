@@ -114,7 +114,7 @@ func (h *RequestFieldCatalogHandler) replyCode(c *gin.Context, status int, code 
 }
 
 func (h *RequestFieldCatalogHandler) replyServerError(c *gin.Context, err error, op string) {
-	h.logger.ErrorWithOp("request field catalog handler error", err, op,
+	logServerError(c, h.logger, "request field catalog handler error", err, op,
 		h.logger.Str("path", c.Request.URL.Path))
 	localizedError(c, http.StatusInternalServerError, "error.internal")
 }

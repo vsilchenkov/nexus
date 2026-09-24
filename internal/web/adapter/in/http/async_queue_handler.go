@@ -250,7 +250,7 @@ func (h *AsyncQueueHandler) queueError(c *gin.Context, err error, op string) {
 			h.logger.Str("op", op), h.logger.Err(err))
 		localizedError(c, http.StatusConflict, "queue.foreign_database")
 	default:
-		h.logger.ErrorWithOp("async queue op failed", err, op)
+		logServerError(c, h.logger, "async queue op failed", err, op)
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
 }

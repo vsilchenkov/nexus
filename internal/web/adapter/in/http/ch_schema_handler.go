@@ -77,7 +77,7 @@ func (h *CHSchemaHandler) replyErr(c *gin.Context, err error) {
 		// Тоже 409: запрос корректен, недопустимо состояние.
 		localizedError(c, http.StatusConflict, "ch_sync.foreign_database")
 	default:
-		h.logger.ErrorWithOp("ch schema sync failed", err, "node.ch_schema_sync")
+		logServerError(c, h.logger, "ch schema sync failed", err, "node.ch_schema_sync")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
 }

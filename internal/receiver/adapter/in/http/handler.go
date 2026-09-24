@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clientgone"
 	"nexus/internal/platform/clientip"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
@@ -603,8 +604,35 @@ func classifyDomainError(err error) (status int, message string, reason domain.R
 	}
 }
 
+// statusClientClosedRequest — код nginx 499 «Client Closed Request» (§109.4):
+// клиент закрыл соединение, не дождавшись ответа. В net/http константы нет.
+const statusClientClosedRequest = 499
+
+// replyClientGone отвечает 499, если запрос оборвал сам клиент: контекст
+// входящего запроса отменён, а ошибка маршрутизации — отмена (§109.4). Это не
+// сбой шины (раньше — 502 и ERROR в Sentry, NEXUS-S) и не отказ клиенту:
+// строка лога — Debug, журнал отказов §94 такой статус пропускает
+// (rejectReason). Отмена при живом контексте запроса сюда не попадает и
+// остаётся ошибкой. Тела у ответа нет: читать его некому.
+func (h *Handler) replyClientGone(c *gin.Context, err error, nodePath, op string) bool {
+	if !clientgone.Is(c.Request.Context(), err) {
+		return false
+	}
+	h.logger.Debug("receiver request canceled by client",
+		h.logger.Str("node", nodeForLog(c, nodePath)),
+		h.logger.Str("op", op),
+		h.logger.Str("method", c.Request.Method),
+		h.logger.Str("client_ip", c.ClientIP()),
+		h.logger.Err(err))
+	c.AbortWithStatus(statusClientClosedRequest)
+	return true
+}
+
 // replyDomainError — sync-ответ об ошибке: {"error": <msg>}.
 func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op string) {
+	if h.replyClientGone(c, err, nodePath, op) {
+		return
+	}
 	status, msg, reason, internal := classifyDomainError(err)
 	errNode := nodeForErrorLog(c, nodePath)
 	nodePath = nodeForLog(c, nodePath)
@@ -716,6 +744,9 @@ func (h *Handler) onLoopDetected(c *gin.Context, mode, nodePath string) {
 // "message": <причина>}. Тело отличается от sync-варианта, чтобы async-клиент
 // единообразно читал result/message и в успехе, и в ошибке.
 func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string) {
+	if h.replyClientGone(c, err, nodePath, op) {
+		return
+	}
 	status, msg, reason, internal := classifyDomainError(err)
 	errNode := nodeForErrorLog(c, nodePath)
 	nodePath = nodeForLog(c, nodePath)

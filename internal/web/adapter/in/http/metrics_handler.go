@@ -439,7 +439,7 @@ func (h *MetricsHandler) Node(c *gin.Context) {
 			localizedError(c, http.StatusNotFound, "node.not_found")
 			return
 		}
-		h.logger.ErrorWithOp("node metrics failed", err, "metrics.node",
+		logServerError(c, h.logger, "node metrics failed", err, "metrics.node",
 			h.logger.Str("node_id", nodeID))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
