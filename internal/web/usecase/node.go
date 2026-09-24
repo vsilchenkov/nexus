@@ -657,20 +657,8 @@ func (u *NodeUsecase) cacheInvalidate(ctx context.Context, teamID, path, op stri
 // вызовом обнуляет n.TeamID = existing.TeamID, плюс здесь явная проверка
 // n.TeamID == old.TeamID на случай прямого вызова.
 func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, teamID string) error {
-	n.SetDefaults()
-	cleared := n.NormalizeForRootMethod() // §27.6
-	if err := u.normalizeCHTable(ctx, n); err != nil {
-		return err
-	}
-	if err := n.Validate(); err != nil {
-		return err
-	}
-	// §70.6: имя таблицы не должно вести в БД другой ноды.
-	if err := u.assertTableNotForeign(ctx, n); err != nil {
-		return err
-	}
-	// §32.2: target_url не должен указывать на собственный ingress шины.
-	if err := u.checkSelfReference(n); err != nil {
+	cleared, err := u.prepareChanged(ctx, n)
+	if err != nil {
 		return err
 	}
 	old, err := u.repo.Get(ctx, n.ID)
@@ -683,57 +671,7 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, t
 	if n.TeamID != old.TeamID {
 		return domain.ErrPermissionDenied
 	}
-	// §23: снимок allowlist хостов управляется только каталогом (link/unlink) —
-	// сохраняем существующий, чтобы PUT узла его не затирал.
-	n.URLAllowedHosts = old.URLAllowedHosts
-	// §63: автор последнего изменения; created_by приходит из БД (scan old не
-	// используем — Update по SET не трогает created_by), поэтому переносим его с
-	// исходного узла, чтобы ответ содержал верного создателя.
-	n.CreatedBy = old.CreatedBy
-	n.UpdatedBy = actor.UserLogin
-	// §19.5: (пере)создаём таблицу при смене имени/шаблона либо при включении
-	// логирования на узле, у которого таблицы ещё не было.
-	if old.ClickHouseTable != n.ClickHouseTable ||
-		old.ClickHouseTemplateID != n.ClickHouseTemplateID ||
-		(n.LoggingEnabled && !old.LoggingEnabled) {
-		if err := u.provisionTable(ctx, n); err != nil {
-			return err
-		}
-	}
-	diff := diffNodes(old, n)
-	if len(cleared) > 0 {
-		diff["cleared_incompatible_fields"] = cleared
-	}
-	if u.uow != nil {
-		if err := u.uow.Execute(ctx, func(ctx context.Context, r port.Repos) error {
-			if err := r.Nodes.Update(ctx, n); err != nil {
-				return err
-			}
-			return r.Audit.Write(ctx, auditEntry(actor, domain.ActionNodeUpdate, "node", n.ID, diff))
-		}); err != nil {
-			return err
-		}
-	} else {
-		if err := u.repo.Update(ctx, n); err != nil {
-			return err
-		}
-		u.audit.Log(ctx, actor, domain.ActionNodeUpdate, "node", n.ID, diff)
-	}
-
-	if old.Path != n.Path {
-		// Команда при Update не меняется (проверка выше) — старый путь чистим
-		// в той же команде.
-		u.cacheInvalidate(ctx, old.TeamID, old.Path, "update (old path)")
-	}
-	u.cacheSet(ctx, n, "update")
-	// §57: гарантированная инвалидация в Receiver. При переименовании передаём и
-	// старый путь — иначе старый ключ ещё TTL указывал бы на переехавший узел.
-	oldPath := ""
-	if old.Path != n.Path {
-		oldPath = old.Path
-	}
-	u.publishInvalidate(ctx, n.TeamID, n.Path, oldPath)
-	return nil
+	return u.commitChanged(ctx, actor, old, n, cleared, nodeAudit{action: domain.ActionNodeUpdate, op: "update"})
 }
 
 // SetStatus меняет ТОЛЬКО статус узла (§35) — лёгкая альтернатива полному Update
@@ -754,28 +692,7 @@ func (u *NodeUsecase) SetStatus(ctx context.Context, actor Actor, id, teamID str
 	if old.Status == status {
 		return nil // no-op
 	}
-	updated := *old
-	updated.Status = status
-	updated.UpdatedBy = actor.UserLogin // §63
-	diff := map[string]any{"status": map[string]string{"before": string(old.Status), "after": string(status)}}
-	if u.uow != nil {
-		if err := u.uow.Execute(ctx, func(ctx context.Context, r port.Repos) error {
-			if err := r.Nodes.Update(ctx, &updated); err != nil {
-				return err
-			}
-			return r.Audit.Write(ctx, auditEntry(actor, domain.ActionNodeUpdate, "node", id, diff))
-		}); err != nil {
-			return err
-		}
-	} else {
-		if err := u.repo.Update(ctx, &updated); err != nil {
-			return err
-		}
-		u.audit.Log(ctx, actor, domain.ActionNodeUpdate, "node", id, diff)
-	}
-	u.cacheSet(ctx, &updated, "status change")
-	u.publishInvalidate(ctx, updated.TeamID, updated.Path, "")
-	return nil
+	return u.commitStatus(ctx, actor, old, status, nodeAudit{action: domain.ActionNodeUpdate, op: "status change"})
 }
 
 // Delete удаляет узел. teamID — scope multi-tenancy v2.

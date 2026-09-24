@@ -46,6 +46,10 @@ RETURNING id, created_at`
 func auditWhere(f port.AuditFilter) (string, []any) {
 	q := ""
 	args := []any{}
+	if f.ID != "" {
+		q += fmt.Sprintf(" AND id = $%d::uuid", len(args)+1)
+		args = append(args, f.ID)
+	}
 	if f.UserID != "" {
 		q += fmt.Sprintf(" AND user_id = $%d::uuid", len(args)+1)
 		args = append(args, f.UserID)

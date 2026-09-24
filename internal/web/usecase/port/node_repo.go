@@ -46,6 +46,21 @@ type NodeRepo interface {
 	UpdateAllowedHostsSnapshot(ctx context.Context, nodeID string, patterns []string, updatedBy string) error
 }
 
+// NodeBatchReader — узлы по набору id, БЕЗ team-скоупа (§108.7).
+//
+// Отдельный малый порт, а не метод NodeRepo (ISP): нужен единственному
+// сценарию — разметке страницы журнала аудита для администратора (одна выборка
+// на страницу вместо запроса на строку), — и расширение NodeRepo сломало бы все
+// стабы в unit-тестах. Скоупа нет намеренно: журнал админа сквозной, а узел
+// мог переехать в другую команду после записи. Вызывающий обязан сам ограничить
+// круг потребителей ролью admin.
+type NodeBatchReader interface {
+	// GetByIDs возвращает найденные узлы, ключ — id. Отсутствующие id в карту
+	// не попадают. Все id обязаны быть валидными UUID; пустой набор — пустая
+	// карта без запроса.
+	GetByIDs(ctx context.Context, ids []string) (map[string]*domain.Node, error)
+}
+
 // NodeTableUsage — факты о ClickHouse-таблицах логов, известные PostgreSQL:
 // сколько узлов делят таблицу и какие таблицы помечены внешними (§64). На них
 // стоит правило видимости записей без node_id (§61).
