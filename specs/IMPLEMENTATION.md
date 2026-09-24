@@ -6793,8 +6793,10 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
 ### 4.94 §109 — устойчивость sync к рестарту Sender и шум Sentry
 
 Раздел [109-sender-restart-resilience.md](sections/109-sender-restart-resilience.md). Ветка
-`feature/sender-restart-resilience`. Статус ◐ — в работе. Миграций нет; новый ключ
-`sender_grpc.ready_wait_ms` с рабочим дефолтом.
+`feature/sender-restart-resilience`. Статус ✅ — сдано (гейты, ревизия, стенд), в `dev` не слито.
+Миграций нет; новый ключ `sender_grpc.ready_wait_ms` с рабочим дефолтом (30000). Выкат
+Receiver → Sender → Web; смена версии ClickHouse на KZ (KZ.2) — отдельной операцией по
+DEPLOYMENT §5.4.2.
 
 | Пункт | Статус | Где |
 |---|---|---|
