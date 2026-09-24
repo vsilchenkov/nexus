@@ -285,7 +285,11 @@ func TestSend_PoolSpreadsCalls(t *testing.T) {
 
 	sendUntilSpread(t, cl, first, pool)
 
-	g1.Stop()
+	// Как останавливается Sender на бою: GOAWAY, а не обрыв. После Stop()
+	// клиент успевал выбрать соединение, ещё не заметившее обрыва, и вызов
+	// получал EOF (так и должно быть при падении Sender'а — это BreakMidCall);
+	// в CI тест из-за этого падал в 4 прогонах из 10.
+	g1.GracefulStop()
 	second := newPeerServer()
 	g2, _ := serveOn(t, addr, second)
 	t.Cleanup(g2.Stop)
