@@ -6804,7 +6804,7 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
 | §109.2 быстрый старт Sender, фоновый backfill | ✅ Phase 109.3 | [sender/startup.go](../internal/sender/startup.go) (`startBodySizeBackfill`, `startupPhases`, строка `sender startup phases`), `ensureCHSchema` возвращает таблицы и больше не делает backfill ([sender/app.go](../internal/sender/app.go)); Web — `bodySizeBackfillDone` в [web/app.go](../internal/web/app.go); проверка `ctx.Err()` в цикле `BackfillBodySizes` ([ensure_schema.go](../internal/platform/clickhouse/ensure_schema.go)). Тесты `TestStartBodySizeBackfill_DoesNotBlockStart`, `TestStartupPhases` |
 | §109.3 переподключение, ожидание готовности, 503 | ✅ Phase 109.4 | `connectParams`, `pick`, `boundWait`, `observeWait`, `translateError`, `WithReadyWaitObserver` в [grpcsender/client.go](../internal/platform/grpcsender/client.go), `callState` и stats-хендлер `sendTracker` в [sendtrack.go](../internal/platform/grpcsender/sendtrack.go); `domain.ErrSenderUnavailable` ([errors.go](../internal/domain/errors.go)); `replySenderUnavailable` (503 + `Retry-After: 5`, WARN) в [receiver handler.go](../internal/receiver/adapter/in/http/handler.go); ключ `sender_grpc.ready_wait_ms` ([config.go](../internal/platform/config/config.go), `defaultSenderReadyWaitMs` в defaults.go, три YAML); счётчик `nexus_sender_ready_wait_total{outcome}` ([metrics.go](../internal/platform/metrics/metrics.go)), wiring в receiver/app.go и web/app.go; Swagger `@Failure 503`; CHANGELOG `[Unreleased]`; DEPLOYMENT §9.1.6. Тесты [client_readywait_test.go](../internal/platform/grpcsender/client_readywait_test.go) (рестарт Sender'а как при выкате: `NOT_SERVING` → дренаж → `GracefulStop` — ровно один вызов; таймаут и выключенное ожидание → `ErrSenderUnavailable`; отмена во время ожидания; обрыв посреди вызова — НЕ `ErrSenderUnavailable`), [sendtrack_test.go](../internal/platform/grpcsender/sendtrack_test.go) (отправка и истечение взаимоисключающие, устаревший `READY` в счётчике, `translateError`), `TestReplySenderUnavailable` |
 | §109.6 scrubbing `bot<id>:<secret>` в Sentry | ✅ Phase 109.5 | `MaskBotTokens` в [sensitive/bottoken.go](../internal/platform/sensitive/bottoken.go) (табличный тест, fuzz, бенчмарк — 0 аллокаций без токена); `maskEventTokens`, `maskTokensStr`, `maskTokensAny` и спаны/крошки в [sentry/sentry.go](../internal/platform/sentry/sentry.go); тесты [tokens_test.go](../internal/platform/sentry/tokens_test.go) — токен во всех полях, проверка итогового JSON события (красные без маскировщика); CHANGELOG `### Security` |
-| §109.7 образ ClickHouse для integration, кандидат 26.3 | ⛔ | — |
+| §109.7 версия ClickHouse: кандидат 26.3 LTS | ✅ Phase 109.6 | `clickHouseImage()` + `NEXUS_TEST_CLICKHOUSE_IMAGE` в [tests/integration/clickhouse_test.go](../tests/integration/clickhouse_test.go) (дефолт `24-alpine`); полный `make test-integration` на `26.3.33.24-alpine` зелёный после правки замера в [log_partition_pruning_test.go](../tests/integration/log_partition_pruning_test.go) (`dropQueryConditionCache`); `image:` + `command: ["--", "--memory_worker_correct_memory_tracker=1"]` в [standalone.override](../deploy/docker-compose.standalone.override.yml) и [ha.standalone.override](../deploy/docker-compose.ha.standalone.override.yml); DEPLOYMENT §5.4.2 и §9.1.6, DEVELOPMENT (переменные версий хранилищ), CHANGELOG |
 
 **Неочевидности §109 (пополняется по блокам):**
 
@@ -6881,3 +6881,24 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
   `json.RawMessage` при постановке в очередь отправки) — правки из хуков попадают в отправку. У
   `Event` в 0.46 нет поля `Extra`, а `sentry.Context` — алиас `map[string]any` (второй case в
   type switch не компилируется).
+- **§109.7: коррекция счётчика памяти в 26.3 выключена по умолчанию.**
+  `memory_worker_correct_memory_tracker` = 0 в `system.server_settings` свежего `26.3.33.24-alpine`
+  — одна смена версии дрейф не лечит. Включается аргументом запуска
+  `-- --memory_worker_correct_memory_tracker=1` (entrypoint образа передаёт аргументы после `--`
+  серверу как переопределения конфига; `changed=1` проверено); файл в `config.d` тоже работает, но
+  шаблон `standalone.override` конфигов не монтирует. 24.10.2.80 с этим аргументом и с этим
+  ключом в `config.d` стартует и игнорирует его — откат образа не ломается.
+- **§109.7: закреплены ОБА шаблона самодостаточного стека.** Только `standalone.override` —
+  и переход на пары реплик (§5.5.2-a) через `ha.standalone.override` с `24-alpine` понизил бы
+  версию на томе, записанном 26.3. Цена: HA-шаблон подключается `-f` напрямую из репозитория,
+  поэтому такой стек обновит ClickHouse при следующем пересоздании контейнера — предупреждение и
+  бэкап в DEPLOYMENT §9.1.6. Integration-тесты по умолчанию остаются на `24-alpine` (минимальная
+  поддерживаемая версия, как `postgres:12-alpine`).
+- **§109.7: кеш условий запросов ClickHouse 25.3+ ломает замеры `read_rows`.** На 26.3
+  `use_query_condition_cache` = 1 по умолчанию: повторный запрос с тем же фильтром читает только
+  гранулы, совпавшие в прошлый раз. `TestClickHouse_DateCreatePruning_E2E` на 26.3 упал —
+  «несуженный» запрос после первого подтеста прочитал 8192 строки из 200 000, и проверка
+  «сужение по date_create сокращает чтение кратно» потеряла базу. Сужение при этом работает (с
+  холодным кешем 200 000 → 24 576 строк, 3 → 1 часть). Замер теперь сбрасывает кеш
+  (`SYSTEM DROP QUERY CONDITION CACHE`, только на ≥ 25.3 — в 24.x команды нет). Для продукта это
+  не дефект: повторные чтения логов тем же фильтром (опрос окна в UI) на 26.3 дешевле.

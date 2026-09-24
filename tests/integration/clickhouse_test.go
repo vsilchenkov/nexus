@@ -7,6 +7,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -38,14 +39,26 @@ func (s stubHTTP) Do(_ context.Context, _ *senderport.HTTPRequest) (*senderport.
 	return s.resp, nil
 }
 
-// startClickHouse поднимает CH 24-alpine через generic testcontainer и
+// defaultClickHouseImage — версия ClickHouse боевых инсталляций. Переопределяется
+// переменной NEXUS_TEST_CLICKHOUSE_IMAGE: так кандидат на смену версии (§109.7)
+// прогоняется всем набором integration-тестов без правки кода.
+const defaultClickHouseImage = "clickhouse/clickhouse-server:24-alpine"
+
+func clickHouseImage() string {
+	if img := os.Getenv("NEXUS_TEST_CLICKHOUSE_IMAGE"); img != "" {
+		return img
+	}
+	return defaultClickHouseImage
+}
+
+// startClickHouse поднимает CH (clickHouseImage) через generic testcontainer и
 // возвращает готовое driver.Conn + cleanup. База "nexus_default" создаётся
 // сразу (по умолчанию в Sender writer/LogReader работают с db.table-нотацией).
 func startClickHouse(t *testing.T, ctx context.Context) (chdriver.Conn, *config.ClickHouseSection, func()) {
 	t.Helper()
 
 	req := testcontainers.ContainerRequest{
-		Image: "clickhouse/clickhouse-server:24-alpine",
+		Image: clickHouseImage(),
 		ExposedPorts: []string{
 			"9000/tcp", // native TCP
 		},

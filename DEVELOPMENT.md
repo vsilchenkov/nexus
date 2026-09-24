@@ -289,6 +289,11 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   сверх лимитов, снятие отметки «разобрано» новым отказом, чистка по сроку и полное
   выключение журнала, скоупы команд. Входит в общий `make test-integration`. Тесты гоняются
   на `postgres:12-alpine` — той же мажорной версии, что на бою.
+- **Версии хранилищ в integration-тестах переопределяются переменными**: `NEXUS_TEST_PG_IMAGE`
+  (дефолт `postgres:12-alpine`) и `NEXUS_TEST_CLICKHOUSE_IMAGE` (§109.7, дефолт
+  `clickhouse/clickhouse-server:24-alpine`). Дефолты — минимальные поддерживаемые версии: тест на
+  более свежей пропустил бы то, чего на бою нет. Кандидат на смену версии прогоняется без правки
+  кода: `NEXUS_TEST_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:26.3.33.24-alpine make test-integration`.
 - `make check-alerts` (§101.11) — `promtool check rules` и `promtool test rules` по
   `deploy/prometheus.alerts*.yml` в образе `prom/prometheus` той же версии, что в compose (нужен
   Docker). В CI — job `alerts-check`. Поменяли правило алерта — поправьте и

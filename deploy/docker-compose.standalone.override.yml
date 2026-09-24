@@ -45,7 +45,18 @@
 services:
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24-alpine
+    # §109.7: версия ЗАКРЕПЛЕНА. Плавающий 24-alpine приехал как 24.10.2.80, у
+    # которого учёт памяти «уплывает» с аптаймом: MemoryTracking в разы больше
+    # реальной памяти процесса, и вставки логов падают MEMORY_LIMIT_EXCEEDED при
+    # почти пустом процессе. 26.3 — LTS, прогнана всем набором integration-тестов
+    # Nexus (NEXUS_TEST_CLICKHOUSE_IMAGE). Сменить версию на РАБОТАЮЩЕМ сервере —
+    # только по DEPLOYMENT §5.4.2 с бэкапом тома: данные, записанные 26.3,
+    # прежняя 24.x может не прочитать.
+    image: clickhouse/clickhouse-server:26.3.33.24-alpine
+    # Коррекция учёта памяти по jemalloc/cgroup: в 26.3 есть, но по умолчанию
+    # ВЫКЛЮЧЕНА — без неё дрейф возможен и на новой версии. Аргумент после «--»
+    # переопределяет конфиг сервера; 24.x его молча игнорирует (проверено).
+    command: ["--", "--memory_worker_correct_memory_tracker=1"]
     restart: unless-stopped
     environment:
       # Nexus заводит по БД на команду (nexus_<slug>) сам — эта нужна как

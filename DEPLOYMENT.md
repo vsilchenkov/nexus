@@ -1136,6 +1136,80 @@ docker compose --profile nginx \r
 публикация портов вернётся к `web`/`receiver`. Остановленный контейнер балансировщика удаляется
 `docker compose rm -f nginx`.
 
+### 5.4.2. ClickHouse: «уплывший» учёт памяти и смена версии (§109.7)
+
+**Симптом.** Вставки логов периодически падают с
+`code: 241, Memory limit (total) exceeded: would use 1.0x GiB … current RSS 150–250 MiB, maximum: 1.00 GiB`
+(в Sentry — «clickhouse batch insert failed»), в `system.part_log` копятся упавшие слияния с
+`error = 241`, а сам процесс ClickHouse занимает в разы меньше лимита. Потерь нет: отказ вставки
+уходит в `nexus.logs.retry` (§38) и дозаписывается, но при длинной серии отстают слияния.
+
+**Причина.** Внутренний счётчик памяти сервера (`MemoryTracking`) расходится с реальной памятью
+процесса и растёт с аптаймом. Замер на ноде с `24.10.2.80` (плавающий тег `24-alpine`, аптайм 31
+сутки): `MemoryTracking` 4.71 ТиБ при RSS 250 МиБ, 1.15 млн `MEMORY_LIMIT_EXCEEDED`. Коррекции
+счётчика по данным jemalloc/cgroup в 24.10 нет — конфигом не лечится.
+
+**Проверка** (`docker compose exec clickhouse clickhouse-client --query "…"`):
+
+```sql
+SELECT formatReadableSize(value) FROM system.metrics WHERE metric = 'MemoryTracking';
+SELECT formatReadableSize(value) FROM system.asynchronous_metrics WHERE metric = 'MemoryResident';
+SELECT value, last_error_time FROM system.errors WHERE name = 'MEMORY_LIMIT_EXCEEDED';
+SELECT event_date, count() FROM system.part_log WHERE error = 241 GROUP BY event_date ORDER BY event_date;
+```
+
+`MemoryTracking` больше `MemoryResident` в разы, а не на проценты, — это оно.
+
+**Лечение.**
+
+1. Быстро: `docker compose restart clickhouse` (10–20 с; вставки на это время уходят в
+   retry-топик и дозаписываются, логи в UI кратко недоступны). После рестарта `MemoryTracking`
+   ≈ `MemoryResident`, но дрейф со временем возвращается.
+2. Надёжно: смена версии на `clickhouse/clickhouse-server:26.3.33.24-alpine` (LTS; прогнана всем
+   набором integration-тестов Nexus) **с включённой коррекцией счётчика** — в 26.3 она есть, но по
+   умолчанию выключена. Шаблоны `deploy/docker-compose.standalone.override.yml` и
+   `deploy/docker-compose.ha.standalone.override.yml` задают обе строки:
+
+   ```yaml
+   clickhouse:
+     image: clickhouse/clickhouse-server:26.3.33.24-alpine
+     command: ["--", "--memory_worker_correct_memory_tracker=1"]
+   ```
+
+**Смена версии ClickHouse на работающем сервере** (самодостаточный стек, CH в Docker):
+
+1. **Бэкап тома — обязателен**: вернуться на 24.x после записи данных новой версией может не
+   получиться. Имя тома — `docker volume ls | grep clickhouse` (обычно `nexus_clickhouse_data`).
+
+   ```bash
+   cd /opt/nexus
+   docker compose stop clickhouse
+   mkdir -p /opt/backup
+   docker run --rm -v nexus_clickhouse_data:/data:ro -v /opt/backup:/backup alpine \
+     tar czf /backup/ch-$(date +%F).tgz -C /data .
+   docker compose start clickhouse
+   ```
+
+   Пока ClickHouse остановлен, вставки уходят в retry-топик — это штатно.
+2. В локальном `docker-compose.override.yml` сервиса `clickhouse` заменить `image:` и добавить
+   `command:` (как в шаблоне выше). Локальный файл мог отстать от шаблона — сверьте `diff`, но
+   переносите только эти две строки.
+3. Двумя шагами, чтобы не упереться в память малого сервера:
+   `docker compose pull clickhouse`, затем `docker compose up -d clickhouse`.
+4. Проверка: `docker compose ps clickhouse` — `healthy`; `SELECT version()` — 26.3;
+   `SELECT value FROM system.server_settings WHERE name = 'memory_worker_correct_memory_tracker'`
+   — `1`; в логах Sender'а и Web нет ошибок ClickHouse; `nexus_kafka_lag{topic="nexus.logs.retry"}`
+   возвращается к нулю; логи узлов открываются в UI; через сутки `MemoryTracking` ≈
+   `MemoryResident`.
+5. Откат: вернуть прежние `image:`/`command:`, `docker compose stop clickhouse`, восстановить том
+   из архива (очистить том и `tar xzf` в него тем же `docker run … alpine`), `docker compose up -d
+   clickhouse`.
+
+Интроспекция схемы логов (§56: TTL, кодеки, индексы) на 26.3 видит таблицы так же, как на 24.x —
+цикла `MODIFY TTL` после смены версии нет (сверено `SHOW CREATE TABLE`/`system.columns` на обеих).
+
+---
+
 ### 5.5. Развёртывание без простоя: две реплики каждого сервиса (§93)
 
 Профиль, при котором обновление приложения и падение процесса перестают быть простоем: по две
@@ -2585,6 +2659,14 @@ Receiver'а. Смешанные версии:
   отвечает 499 (в журнал отказов §94 не пишется), Web пишет строку на Debug. Такие события
   перестают приходить в Sentry.
 - **Путь в чужой кодировке** (`%CE%F0`) — 404 вместо 502.
+- **Токены ботов маскируются в Sentry по значению** (`bot<id>:***`) в любом поле события.
+- **Шаблоны самодостаточного стека закрепили ClickHouse 26.3 LTS** с коррекцией учёта памяти
+  (§5.4.2). Установки, где override — локальная КОПИЯ шаблона, не затрагиваются: версия меняется
+  только по процедуре §5.4.2. ⚠️ Стек, запущенный с `deploy/docker-compose.ha.standalone.override.yml`
+  напрямую (`-f` или `COMPOSE_FILE`), получит ClickHouse 26.3 при следующем пересоздании контейнера
+  `clickhouse` (например, `docker compose up -d` без списка сервисов). **Перед обновлением такого
+  стека сделайте бэкап тома** по шагу 1 §5.4.2 — или временно закрепите прежний образ в
+  отдельном `-f`-файле.
 
 **Порядок выката: Receiver → Sender → Web**, как обычно. Смешанные версии совместимы: протокол
 Receiver↔Sender не менялся. Выигрыш от быстрого старта (§109.2) даёт новый Sender, ожидание
