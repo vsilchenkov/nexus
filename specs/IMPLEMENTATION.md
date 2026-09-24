@@ -6758,3 +6758,4 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §108 | ✅ Phase 108.0 | [sections/108-audit-revert.md](sections/108-audit-revert.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md), `node.revert` в §7.13 ([07-web-ui.md](sections/07-web-ui.md)) |
+| §108.2 реестр полей узла: diff аудита и отмена из одного списка | ✅ Phase 108.1 | [node_fields.go](../internal/web/usecase/node_fields.go) — `nodeFieldRegistry` (24 поля: `get` в типе записи журнала, `set` через JSON в типизированное поле, `applies` для `rmq_*`/`pull_*`), `nodeSecretRegistry` (креды + связанные поля), `diffSecretsAndAck`; `diffNodes` ([node.go](../internal/web/usecase/node.go)) строится по реестру; тесты [node_fields_test.go](../internal/web/usecase/node_fields_test.go) — golden формата (написан и зелёный до рефакторинга), полнота, round-trip через float64, отказы `set`, `applies` |

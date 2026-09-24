@@ -1068,60 +1068,17 @@ func rebaseCHTable(full, newDB string) string {
 	return newDB + "." + full
 }
 
-// diffNodes — упрощённый diff основных полей. Полный diff с двумя
-// колонками «до/после» (для UI) — Phase 3.
+// diffNodes — diff полей узла для записи node.update: {поле: {before, after}}
+// по реестру nodeFieldRegistry, секреты — только факт изменения, шаблон ответа
+// приёма — сводкой. Тот же реестр задаёт, что можно отменить из журнала (§108).
 func diffNodes(old, n *domain.Node) map[string]any {
 	d := map[string]any{}
-	add := func(k string, before, after any) {
-		if before != after {
-			d[k] = map[string]any{"before": before, "after": after}
+	for _, f := range nodeFieldRegistry() {
+		if before, after := f.get(old), f.get(n); before != after {
+			d[f.name] = map[string]any{"before": before, "after": after}
 		}
 	}
-	add("path", old.Path, n.Path)
-	add("target_url", old.TargetURL, n.TargetURL)
-	add("url_mode", string(old.URLMode), string(n.URLMode))
-	add("auth_type", string(old.AuthType), string(n.AuthType))
-	add("incoming_auth_type", string(old.IncomingAuthType), string(n.IncomingAuthType))
-	add("status", string(old.Status), string(n.Status))
-	add("timeout_ms", old.TimeoutMs, n.TimeoutMs)
-	add("retry_count", old.RetryCount, n.RetryCount)
-	add("webhook_signature_header", old.WebhookSignatureHeader, n.WebhookSignatureHeader)
-	add("webhook_signature_prefix", old.WebhookSignaturePrefix, n.WebhookSignaturePrefix)
-	// §64: переключение внешней таблицы меняет, управляет ли Nexus схемой и
-	// retention этой таблицы, — такое решение должно быть видно в аудите.
-	add("external_table", old.ExternalTable, n.ExternalTable)
-	// §81.3: ослабление защиты узла (порог выше, пауза короче) должно быть видно
-	// в аудите — иначе «почему он опять долбит мёртвый приёмник» не разобрать.
-	add("circuit_breaker_threshold", old.CircuitBreakerThreshold, n.CircuitBreakerThreshold)
-	add("circuit_breaker_cooldown_sec", old.CircuitBreakerCooldownSec, n.CircuitBreakerCooldownSec)
-	// §107: оба флага меняют, что видят клиент узла (405 вместо подписки) и
-	// защита (таймаут перестаёт открывать breaker), — решение для аудита.
-	add("sse_decline", old.SSEDecline, n.SSEDecline)
-	add("breaker_ignore_timeouts", old.BreakerIgnoreTimeouts, n.BreakerIgnoreTimeouts)
-	if old.AuthCredentials != n.AuthCredentials {
-		d["auth_credentials"] = "changed"
-	}
-	if old.IncomingAuthCredentials != n.IncomingAuthCredentials {
-		d["incoming_auth_credentials"] = "changed"
-	}
-	// §27: RabbitMQAsync-поля (rmq_password маскируется, как остальные креды).
-	add("rmq_host", old.RMQHost, n.RMQHost)
-	add("rmq_port", old.RMQPort, n.RMQPort)
-	add("rmq_vhost", old.RMQVHost, n.RMQVHost)
-	add("rmq_user", old.RMQUser, n.RMQUser)
-	add("rmq_queue", old.RMQQueue, n.RMQQueue)
-	add("rmq_use_tls", old.RMQUseTLS, n.RMQUseTLS)
-	add("pull_interval_sec", old.PullIntervalSec, n.PullIntervalSec)
-	add("pull_batch_size", old.PullBatchSize, n.PullBatchSize)
-	add("pull_prefetch", old.PullPrefetch, n.PullPrefetch)
-	if old.RMQPassword != n.RMQPassword {
-		d["rmq_password"] = "changed"
-	}
-	// §83: шаблон ответа приёма меняет то, что видит КЛИЕНТ узла, — включение,
-	// выключение и правка шаблона обязаны быть в аудите. Секретом не является,
-	// поэтому пишем значение, а не «changed»; шаблон при этом обрезаем — в
-	// журнале нужен факт и узнаваемый фрагмент, а не 8 КиБ текста.
-	add("async_ack_spec", ackSpecAudit(old.AsyncAck), ackSpecAudit(n.AsyncAck))
+	diffSecretsAndAck(d, old, n)
 	return d
 }
 
