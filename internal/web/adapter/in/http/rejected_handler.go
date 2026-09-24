@@ -333,7 +333,7 @@ func (h *RejectedHandler) fail(c *gin.Context, err error, op string) {
 		c.JSON(http.StatusNotFound, ErrorResponse{Error: "rejected group not found"})
 		return
 	}
-	h.logger.ErrorWithOp("rejected request failed", err, op)
+	logServerError(c, h.logger, "rejected request failed", err, op)
 	c.JSON(http.StatusInternalServerError, ErrorResponse{Error: "internal error"})
 }
 

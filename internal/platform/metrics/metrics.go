@@ -84,6 +84,11 @@ type Metrics struct {
 	IngressRejectDroppedTotal *prometheus.CounterVec
 	// Phase AUD.8: сбои проверки rate-limit'а (fail-open, §9.4) по scope ключа.
 	RateLimitCheckErrorsTotal *prometheus.CounterVec
+	// SenderReadyWaitTotal — §109.3: вызовы Sender'а, которым пришлось ждать
+	// готовности транспорта (готового соединения в пуле не было). outcome —
+	// ready|timeout|canceled (grpcsender.ReadyWait*). Всплеск ready — выкат
+	// Sender'а пережит без отказов; timeout — клиенты получили 503.
+	SenderReadyWaitTotal *prometheus.CounterVec
 	// §88.5: исходы запросов восстановления пароля. Наружу все исходы дают
 	// один ответ, а письмо уходит фоном — без этого счётчика «письма не
 	// доходят» невидимо целиком.
@@ -417,6 +422,13 @@ func New(service string, opts ...Option) *Metrics {
 			ConstLabels: constLabels,
 		}),
 
+		// §109.3: ожидания готовности транспорта к Sender'у.
+		SenderReadyWaitTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_sender_ready_wait_total",
+			Help:        "Calls to Sender that waited for a ready gRPC connection, by outcome (ready, timeout, canceled) (§109.3).",
+			ConstLabels: constLabels,
+		}, []string{"outcome"}),
+
 		// §74.3: признак незавершённого отката — схема новее кода сервиса.
 		PGSchemaAhead: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name:        "nexus_pg_schema_ahead",
@@ -437,6 +449,7 @@ func New(service string, opts ...Option) *Metrics {
 		m.IngressRejectedTotal,
 		m.IngressRejectDroppedTotal,
 		m.RateLimitCheckErrorsTotal,
+		m.SenderReadyWaitTotal,
 		m.PasswordResetRequestsTotal,
 		m.MailSendTotal,
 		m.MailSendDuration,
@@ -525,6 +538,12 @@ func (m *Metrics) IncLoopDetected(mode string) { m.LoopDetectedTotal.WithLabelVa
 // domain.RejectReason, status — HTTP-код ответа.
 func (m *Metrics) IncIngressRejected(reason, status string) {
 	m.IngressRejectedTotal.WithLabelValues(reason, status).Inc()
+}
+
+// IncSenderReadyWait — §109.3: вызов Sender'а дождался (или не дождался)
+// готовности транспорта. outcome — из замкнутого множества grpcsender.ReadyWait*.
+func (m *Metrics) IncSenderReadyWait(outcome string) {
+	m.SenderReadyWaitTotal.WithLabelValues(outcome).Inc()
 }
 
 // IncIngressRejectDropped — §94.4: запись журнала отказов потеряна. cause —

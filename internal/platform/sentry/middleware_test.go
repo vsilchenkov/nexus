@@ -21,6 +21,7 @@ func TestHttpStatusToSpanStatus(t *testing.T) {
 		403: sentry.SpanStatusPermissionDenied,
 		404: sentry.SpanStatusNotFound,
 		429: sentry.SpanStatusResourceExhausted,
+		499: sentry.SpanStatusCanceled, // §109.4: клиент ушёл — не отказ
 		400: sentry.SpanStatusInvalidArgument,
 		418: sentry.SpanStatusInvalidArgument,
 		500: sentry.SpanStatusInternalError,

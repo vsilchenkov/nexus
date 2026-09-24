@@ -1136,6 +1136,101 @@ docker compose --profile nginx \r
 публикация портов вернётся к `web`/`receiver`. Остановленный контейнер балансировщика удаляется
 `docker compose rm -f nginx`.
 
+### 5.4.2. ClickHouse: «уплывший» учёт памяти и смена версии (§109.7)
+
+**Симптом.** Вставки логов периодически падают с
+`code: 241, Memory limit (total) exceeded: would use 1.0x GiB … current RSS 150–250 MiB, maximum: 1.00 GiB`
+(в Sentry — «clickhouse batch insert failed»), в `system.part_log` копятся упавшие слияния с
+`error = 241`, а сам процесс ClickHouse занимает в разы меньше лимита. Потерь нет: отказ вставки
+уходит в `nexus.logs.retry` (§38) и дозаписывается, но при длинной серии отстают слияния.
+
+**Причина.** Внутренний счётчик памяти сервера (`MemoryTracking`) расходится с реальной памятью
+процесса и растёт с аптаймом. Замер на ноде с `24.10.2.80` (плавающий тег `24-alpine`, аптайм 31
+сутки): `MemoryTracking` 4.71 ТиБ при RSS 250 МиБ, 1.15 млн `MEMORY_LIMIT_EXCEEDED`. Коррекции
+счётчика по данным jemalloc/cgroup в 24.10 нет — конфигом не лечится.
+
+**Проверка** (`docker compose exec clickhouse clickhouse-client --query "…"`):
+
+```sql
+SELECT formatReadableSize(value) FROM system.metrics WHERE metric = 'MemoryTracking';
+SELECT formatReadableSize(value) FROM system.asynchronous_metrics WHERE metric = 'MemoryResident';
+SELECT value, last_error_time FROM system.errors WHERE name = 'MEMORY_LIMIT_EXCEEDED';
+SELECT event_date, count() FROM system.part_log WHERE error = 241 GROUP BY event_date ORDER BY event_date;
+```
+
+`MemoryTracking` больше `MemoryResident` в разы, а не на проценты, — это оно.
+
+**Лечение.**
+
+1. Быстро: `docker compose restart clickhouse` (10–20 с; вставки на это время уходят в
+   retry-топик и дозаписываются, логи в UI кратко недоступны). После рестарта `MemoryTracking`
+   ≈ `MemoryResident`, но дрейф со временем возвращается.
+2. Надёжно: смена версии на `clickhouse/clickhouse-server:26.3.33.24-alpine` (LTS; прогнана всем
+   набором integration-тестов Nexus) **с включённой коррекцией счётчика** — в 26.3 она есть, но по
+   умолчанию выключена. Шаблоны `deploy/docker-compose.standalone.override.yml` и
+   `deploy/docker-compose.ha.standalone.override.yml` задают обе строки:
+
+   ```yaml
+   clickhouse:
+     image: clickhouse/clickhouse-server:26.3.33.24-alpine
+     command: ["--", "--memory_worker_correct_memory_tracker=1"]
+   ```
+
+**Смена версии ClickHouse на работающем сервере** (самодостаточный стек, CH в Docker):
+
+1. **Бэкап тома — обязателен**: вернуться на 24.x после записи данных новой версией может не
+   получиться. Имя тома — `docker volume ls | grep clickhouse` (обычно `nexus_clickhouse_data`).
+
+   ```bash
+   cd /opt/nexus
+   docker compose stop clickhouse
+   mkdir -p /opt/backup
+   docker run --rm -v nexus_clickhouse_data:/data:ro -v /opt/backup:/backup alpine \
+     tar czf /backup/ch-$(date +%F).tgz -C /data .
+   docker compose start clickhouse
+   ```
+
+   Пока ClickHouse остановлен, вставки уходят в retry-топик — это штатно.
+2. В локальном `docker-compose.override.yml` сервиса `clickhouse` заменить `image:` и добавить
+   `command:` (как в шаблоне выше). Локальный файл мог отстать от шаблона — сверьте `diff`, но
+   переносите только эти две строки.
+3. Двумя шагами, чтобы не упереться в память малого сервера:
+   `docker compose pull clickhouse`, затем `docker compose up -d clickhouse`.
+
+   **Стек с шаблоном через `-f`** (способ 2 §5.3.1 или HA-шаблон): шаг 2 не нужен — строки уже
+   пришли с тегом. Бэкап (шаг 1) делается ДО первого `up -d` после обновления репозитория. Чтобы
+   пока остаться на прежней версии, положите рядом файл `docker-compose.clickhouse-pin.yml`
+
+   ```yaml
+   services:
+     clickhouse:
+       image: clickhouse/clickhouse-server:24-alpine
+   ```
+
+   и добавляйте его последним `-f` в каждую команду compose (аргумент `command:` из шаблона 24.x
+   игнорирует). Тот же файл с `26.3.33.24-alpine` держит новую версию при откате релиза.
+4. Проверка: `docker compose ps clickhouse` — `healthy`; `SELECT version()` — 26.3;
+   `SELECT value FROM system.server_settings WHERE name = 'memory_worker_correct_memory_tracker'`
+   — `1`; в логах Sender'а и Web нет ошибок ClickHouse; `nexus_kafka_lag{topic="nexus.logs.retry"}`
+   возвращается к нулю; логи узлов открываются в UI; через сутки `MemoryTracking` ≈
+   `MemoryResident`.
+5. Откат: вернуть прежние `image:`/`command:` и восстановить том из архива шага 1. **Логи узлов,
+   записанные после бэкапа, при этом пропадут**: 24.x их читать не обязан, а взять их повторно
+   неоткуда.
+
+   ```bash
+   cd /opt/nexus
+   docker compose stop clickhouse
+   docker run --rm -v nexus_clickhouse_data:/data -v /opt/backup:/backup alpine \
+     sh -c 'find /data -mindepth 1 -delete && tar xzf /backup/ch-<дата>.tgz -C /data'
+   docker compose up -d clickhouse
+   ```
+
+Интроспекция схемы логов (§56: TTL, кодеки, индексы) на 26.3 видит таблицы так же, как на 24.x —
+цикла `MODIFY TTL` после смены версии нет (сверено `SHOW CREATE TABLE`/`system.columns` на обеих).
+
+---
+
 ### 5.5. Развёртывание без простоя: две реплики каждого сервиса (§93)
 
 Профиль, при котором обновление приложения и падение процесса перестают быть простоем: по две
@@ -2563,6 +2658,52 @@ Receiver'а. Смешанные версии:
 
 **Откат.** Схему откатывать не нужно (§10.2): прежний код колонки не читает. `--migrate-down 1`
 удаляет обе колонки, и значения флагов теряются (см. §10.6).
+
+### 9.1.6. Что изменится после обновления на §109
+
+**Миграций нет.** Меняется поведение sync-трафика в окне выката Sender'а и уровень шумных строк лога.
+
+- **Ответ на недоступный Sender — 503 вместо 502.** Если вызов не удалось отправить Sender'у за
+  `sender_grpc.ready_wait_ms` (дефолт 30000; Sender перезапускается или лежит), клиент получает
+  `503 {"error":"sender unavailable"}` и `Retry-After: 5`: вызов не отправлялся, повтор безопасен.
+  Раньше тот же случай давал `502 «internal routing error»`. Клиентам, которые различают коды,
+  стоит повторять 503. Обрыв Sender'а **посреди** вызова по-прежнему даёт 502: исход у получателя
+  неизвестен.
+- **Выкат одиночного Sender'а больше не рвёт sync-запросы**, если от начала его остановки
+  (переход в `NOT_SERVING`) до открытого порта нового проходит меньше `ready_wait_ms`: дренаж 5 с +
+  доигрывание текущих вызовов + пересоздание контейнера + старт. Запросы окна ждут его и уходят;
+  рост латентности на время рестарта — норма. Долгие вызовы в полёте (long-poll ботов) держат
+  остановку до `shutdown.timeout_sec`, и тогда окно может превысить 30 с — такие запросы получат 503.
+  Проверка после выката: в метрике `nexus_sender_ready_wait_total` растёт `outcome="ready"` (в
+  простое соединения к Sender'у не засыпают, поэтому `ready` — это настоящие ожидания выката), а
+  `timeout` остаётся нулевым; в логе Sender'а строка `sender startup phases` с `until_grpc_ms`
+  (время от начала старта приложения до открытого gRPC-порта).
+- **Новый ключ `sender_grpc.ready_wait_ms`** (в секциях `receiver` и `web`, рабочий дефолт —
+  конфиг править не нужно). `<0` возвращает прежний fail-fast.
+- **Уход клиента — 499 и Debug.** Клиент закрыл соединение, не дождавшись ответа: Receiver
+  отвечает 499 (в журнал отказов §94 не пишется), Web пишет строку на Debug. Такие события
+  перестают приходить в Sentry.
+- **Путь в чужой кодировке** (`%CE%F0`) — 404 вместо 502.
+- **Токены ботов маскируются в Sentry по значению** (`bot<id>:***`) в любом поле события.
+- **Шаблоны самодостаточного стека закрепили ClickHouse 26.3 LTS** с коррекцией учёта памяти
+  (§5.4.2). Установки, где override — локальная КОПИЯ шаблона (способ 1 §5.3.1), не
+  затрагиваются: версия меняется только по процедуре §5.4.2.
+  ⚠️ Стек, подключающий шаблон напрямую через `-f` или `COMPOSE_FILE` —
+  `deploy/docker-compose.standalone.override.yml` (способ 2 §5.3.1, в том числе вместе с профилем
+  малой памяти) или `deploy/docker-compose.ha.standalone.override.yml`, — получит ClickHouse 26.3
+  при первом же пересоздании контейнера `clickhouse` (например, `up -d --build` без списка
+  сервисов). **Перед обновлением такого стека сделайте бэкап тома** по шагу 1 §5.4.2 — или
+  закрепите прежний образ отдельным `-f`-файлом (§5.4.2, «Стек с шаблоном через `-f`»).
+  ⚠️ **Откат релиза** для такого стека вернёт шаблону `24-alpine` поверх тома, уже записанного
+  26.3. Перед откатом закрепите `26.3.33.24-alpine` отдельным `-f`-файлом либо откатывайте и том
+  (шаг 5 §5.4.2).
+
+**Порядок выката: Receiver → Sender → Web**, как обычно. Смешанные версии совместимы: протокол
+Receiver↔Sender не менялся. Выигрыш от быстрого старта (§109.2) даёт новый Sender, ожидание
+готовности (§109.3) — новый Receiver, поэтому первым обновляется Receiver: следующий за ним рестарт
+Sender'а он уже переживает.
+
+**Откат.** Схему откатывать не нужно: миграций нет. Ключ `ready_wait_ms` прежний код игнорирует.
 
 ### 9.2. Готовые образы из registry — больше не используется
 

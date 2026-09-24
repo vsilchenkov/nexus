@@ -101,7 +101,7 @@ func (h *PreferenceHandler) SetPref(c *gin.Context) {
 		case errors.Is(err, domain.ErrUserNotTeamMember):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "team is not among user memberships"})
 		default:
-			h.logger.ErrorWithOp("set preference", err, "prefs.set")
+			logServerError(c, h.logger, "set preference", err, "prefs.set")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		}
 		return

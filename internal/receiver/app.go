@@ -100,7 +100,8 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, cipher *cr
 }
 
 func (a *App) Start(ctx context.Context) error {
-	senderCl, err := grpcsender.New(&a.cfg.Receiver.SenderGRPC, a.logger)
+	senderCl, err := grpcsender.New(&a.cfg.Receiver.SenderGRPC, a.logger,
+		grpcsender.WithReadyWaitObserver(a.metrics)) // §109.3
 	if err != nil {
 		return fmt.Errorf("init sender client: %w", err)
 	}

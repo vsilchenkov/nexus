@@ -110,7 +110,7 @@ func (h *BreakerHandler) breakerError(c *gin.Context, err error, op string) {
 	case errors.Is(err, domain.ErrNodeNotFound):
 		localizedError(c, http.StatusNotFound, "node.not_found")
 	default:
-		h.logger.ErrorWithOp("breaker op failed", err, op)
+		logServerError(c, h.logger, "breaker op failed", err, op)
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
 }

@@ -240,7 +240,7 @@ func (h *LogsHandler) List(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"items": []LogRecordDTO{}, "logs_available": false})
 			return
 		}
-		h.logger.ErrorWithOp("logs list failed", err, "logs.list",
+		logServerError(c, h.logger, "logs list failed", err, "logs.list",
 			h.logger.Str("node_id", nodeID))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
@@ -293,7 +293,7 @@ func (h *LogsHandler) CountFailed(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"count": 0, "logs_configured": true, "logs_available": false})
 			return
 		}
-		h.logger.ErrorWithOp("logs failed-count failed", err, "logs.failed_count",
+		logServerError(c, h.logger, "logs failed-count failed", err, "logs.failed_count",
 			h.logger.Str("node_id", nodeID))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
@@ -454,7 +454,7 @@ func (h *LogsHandler) writeFacetError(c *gin.Context, nodeID, op string, err err
 		maps.Copy(payload, empty)
 		c.JSON(http.StatusOK, payload)
 	default:
-		h.logger.ErrorWithOp("logs facet failed", err, op, h.logger.Str("node_id", nodeID))
+		logServerError(c, h.logger, "logs facet failed", err, op, h.logger.Str("node_id", nodeID))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
 	return true
@@ -505,7 +505,7 @@ func (h *LogsHandler) writeLogReadError(c *gin.Context, nodeID, op string, err e
 			h.logger.Str("node_id", nodeID), h.logger.Err(err))
 		localizedError(c, http.StatusServiceUnavailable, "error.logs_unavailable")
 	default:
-		h.logger.ErrorWithOp("log read failed", err, op, h.logger.Str("node_id", nodeID))
+		logServerError(c, h.logger, "log read failed", err, op, h.logger.Str("node_id", nodeID))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
 	return true
@@ -700,7 +700,7 @@ func (h *LogsHandler) Stream(c *gin.Context) {
 			c.SSEvent("logs_unavailable", gin.H{"logs_available": false})
 			return
 		}
-		h.logger.ErrorWithOp("logs subscribe failed", err, "logs.stream",
+		logServerError(c, h.logger, "logs subscribe failed", err, "logs.stream",
 			h.logger.Str("node_id", nodeID))
 		c.SSEvent("error", gin.H{"error": "internal error"})
 		return

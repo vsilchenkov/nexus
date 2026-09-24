@@ -75,7 +75,7 @@ func (h *ServiceLogsHandler) List(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		h.logger.ErrorWithOp("service logs tail failed", err, "service_logs.list")
+		logServerError(c, h.logger, "service logs tail failed", err, "service_logs.list")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
@@ -110,7 +110,7 @@ func (h *ServiceLogsHandler) Download(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		h.logger.ErrorWithOp("service logs download failed", err, "service_logs.download")
+		logServerError(c, h.logger, "service logs download failed", err, "service_logs.download")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}

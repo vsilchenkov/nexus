@@ -101,6 +101,15 @@ const docTemplatereceiver = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "503": {
+                        "description": "sender unavailable — Sender перезапускается и не поднялся за sender_grpc.ready_wait_ms; вызов не отправлялся, повторить после Retry-After (§109.3)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
@@ -195,6 +204,15 @@ const docTemplatereceiver = `{
                     },
                     "405": {
                         "description": "метод не принимается узлом; либо GET-подписка SSE у узла с отказом от потока (§107, заголовок Allow)",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "sender unavailable — Sender перезапускается и не поднялся за sender_grpc.ready_wait_ms; вызов не отправлялся, повторить после Retry-After (§109.3)",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

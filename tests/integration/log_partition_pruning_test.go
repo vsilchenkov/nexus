@@ -173,6 +173,7 @@ func measureRead(
 	r *webch.LogReaderCH, q port.LogQuery, comment string,
 ) (readRows, selectedParts uint64) {
 	t.Helper()
+	dropQueryConditionCache(t, ctx, conn)
 	qctx := chgo.Context(ctx, chgo.WithSettings(map[string]any{"log_comment": comment}))
 	_, err := r.Search(qctx, q)
 	require.NoError(t, err)
@@ -184,4 +185,20 @@ func measureRead(
 		WHERE type = 'QueryFinish' AND log_comment = ?
 		ORDER BY event_time_microseconds DESC LIMIT 1`, comment).Scan(&readRows, &selectedParts))
 	return readRows, selectedParts
+}
+
+// dropQueryConditionCache сбрасывает кеш условий запросов перед замером. С
+// ClickHouse 25.3 он включён по умолчанию (use_query_condition_cache): повторный
+// запрос с тем же фильтром читает только гранулы, совпавшие в прошлый раз, и
+// замер «сколько читает запрос» врёт. На 26.3 «несуженный» запрос после первого
+// подтеста прочитал 8192 строки из 200 000 — проверка кратного сокращения
+// падала, хотя сужение работает (§109.7). На версиях до 25.3 кеша и команды нет.
+func dropQueryConditionCache(t *testing.T, ctx context.Context, conn chdriver.Conn) {
+	t.Helper()
+	v, err := conn.ServerVersion()
+	require.NoError(t, err)
+	if v.Version.Major < 25 || (v.Version.Major == 25 && v.Version.Minor < 3) {
+		return
+	}
+	require.NoError(t, conn.Exec(ctx, "SYSTEM DROP QUERY CONDITION CACHE"))
 }

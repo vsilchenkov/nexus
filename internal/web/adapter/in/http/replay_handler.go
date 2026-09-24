@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
@@ -9,6 +8,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/domain/logsearch"
+	"nexus/internal/platform/clientgone"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
 	"nexus/internal/web/usecase/port"
@@ -102,7 +102,7 @@ func (h *ReplayHandler) Replay(c *gin.Context) {
 	case errors.Is(err, domain.ErrNodeDisabled):
 		localizedError(c, http.StatusConflict, "node.disabled")
 	default:
-		h.logger.ErrorWithOp("replay failed", err, "log.replay",
+		logServerError(c, h.logger, "replay failed", err, "log.replay",
 			h.logger.Str("log_id", logID))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
@@ -242,12 +242,14 @@ func (h *ReplayHandler) replayPeriodError(c *gin.Context, err error, op string) 
 		// Логи временно недоступны — это не 500: та же мягкая деградация, что у
 		// счётчиков журнала (§67), только здесь операция просто не начинается.
 		localizedError(c, http.StatusServiceUnavailable, "error.logs_unavailable")
-	case errors.Is(err, context.Canceled):
+	case clientgone.Is(c.Request.Context(), err):
 		// Клиент ушёл (кнопка «Остановить» или закрытая вкладка) — не ошибка
-		// сервера и не повод для записи в Sentry.
+		// сервера и не повод для записи в Sentry. Предикат тот же, что у
+		// logServerError (§109.4): отмена при живом запросе осталась бы
+		// ошибкой. Отдельная ветка — ради того, что ответа здесь нет вовсе.
 		h.logger.Debug("replay period aborted by client", h.logger.Str("node_id", c.Param("id")))
 	default:
-		h.logger.ErrorWithOp("replay period failed", err, op,
+		logServerError(c, h.logger, "replay period failed", err, op,
 			h.logger.Str("node_id", c.Param("id")))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
@@ -292,7 +294,7 @@ func (h *ReplayHandler) ReplayFailed(c *gin.Context) {
 	case errors.Is(err, domain.ErrNodeDisabled):
 		localizedError(c, http.StatusConflict, "node.disabled")
 	default:
-		h.logger.ErrorWithOp("replay-all failed", err, "node.replay_all",
+		logServerError(c, h.logger, "replay-all failed", err, "node.replay_all",
 			h.logger.Str("node_id", c.Param("id")))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}

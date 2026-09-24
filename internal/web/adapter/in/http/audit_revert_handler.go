@@ -190,7 +190,7 @@ func (h *AuditRevertHandler) dryRun(c *gin.Context, err error) RevertDryRunDTO {
 func (h *AuditRevertHandler) replyError(c *gin.Context, err error, op string) {
 	r, ok := revertErrorReply(err)
 	if !ok {
-		h.logger.ErrorWithOp("audit revert failed", err, op)
+		logServerError(c, h.logger, "audit revert failed", err, op)
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}

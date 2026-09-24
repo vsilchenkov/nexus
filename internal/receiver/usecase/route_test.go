@@ -1,9 +1,11 @@
 package usecase
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -437,4 +439,40 @@ func TestRoute_UpstreamNoResponse_StatusMapping(t *testing.T) {
 			assert.JSONEq(t, `{"error":"upstream unavailable"}`, string(out.Body))
 		})
 	}
+}
+
+// TestRoute_DebugLogMasksBotToken — ревизия §109 (стенд): у passthrough-адреса
+// Telegram Bot API за путём узла идёт токен бота, и debug-строки резолва и
+// отправки печатали его целиком — путь, хвост и целевой URL, а §51.9 секреты в
+// debug запрещает. Строки остаются, форма пути тоже; секрета нет. В сам вызов
+// Sender'у токен уходит как есть — маскируется только лог.
+func TestRoute_DebugLogMasksBotToken(t *testing.T) {
+	t.Parallel()
+
+	const secret = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw_"
+	var buf bytes.Buffer
+	logger := logging.NewLogger(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	node := methodTestNode()
+	node.Path = "telegram"
+	node.PathPassthrough = true
+	node.OutgoingMethod = domain.HTTPMethodPOST
+	node.TargetURL = "https://api.telegram.org"
+	reader := mapNodeReader{nodes: map[string]*domain.Node{"vika/telegram": node}}
+	sender := &capturingSender{}
+	u := NewRouteUsecase(reader, sender, 5, logger)
+
+	path := "telegram/bot1:" + secret + "/getUpdates"
+	_, err := u.Route(context.Background(), RouteInput{TeamSlug: "vika", NodePath: path, Method: "POST", Query: url.Values{}})
+	require.NoError(t, err)
+	require.Contains(t, sender.last.GetTargetUrl(), secret, "Sender'у токен уходит без маски")
+	_, err = u.NodeRootMethod(context.Background(), "vika", path, nil)
+	require.NoError(t, err)
+
+	out := buf.String()
+	for _, msg := range []string{"route: node resolved", "route: forwarding to sender", "route: root method resolved for short url"} {
+		assert.Contains(t, out, msg)
+	}
+	assert.NotContains(t, out, secret)
+	assert.Contains(t, out, "bot1:***")
 }

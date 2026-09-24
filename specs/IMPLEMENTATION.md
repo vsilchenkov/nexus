@@ -6789,3 +6789,157 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
   `gone` проверяется раньше сравнимости полей, и это верно — узла действительно нет.
 - При окне уже ~1100px правые колонки таблицы журнала («Стало» и кнопка отмены) уходят под
   горизонтальный скролл. Это было и до §108: колонка «Стало» не помещалась и без новой колонки.
+
+### 4.94 §109 — устойчивость sync к рестарту Sender и шум Sentry
+
+Раздел [109-sender-restart-resilience.md](sections/109-sender-restart-resilience.md). Ветка
+`feature/sender-restart-resilience`. Статус ✅ — сдано (гейты, ревизия, стенд), в `dev` не слито.
+Миграций нет; новый ключ `sender_grpc.ready_wait_ms` с рабочим дефолтом (30000). Выкат
+Receiver → Sender → Web; смена версии ClickHouse на KZ (KZ.2) — отдельной операцией по
+DEPLOYMENT §5.4.2.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §109 + инструмент разбора Sentry | ✅ Phase 109.0 | [sections/109-sender-restart-resilience.md](sections/109-sender-restart-resilience.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); скилл [sentry-fix](../.claude/skills/sentry-fix/SKILL.md) + [sentry.ps1](../.claude/skills/sentry-fix/scripts/sentry.ps1) (список за 7 сут через орг-endpoint, разбор issue по видам ошибок, маска токенов ботов в выводе), ссылка из [nexus-sentry](../.claude/skills/nexus-sentry/SKILL.md) |
+| §109.5 невалидный UTF-8 в пути → 404; журнал отказов не теряет пачку на мусоре | ✅ Phase 109.1 | обёртка `validUTF8Reader` + `errInvalidUTF8Path` в [receiver/usecase/resolver.go](../internal/receiver/usecase/resolver.go) (тест `TestResolveNode_InvalidUTF8`); санитизация образца `Collector.sanitize`/`clientIP` в [rejectlog/collector.go](../internal/receiver/adapter/out/rejectlog/collector.go), `truncateRunes` приводит к валидному UTF-8, `TruncateRequestID` в [domain/rejected.go](../internal/domain/rejected.go) (тест `TestCollectorSanitizesSample`, integration `TestRejectedFlush_GarbageSampleKeepsBatch_E2E`) |
+| §109.4 уход клиента: 499 Receiver, Debug Web | ✅ Phase 109.2 | предикат [platform/clientgone](../internal/platform/clientgone/clientgone.go); перевод gRPC `Canceled` — `translateError` в [grpcsender/client.go](../internal/platform/grpcsender/client.go); Receiver `replyClientGone` + `statusClientClosedRequest` в [handler.go](../internal/receiver/adapter/in/http/handler.go), пропуск 499 в `rejectReason` ([reject_middleware.go](../internal/receiver/adapter/in/http/reject_middleware.go)); Web `logServerError` в [server_error.go](../internal/web/adapter/in/http/server_error.go) (58 мест), 499 в [receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go), replay — тот же предикат; спан 499 → `cancelled` в [sentry/middleware.go](../internal/platform/sentry/middleware.go). Тесты: `TestIs`, `TestGRPCSender_CallerCancelIsContextCanceled`, `TestReplyClientGone`, `TestLogServerError`, `TestReceiverProxy_ClientGone` |
+| §109.2 быстрый старт Sender, фоновый backfill | ✅ Phase 109.3 | [sender/startup.go](../internal/sender/startup.go) (`startBodySizeBackfill`, `startupPhases`, строка `sender startup phases`), `ensureCHSchema` возвращает таблицы и больше не делает backfill ([sender/app.go](../internal/sender/app.go)); Web — `bodySizeBackfillDone` в [web/app.go](../internal/web/app.go); проверка `ctx.Err()` в цикле `BackfillBodySizes` ([ensure_schema.go](../internal/platform/clickhouse/ensure_schema.go)). Тесты `TestStartBodySizeBackfill_DoesNotBlockStart`, `TestStartupPhases` |
+| §109.3 переподключение, ожидание готовности, 503 | ✅ Phase 109.4 | `connectParams`, `pick`, `boundWait`, `observeWait`, `translateError`, `WithReadyWaitObserver` в [grpcsender/client.go](../internal/platform/grpcsender/client.go), `callState` и stats-хендлер `sendTracker` в [sendtrack.go](../internal/platform/grpcsender/sendtrack.go); `domain.ErrSenderUnavailable` ([errors.go](../internal/domain/errors.go)); `replySenderUnavailable` (503 + `Retry-After: 5`, WARN) в [receiver handler.go](../internal/receiver/adapter/in/http/handler.go); ключ `sender_grpc.ready_wait_ms` ([config.go](../internal/platform/config/config.go), `defaultSenderReadyWaitMs` в defaults.go, три YAML); счётчик `nexus_sender_ready_wait_total{outcome}` ([metrics.go](../internal/platform/metrics/metrics.go)), wiring в receiver/app.go и web/app.go; Swagger `@Failure 503`; CHANGELOG `[Unreleased]`; DEPLOYMENT §9.1.6. Тесты [client_readywait_test.go](../internal/platform/grpcsender/client_readywait_test.go) (рестарт Sender'а как при выкате: `NOT_SERVING` → дренаж → `GracefulStop` — ровно один вызов; таймаут и выключенное ожидание → `ErrSenderUnavailable`; отмена во время ожидания; обрыв посреди вызова — НЕ `ErrSenderUnavailable`), [sendtrack_test.go](../internal/platform/grpcsender/sendtrack_test.go) (отправка и истечение взаимоисключающие, устаревший `READY` в счётчике, `translateError`), `TestReplySenderUnavailable` |
+| §109.6 scrubbing `bot<id>:<secret>` в Sentry | ✅ Phase 109.5 | `MaskBotTokens` в [sensitive/bottoken.go](../internal/platform/sensitive/bottoken.go) (табличный тест, fuzz, бенчмарк — 0 аллокаций без токена); `maskEventTokens`, `maskTokensStr`, `maskTokensAny` и спаны/крошки в [sentry/sentry.go](../internal/platform/sentry/sentry.go); тесты [tokens_test.go](../internal/platform/sentry/tokens_test.go) — токен во всех полях, проверка итогового JSON события (красные без маскировщика); CHANGELOG `### Security` |
+| §109.7 версия ClickHouse: кандидат 26.3 LTS | ✅ Phase 109.6 | `clickHouseImage()` + `NEXUS_TEST_CLICKHOUSE_IMAGE` в [tests/integration/clickhouse_test.go](../tests/integration/clickhouse_test.go) (дефолт `24-alpine`); полный `make test-integration` на `26.3.33.24-alpine` зелёный после правки замера в [log_partition_pruning_test.go](../tests/integration/log_partition_pruning_test.go) (`dropQueryConditionCache`); `image:` + `command: ["--", "--memory_worker_correct_memory_tracker=1"]` в [standalone.override](../deploy/docker-compose.standalone.override.yml) и [ha.standalone.override](../deploy/docker-compose.ha.standalone.override.yml); DEPLOYMENT §5.4.2 и §9.1.6, DEVELOPMENT (переменные версий хранилищ), CHANGELOG |
+| Ревизия перед сдачей (ревьюер + стенд) | ✅ Phase 109.7 | пул gRPC: `Connect` в `New`, `WithIdleTimeout(0)`, побудка `IDLE` в `pick` ([grpcsender/client.go](../internal/platform/grpcsender/client.go), тесты `TestSend_PoolSpreadsCalls`, `TestSend_SentCallOutlivesReadyWait`); дефолт `ready_wait_ms` 30000 ([config/defaults.go](../internal/platform/config/defaults.go)); токен бота в строках Receiver'а — `nodeForLog`, `redactURLString`, резолв, кеш узлов, rate-limit — и прокси Web (тесты `TestRoute_DebugLogMasksBotToken`, `TestReplyDomainError_NotFoundMasksBotToken`, `TestReplyClientGone_NoPathSecretInLog`, `TestReceiverProxy_ClientGone`); пустой адрес в журнале отказов — `0.0.0.0`; DEPLOYMENT §9.1.6/§5.4.2 — шаблоны через `-f`, откат с потерей логов |
+
+**Неочевидности §109 (пополняется по блокам):**
+
+- Sentry группирует issue по стеку, а не по тексту: в NEXUS-S лежат и `Unavailable` выката, и
+  `Canceled` ушедшего клиента. Виды ошибок видны только по событиям (`sentry.ps1 -Issue`), не по
+  заголовку issue.
+- **§109.5: проверка UTF-8 стоит на каждом `Get`, а не одна на входе `resolveNode`.** Отказ на
+  входе сломал бы passthrough (§39): узел-префикс валиден, а хвост в cp1251 должен уйти получателю
+  как есть. До §109.5 такой запрос тоже падал 502 — первым идёт точный поиск по полному пути, и он
+  уходил в PostgreSQL с невалидной строкой.
+- **§109.5: одно «плохое» поле роняло ВСЮ пачку журнала отказов §94.** `Repo.Flush` пишет пачку
+  одной транзакцией, и PostgreSQL отвергал её целиком: невалидный UTF-8 (22021 — 404 на путь в
+  cp1251 сам попадает в журнал), `X-Request-Id` длиннее `VARCHAR(64)` (22001 — `requestid` берёт
+  заголовок клиента как есть), мусор в первом элементе `X-Forwarded-For` (22P02 на `::inet` — nginx
+  дописывает свой адрес через `$proxy_add_x_forwarded_for`, а не заменяет клиентский), IPv6 с
+  зоной `fe80::1%eth0` (INET зону не разбирает). Терялись отказы всех групп за интервал сброса, а
+  одним запросом раз в интервал журнал можно было ослепить. Санитизация — в `Collector.Add`
+  (граница с хранилищем), не только в middleware; не-адрес пишется как `0.0.0.0` (реальным клиентом
+  быть не может, PTR для него не резолвится). Integration-тест на старом коде давал 0 групп из 2.
+- **§109.4: gRPC-статус `Canceled` не оборачивает `context.Canceled`.** `errors.Is(err,
+  context.Canceled)` для вызова Sender'а, оборванного уходом клиента, ложен — поэтому
+  `grpcsender.Client.Send` переводит код сам (`translateError`), и только при отменённом контексте
+  вызывающего: `Canceled` при живом контексте — чужая отмена, её прятать нельзя. Истёкший срок
+  (`DeadlineExceeded`) уходом клиента не считается нигде.
+- **§109.4: 499 в Receiver обязан быть исключён из журнала отказов явно.** `rejectReason` пишет
+  любой 4xx без причины по статусу — без исключения каждый ушедший клиент стал бы «отказом шины»
+  в §94 и метрике `nexus_ingress_rejected_total`.
+- **§109.4: в Web 499 ставит только прокси.** Обработчики после ошибки пишут `localizedError(c,
+  500, …)`, и `c.Status(499)` до него был бы молча перезаписан; переписывать ответ в 58 местах ради
+  метрики ушедшего клиента не стали — границы в §109.8.
+- **§109.2: backfill §42.10 остаётся на каждом старте, но в фоне.** Его guard-count — `SELECT
+  count() … WHERE (request_size=0 AND request!='') OR …`, полный проход по колонкам тел каждой
+  таблицы, даже когда разовый backfill давно выполнен. Убрать его совсем нельзя (новая нода,
+  таблица, созданная старой версией), а синхронно он держал закрытым gRPC-порт Sender'а. Колонки
+  (`ADD COLUMN`) — синхронно: без них упал бы первый INSERT.
+- **§109.2: `until_grpc_ms` меряет от `App.Start`, а не от старта процесса.** Подключения из `main`
+  (`MustPG`, `MustClickHouse`, `MustRedis`, `MustEnsureKafkaTopics`) идут раньше; при недоступной
+  зависимости время уходит туда, и строка фаз этого не покажет — смотреть время между строками
+  «starting service» и «sender grpc listening».
+- **§109.3: признак «вызов отправлен» — событие `OutHeader`, а не состояние соединения.**
+  `Unavailable` gRPC одинаков для «транспорта нет» (connection refused, `TRANSIENT_FAILURE`,
+  `NOT_SERVING` по health) и «транспорт оборвался посреди вызова». Первая версия различала их по
+  `GetState()` соединения на момент вызова — и врала: сразу после падения Sender'а соединение ещё
+  числится `READY` (состояние обновляется асинхронно), вызов падал мгновенно и не ждал
+  (`TestSend_SurvivesSenderRestart` краснел за 0.01 с). Теперь stats-хендлер `sendTracker`
+  ([sendtrack.go](../internal/platform/grpcsender/sendtrack.go)) отмечает в `callState` (лежит в
+  ctx вызова) событие `OutHeader{Client:true}`: gRPC эмитит его в `http2Client.NewStream` после
+  постановки заголовков в очередь живого транспорта, на контексте, производном от контекста
+  вызова. Не отправлен → `ErrSenderUnavailable` (503), отправлен → прежние 502 + ERROR (урок §82.1).
+- **§109.3: ожидание — `WaitForReady(true)` + таймер, а не `retryPolicy` и не своё ожидание по
+  состояниям.** `retryPolicy` повторяет и уже ушедший вызов (дубль у получателя). Голый
+  `WaitForReady` ждёт без предела, кроме контекста запроса, а у входящего HTTP-запроса Receiver'а
+  срока нет. Своё ожидание через `WaitForStateChange` (первая версия) не видит устаревший `READY`
+  и требует ручного `Connect()` из `IDLE`. Поэтому вызов идёт с `WaitForReady`, а
+  `time.AfterFunc(ready_wait)` отменяет его контекст, только если CAS `pending→expired` в
+  `callState` успел раньше `pending→sent` из `OutHeader`. Отправленный вызов таймер не трогает.
+  Узкое окно на самой границе `ready_wait_ms` (транспорт выбран, заголовки ещё не поставлены) —
+  в §109.8.
+- **§109.3: устаревший `READY` лечит сам gRPC.** Если транспорт уже закрыт, а соединение ещё
+  считается готовым, `NewStream` падает с `AllowTransparentRetry` (закрытие, GOAWAY) — gRPC
+  повторяет попытку прозрачно, и с `WaitForReady` она блокируется в выборе транспорта, пока Sender
+  не вернётся. Такой вызов виден по событию `DelayedPickComplete`: по нему он попадает в счётчик
+  ожиданий, хотя на старте соединение было `READY`. Жёсткое падение Sender'а (без GOAWAY) в первые
+  миллисекунды даёт 502: вызов успел уйти в мёртвый сокет, исход неотличим от обрыва.
+- **§109.3: тест рестарта моделирует выкат, а не `Stop()`.** Sender останавливается так:
+  health `NOT_SERVING` → дренаж → `GracefulStop` (GOAWAY) — `TestSend_SurvivesSenderRestart`
+  делает то же. Жёсткий `Stop()` прямо перед вызовом даёт честный 502 (вызов ушёл в мёртвый сокет) —
+  этот случай проверяет `TestSend_BreakMidCall_NotSenderUnavailable`, а не тест рестарта.
+- **§109.6: маскирование по значению, а не по имени поля.** `maskMap`/`maskAny` ищут секрет по
+  ключу (`token`, `authorization`…), а токен бота приходит в пути URL passthrough-узла — под ключом
+  `node`, в message, тексте ошибки, имени транзакции. Поэтому отдельный проход `maskEventTokens` по
+  всем строковым значениям. Порядок в SDK безопасен: `BeforeSend`/`BeforeSendTransaction`
+  вызываются ДО `MakeSerializationSafe` (sentry-go 0.46 предсериализует теги/данные спанов в
+  `json.RawMessage` при постановке в очередь отправки) — правки из хуков попадают в отправку. У
+  `Event` в 0.46 нет поля `Extra`, а `sentry.Context` — алиас `map[string]any` (второй case в
+  type switch не компилируется).
+- **§109.7: коррекция счётчика памяти в 26.3 выключена по умолчанию.**
+  `memory_worker_correct_memory_tracker` = 0 в `system.server_settings` свежего `26.3.33.24-alpine`
+  — одна смена версии дрейф не лечит. Включается аргументом запуска
+  `-- --memory_worker_correct_memory_tracker=1` (entrypoint образа передаёт аргументы после `--`
+  серверу как переопределения конфига; `changed=1` проверено); файл в `config.d` тоже работает, но
+  шаблон `standalone.override` конфигов не монтирует. 24.10.2.80 с этим аргументом и с этим
+  ключом в `config.d` стартует и игнорирует его — откат образа не ломается.
+- **§109.7: закреплены ОБА шаблона самодостаточного стека.** Только `standalone.override` —
+  и переход на пары реплик (§5.5.2-a) через `ha.standalone.override` с `24-alpine` понизил бы
+  версию на томе, записанном 26.3. Цена: HA-шаблон подключается `-f` напрямую из репозитория,
+  поэтому такой стек обновит ClickHouse при следующем пересоздании контейнера — предупреждение и
+  бэкап в DEPLOYMENT §9.1.6. Integration-тесты по умолчанию остаются на `24-alpine` (минимальная
+  поддерживаемая версия, как `postgres:12-alpine`).
+- **§109.7: кеш условий запросов ClickHouse 25.3+ ломает замеры `read_rows`.** На 26.3
+  `use_query_condition_cache` = 1 по умолчанию: повторный запрос с тем же фильтром читает только
+  гранулы, совпавшие в прошлый раз. `TestClickHouse_DateCreatePruning_E2E` на 26.3 упал —
+  «несуженный» запрос после первого подтеста прочитал 8192 строки из 200 000, и проверка
+  «сужение по date_create сокращает чтение кратно» потеряла базу. Сужение при этом работает (с
+  холодным кешем 200 000 → 24 576 строк, 3 → 1 часть). Замер теперь сбрасывает кеш
+  (`SYSTEM DROP QUERY CONDITION CACHE`, только на ≥ 25.3 — в 24.x команды нет). Для продукта это
+  не дефект: повторные чтения логов тем же фильтром (опрос окна в UI) на 26.3 дешевле.
+- **Ревизия §109: `pick` с предпочтением `READY` схлопывал пул до одного соединения.**
+  `grpc.NewClient` ленивый: канал выходит из `IDLE` только по вызову или `Connect`, а `pick` не
+  даёт ему вызовов, пока рядом есть готовое соединение. Вдобавок канал, простоявший 30 минут без
+  вызовов (дефолтный idle timeout gRPC), уходил обратно в `IDLE` — за тихую ночь пул таял. Весь
+  sync шёл по одному HTTP/2-соединению: большие тела задерживали остальные вызовы, потолок стримов
+  наступал в N раз раньше, а выход из `IDLE` засчитывался ожиданием (`outcome="ready"` на холодном
+  старте — ложное подтверждение проверки выката). Лечение из трёх частей: `Connect` в `New`,
+  `WithIdleTimeout(0)`, `pick` будит пропущенные `IDLE` (после рестарта Sender'а каналы тоже могут
+  остаться в `IDLE`). `TestSend_PoolSpreadsCalls` на старом коде: «1 соединение из 4».
+- **Ревизия §109: бюджет `ready_wait_ms` отсчитывается от `NOT_SERVING`, а не от подъёма.**
+  Health-проверка исключает реплику из round_robin сразу при `grpcHealth.Shutdown()`, дальше —
+  дренаж 5 с, `stopQueueConsumers`, `GracefulStop` (ждёт текущие вызовы до `shutdown.timeout_sec`),
+  выход процесса, пересоздание контейнера, подключения в `main`, `App.Start`. Окно `NOT_SERVING`
+  на бою — 8–10 с, поэтому исходные 15 с были впритык; дефолт поднят до 30 с. Раскладка по
+  событиям NEXUS-T двух выкатов (Sentry API `events/?full=true`: время и адрес из текста ошибки): 08.09 —
+  health 13:27:04–08, старый контейнер `172.18.0.6` refused 13:27:09–13, новый `172.18.0.5` refused
+  13:27:16–42; 23.09 — health 06:28:28–37, старый `.5` 06:28:37–42, новый `.6` 06:28:45–06:29:51.
+  От начала остановки до первого обращения к новому контейнеру — 12–17 с, дальше его старт
+  (тогда 26–66 с из-за backfill, после §109.2 — секунды). IP Sender'а при пересоздании МЕНЯЕТСЯ,
+  но Receiver переходит на новый адрес за ~3 с: опасение, что DNS-резолвер gRPC
+  (`MinResolutionInterval` 30 с) задержит переход, на бою не подтвердилось. Стенд (нативный,
+  жёсткое убийство Sender'а, `ready_wait_ms` тогда 15000): простой 8 с — четыре запроса окна ждали
+  11,6–13 с и прошли, 88 из 88 ответов 200; простой 22 с — ровно 15 с ожидания и 503 +
+  `Retry-After: 5`, WARN вместо ERROR, следующие запросы дождались Sender'а. Порт Sender'а
+  открывается через 2,3–2,7 с после старта (`schema_ms` почти всё время), backfill идёт после.
+- **Ревизия §109 (стенд): токен бота печатался в debug-строках Receiver'а.** Резолв перебирает
+  префиксы адреса, и `node cache: redis miss` пишется на КАЖДЫЙ кандидат; `route: node resolved`
+  пишет путь и хвост, `route: forwarding to sender` — целевой URL (target_url + хвост), а
+  `redactURLString` отрезал только query. У passthrough-узла Telegram Bot API в хвосте токен.
+  Строки старше §109, но §51.9 запрещает секреты в debug, а консоль «Логи» §51 показывает их в UI.
+  Маскирование точечное — `sensitive.MaskBotTokens` там, куда попадает путь клиента; сплошной
+  фильтр в цепочке slog-хендлеров не делался (это правка общей обвязки логгера трёх сервисов).
+  Нашёл только стенд: юнит-тесты шли с `logging.NewNoop()`, а debug-строки на стенде видны лишь
+  после подъёма уровня логов (см. STAND_TESTING, «Диагностика»).
+- **Ревизия §109: пустой адрес клиента в журнале отказов — `0.0.0.0`.** `clientIP` после §109.5
+  превращает всё неразбираемое, включая пустую строку, в unspecified; проверка `ClientIP == ""` в
+  `absorbClient` стала мёртвой и удалена. Для образца это и нужно: `rejected_samples.client_ip` —
+  `INET NOT NULL`, пустая строка уронила бы пачку.

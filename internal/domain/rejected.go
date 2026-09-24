@@ -2,7 +2,9 @@ package domain
 
 import (
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // RejectReason — причина, по которой Receiver не принял запрос (§94.2).
@@ -115,6 +117,9 @@ const (
 	RejectedRawPathMaxLen   = 1024
 	RejectedUserAgentMaxLen = 256
 	RejectedMethodMaxLen    = 16
+	// RejectedRequestIDMaxLen — колонка request_id. X-Request-Id клиент
+	// задаёт сам (requestid берёт его как есть), длина ничем не ограничена.
+	RejectedRequestIDMaxLen = 64
 )
 
 // RejectedGroupKey — естественный ключ группы отказов: «куда и почему».
@@ -235,9 +240,20 @@ func TruncateRawPath(s string) string { return truncateRunes(s, RejectedRawPathM
 // колонки user_agent. Клиент задаёт их сам, длина ничем не ограничена.
 func TruncateUserAgent(s string) string { return truncateRunes(s, RejectedUserAgentMaxLen) }
 
-// truncateRunes обрезает строку до n рун (не байт): обрезка по байтам порвала
-// бы UTF-8 в середине символа, и в БД поехала бы невалидная строка.
+// TruncateRequestID обрезает X-Request-Id сэмпла до колонки request_id.
+func TruncateRequestID(s string) string { return truncateRunes(s, RejectedRequestIDMaxLen) }
+
+// truncateRunes приводит строку к валидному UTF-8 и обрезает до n рун (не
+// байт): обрезка по байтам порвала бы UTF-8 в середине символа.
+//
+// Невалидные байты заменяются на U+FFFD (§109.5): клиент присылает путь и
+// заголовки в чужой кодировке (cp1251), а PostgreSQL с базой в UTF8 отвечает
+// на такую строку ошибкой 22021 — и журнал отказов терял целую пачку, потому
+// что она пишется одной транзакцией.
 func truncateRunes(s string, n int) string {
+	if !utf8.ValidString(s) {
+		s = strings.ToValidUTF8(s, string(utf8.RuneError))
+	}
 	if n <= 0 || len(s) <= n {
 		// len(s) <= n достаточно как быстрый путь: рун не больше, чем байт.
 		return s

@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/sensitive"
 )
 
 // rateAllower — consumer-side interface для rate-limiter'а (§17.4 ТЗ).
@@ -43,7 +44,7 @@ func RateLimitMiddleware(rl rateAllower, limitPerMin int, logger logging.Logger)
 		if err != nil {
 			// fail-open + warning
 			logger.Warn("ratelimit redis error, pass-through",
-				logger.Str("node", nodePath),
+				logger.Str("node", sensitive.MaskBotTokens(nodePath)),
 				logger.Err(err))
 			c.Next()
 			return

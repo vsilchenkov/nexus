@@ -107,7 +107,7 @@ func (h *UserHandler) List(c *gin.Context) {
 		Search: c.Query("search"),
 	})
 	if err != nil {
-		h.logger.ErrorWithOp("list users", err, "user.list")
+		logServerError(c, h.logger, "list users", err, "user.list")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}

@@ -3,7 +3,9 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"nexus/internal/domain"
 	"nexus/internal/receiver/usecase/port"
@@ -28,7 +30,11 @@ import (
 // Поэтому слог найденного узла не всегда равен слогу из адреса: при
 // интерпретации B узел лежит в default-команде, а первый сегмент адреса
 // оказался частью пути. Метки метрик (§101.3) обязаны нести именно его.
+//
+// Адрес с невалидным UTF-8 (§109.5) не доходит до хранилища — см.
+// validUTF8Reader; итог такого резолва — errInvalidUTF8Path (404).
 func resolveNode(ctx context.Context, nodes port.NodeReader, teamSlug, nodePath string) (*domain.Node, string, string, error) {
+	nodes = validUTF8Reader{NodeReader: nodes}
 	explicit := teamSlug
 	if explicit == "" {
 		explicit = domain.DefaultTeamSlug // NodeReader трактует пустой слог так же
@@ -67,7 +73,35 @@ func resolveNode(ctx context.Context, nodes port.NodeReader, teamSlug, nodePath 
 		}
 	}
 
+	if !utf8.ValidString(teamSlug) || !utf8.ValidString(nodePath) {
+		return nil, "", "", errInvalidUTF8Path
+	}
 	return nil, "", "", domain.ErrNodeNotFound
+}
+
+// errInvalidUTF8Path — «узла нет» для адреса в чужой кодировке (§109.5). Для
+// клиента неотличим от ErrNodeNotFound (404), а текст причины виден в
+// debug-строке отказа: без него 404 на адрес, который «точно есть» (клиент
+// прислал кириллицу в cp1251), не объяснить.
+var errInvalidUTF8Path = fmt.Errorf("%w: address is not valid UTF-8", domain.ErrNodeNotFound)
+
+// validUTF8Reader не пускает в хранилище слог и путь с невалидным UTF-8
+// (§109.5): в UTF8-базе такого узла быть не может, а PostgreSQL отвечает на
+// такой параметр ошибкой 22021 — раньше она становилась 502 и событием Sentry
+// (NEXUS-12). Проверка стоит на КАЖДОМ обращении, а не один раз на входе:
+// префиксный матч passthrough-узла (§39) ищет валидные префиксы как прежде, а
+// хвост в чужой кодировке уходит получателю как есть.
+type validUTF8Reader struct {
+	port.NodeReader
+}
+
+// Get возвращает ErrNodeNotFound без обращения к хранилищу, если слог или путь
+// — невалидный UTF-8; иначе делегирует обёрнутому NodeReader.
+func (r validUTF8Reader) Get(ctx context.Context, teamSlug, path string) (*domain.Node, error) {
+	if !utf8.ValidString(teamSlug) || !utf8.ValidString(path) {
+		return nil, domain.ErrNodeNotFound
+	}
+	return r.NodeReader.Get(ctx, teamSlug, path)
 }
 
 // prefixMatch реализует path-passthrough (§39): идёт по префиксам path от

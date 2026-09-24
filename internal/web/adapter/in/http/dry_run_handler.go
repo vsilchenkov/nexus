@@ -126,7 +126,7 @@ func (h *DryRunHandler) Run(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		h.logger.ErrorWithOp("dry-run failed", err, "node.dry_run",
+		logServerError(c, h.logger, "dry-run failed", err, "node.dry_run",
 			h.logger.Str("path", req.Node.Path))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
@@ -174,6 +174,6 @@ func (h *DryRunHandler) replyNodeLoadError(c *gin.Context, err error) {
 		localizedError(c, http.StatusNotFound, "node.not_found")
 		return
 	}
-	h.logger.ErrorWithOp("dry-run: load node failed", err, "node.dry_run")
+	logServerError(c, h.logger, "dry-run: load node failed", err, "node.dry_run")
 	localizedError(c, http.StatusInternalServerError, "error.internal")
 }

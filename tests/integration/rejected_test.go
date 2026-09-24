@@ -5,8 +5,10 @@ package integration
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -376,4 +378,58 @@ func mustRejectedGroupID(t *testing.T, ctx context.Context, reader *pgrepo.Rejec
 	require.NoError(t, err)
 	require.Len(t, groups, 1)
 	return groups[0].ID
+}
+
+// TestRejectedFlush_GarbageSampleKeepsBatch_E2E (§109.5): отказ с мусором от
+// клиента — путь и заголовки в cp1251, X-Request-Id длиннее колонки,
+// подделанный X-Forwarded-For — доезжает до PostgreSQL вместе с соседним
+// нормальным отказом той же пачки.
+//
+// Пачка пишется одной транзакцией: до санитизации в коллекторе такой образец
+// ронял её ошибкой 22021/22001/22P02, и терялись отказы всех групп за интервал
+// сброса. Юнит-тест коллектора этого не доказывает — что примет колонка,
+// решает PostgreSQL.
+func TestRejectedFlush_GarbageSampleKeepsBatch_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	c := rejectlog.New(rejectlog.NewRepo(pool), rejectlog.Config{FlushInterval: time.Hour}, logging.NewNoop())
+	c.SetEnabled(true)
+	runCtx, stop := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.Run(runCtx) // остановка дописывает накопленное одной пачкой
+	}()
+
+	c.Add(rejectlog.Sample{
+		Key: domain.RejectedGroupKey{
+			TeamSlug: "default", NodePath: "telephony",
+			Reason: domain.RejectReasonNodeNotFound, HTTPMethod: "POST",
+		},
+		Status: 404, ClientIP: "10.0.0.1", RawPath: "/api/v1/telephony",
+	})
+	c.Add(rejectlog.Sample{
+		Key: domain.RejectedGroupKey{
+			TeamSlug: "vika_dev5", NodePath: "\xce\xf0",
+			Reason: domain.RejectReasonNodeNotFound, HTTPMethod: "POST",
+		},
+		Status: 404, ClientIP: "<script>", UserAgent: "1C\xff",
+		RawPath:   "/api/v1/vika_dev5/\xce\xf0",
+		RequestID: strings.Repeat("r", 200),
+		Headers:   map[string]string{"Content-Type": "text/\xce\xf0"},
+	})
+	stop()
+	<-done
+
+	reader := pgrepo.NewRejectedRepoPg(pool, logging.NewNoop())
+	groups, err := reader.ListRejected(ctx, port.RejectedFilter{})
+	require.NoError(t, err)
+	require.Len(t, groups, 2, "мусорный образец не уронил пачку")
+
+	paths := []string{groups[0].NodePath, groups[1].NodePath}
+	assert.ElementsMatch(t, []string{"telephony", string(utf8.RuneError)}, paths)
 }

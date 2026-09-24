@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/grpcsender"
@@ -100,4 +102,37 @@ func TestGRPCSender_CallerContextCancelsRPC(t *testing.T) {
 	_, err = cl.Send(ctx, &senderv1.SendRequest{NodePath: "partner/slow"})
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), 3*time.Second, "оборвался по контексту вызывающего, а не по серверной задержке")
+}
+
+// TestGRPCSender_CallerCancelIsContextCanceled — §109.4: вызов, оборванный
+// ОТМЕНОЙ контекста вызывающего (клиент Receiver'а закрыл соединение), даёт
+// ошибку с context.Canceled в цепочке. Сырой gRPC-статус Canceled причину не
+// оборачивает, и слой выше не мог отличить уход клиента от сбоя шины (Sentry
+// NEXUS-S). Истёкший срок так не помечается — это не уход клиента.
+func TestGRPCSender_CallerCancelIsContextCanceled(t *testing.T) {
+	t.Parallel()
+
+	addr, stop := startSlowGRPC(t, 5*time.Second)
+	defer stop()
+
+	cl, err := grpcsender.New(&config.ReceiverSenderGRPCConfig{
+		Addr: addr, PoolSize: 1, KeepaliveTimeSec: 30, KeepaliveTimeoutSec: 10,
+	}, logging.NewNoop())
+	require.NoError(t, err)
+	defer func() { _ = cl.Close() }()
+
+	t.Run("отмена", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(100*time.Millisecond, cancel)
+		_, err := cl.Send(ctx, &senderv1.SendRequest{NodePath: "partner/slow"})
+		require.ErrorIs(t, err, context.Canceled)
+		assert.Equal(t, codes.Canceled, status.Code(err), "gRPC-код остаётся в цепочке")
+	})
+	t.Run("истёк срок", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		_, err := cl.Send(ctx, &senderv1.SendRequest{NodePath: "partner/slow"})
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, context.Canceled)
+	})
 }
