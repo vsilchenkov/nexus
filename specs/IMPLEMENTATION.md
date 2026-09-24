@@ -6806,7 +6806,7 @@ DEPLOYMENT §5.4.2.
 | §109.2 быстрый старт Sender, фоновый backfill | ✅ Phase 109.3 | [sender/startup.go](../internal/sender/startup.go) (`startBodySizeBackfill`, `startupPhases`, строка `sender startup phases`), `ensureCHSchema` возвращает таблицы и больше не делает backfill ([sender/app.go](../internal/sender/app.go)); Web — `bodySizeBackfillDone` в [web/app.go](../internal/web/app.go); проверка `ctx.Err()` в цикле `BackfillBodySizes` ([ensure_schema.go](../internal/platform/clickhouse/ensure_schema.go)). Тесты `TestStartBodySizeBackfill_DoesNotBlockStart`, `TestStartupPhases` |
 | §109.3 переподключение, ожидание готовности, 503 | ✅ Phase 109.4 | `connectParams`, `pick`, `boundWait`, `observeWait`, `translateError`, `WithReadyWaitObserver` в [grpcsender/client.go](../internal/platform/grpcsender/client.go), `callState` и stats-хендлер `sendTracker` в [sendtrack.go](../internal/platform/grpcsender/sendtrack.go); `domain.ErrSenderUnavailable` ([errors.go](../internal/domain/errors.go)); `replySenderUnavailable` (503 + `Retry-After: 5`, WARN) в [receiver handler.go](../internal/receiver/adapter/in/http/handler.go); ключ `sender_grpc.ready_wait_ms` ([config.go](../internal/platform/config/config.go), `defaultSenderReadyWaitMs` в defaults.go, три YAML); счётчик `nexus_sender_ready_wait_total{outcome}` ([metrics.go](../internal/platform/metrics/metrics.go)), wiring в receiver/app.go и web/app.go; Swagger `@Failure 503`; CHANGELOG `[Unreleased]`; DEPLOYMENT §9.1.6. Тесты [client_readywait_test.go](../internal/platform/grpcsender/client_readywait_test.go) (рестарт Sender'а как при выкате: `NOT_SERVING` → дренаж → `GracefulStop` — ровно один вызов; таймаут и выключенное ожидание → `ErrSenderUnavailable`; отмена во время ожидания; обрыв посреди вызова — НЕ `ErrSenderUnavailable`), [sendtrack_test.go](../internal/platform/grpcsender/sendtrack_test.go) (отправка и истечение взаимоисключающие, устаревший `READY` в счётчике, `translateError`), `TestReplySenderUnavailable` |
 | §109.6 scrubbing `bot<id>:<secret>` в Sentry | ✅ Phase 109.5 | `MaskBotTokens` в [sensitive/bottoken.go](../internal/platform/sensitive/bottoken.go) (табличный тест, fuzz, бенчмарк — 0 аллокаций без токена); `maskEventTokens`, `maskTokensStr`, `maskTokensAny` и спаны/крошки в [sentry/sentry.go](../internal/platform/sentry/sentry.go); тесты [tokens_test.go](../internal/platform/sentry/tokens_test.go) — токен во всех полях, проверка итогового JSON события (красные без маскировщика); CHANGELOG `### Security` |
-| §109.7 версия ClickHouse: кандидат 26.3 LTS | ✅ Phase 109.6 | `clickHouseImage()` + `NEXUS_TEST_CLICKHOUSE_IMAGE` в [tests/integration/clickhouse_test.go](../tests/integration/clickhouse_test.go) (дефолт `24-alpine`); полный `make test-integration` на `26.3.33.24-alpine` зелёный после правки замера в [log_partition_pruning_test.go](../tests/integration/log_partition_pruning_test.go) (`dropQueryConditionCache`); `image:` + `command: ["--", "--memory_worker_correct_memory_tracker=1"]` в [standalone.override](../deploy/docker-compose.standalone.override.yml) и [ha.standalone.override](../deploy/docker-compose.ha.standalone.override.yml); DEPLOYMENT §5.4.2 и §9.1.6, DEVELOPMENT (переменные версий хранилищ), CHANGELOG |
+| §109.7 версия ClickHouse: кандидат 26.3 LTS | ✅ Phase 109.6 | `clickHouseImage()` + `NEXUS_TEST_CLICKHOUSE_IMAGE` в [tests/integration/clickhouse_test.go](../tests/integration/clickhouse_test.go) (дефолт `26.3.33.24-alpine` с 24.09, прежний `24-alpine` — переменной); полный `make test-integration` на `26.3.33.24-alpine` зелёный после правки замера в [log_partition_pruning_test.go](../tests/integration/log_partition_pruning_test.go) (`dropQueryConditionCache`); `image:` + `command: ["--", "--memory_worker_correct_memory_tracker=1"]` в [standalone.override](../deploy/docker-compose.standalone.override.yml), [ha.standalone.override](../deploy/docker-compose.ha.standalone.override.yml), [deploy/docker-compose.yml](../deploy/docker-compose.yml) (Вариант A, job `loadtest`) и [docker-compose.deps.yml](../deploy/docker-compose.deps.yml); DEPLOYMENT §5.4.2 и §9.1.6, DEVELOPMENT (переменные версий хранилищ), CHANGELOG |
 | Ревизия перед сдачей (ревьюер + стенд) | ✅ Phase 109.7 | пул gRPC: `Connect` в `New`, `WithIdleTimeout(0)`, побудка `IDLE` в `pick` ([grpcsender/client.go](../internal/platform/grpcsender/client.go), тесты `TestSend_PoolSpreadsCalls`, `TestSend_SentCallOutlivesReadyWait`); дефолт `ready_wait_ms` 30000 ([config/defaults.go](../internal/platform/config/defaults.go)); токен бота в строках Receiver'а — `nodeForLog`, `redactURLString`, резолв, кеш узлов, rate-limit — и прокси Web (тесты `TestRoute_DebugLogMasksBotToken`, `TestReplyDomainError_NotFoundMasksBotToken`, `TestReplyClientGone_NoPathSecretInLog`, `TestReceiverProxy_ClientGone`); пустой адрес в журнале отказов — `0.0.0.0`; DEPLOYMENT §9.1.6/§5.4.2 — шаблоны через `-f`, откат с потерей логов |
 
 **Неочевидности §109 (пополняется по блокам):**
@@ -6895,8 +6895,32 @@ DEPLOYMENT §5.4.2.
   и переход на пары реплик (§5.5.2-a) через `ha.standalone.override` с `24-alpine` понизил бы
   версию на томе, записанном 26.3. Цена: HA-шаблон подключается `-f` напрямую из репозитория,
   поэтому такой стек обновит ClickHouse при следующем пересоздании контейнера — предупреждение и
-  бэкап в DEPLOYMENT §9.1.6. Integration-тесты по умолчанию остаются на `24-alpine` (минимальная
-  поддерживаемая версия, как `postgres:12-alpine`).
+  бэкап в DEPLOYMENT §9.1.6.
+- **§109.7: после KZ.2 версия 26.3 закреплена во ВСЕХ compose-файлах с контейнером ClickHouse**
+  (24.09.2026, по решению пользователя «как на KZ»): `deploy/docker-compose.yml` (Вариант A и job
+  `loadtest`) и `deploy/docker-compose.deps.yml`, integration-тесты по умолчанию тоже на 26.3.
+  Прод (Вариант C, корневой `docker-compose.yml`) ходит во внешний ClickHouse, его версия из Nexus
+  не видна: `version()` нигде не запрашивается, а ошибки клиента в Sentry версию сервера не несут
+  (строку `version X (official build)` пишет только лог самого сервера). Узнаётся только SQL у
+  пользователя: 24.09.2026 — **25.3.2.39** (а не 24.x, как считалось), аптайм 9 мес,
+  `MemoryTracking` 2.74 ГиБ при `MemoryResident` 2.00 ГиБ (+37 % — не дрейф KZ), 276
+  `MEMORY_LIMIT_EXCEEDED` за аптайм; коррекция счётчика в 25.3 тоже есть и тоже выключена.
+  Последний отказ (18.09) — запрос, попросивший разом 2.99 ГиБ при RSS 7.93 ГиБ из 10.45: реальная
+  нагрузка, а не дрейф, и в Sentry прода событий о памяти ClickHouse нет — вставки Sender'а и
+  выборки Web тогда не падали. ClickHouse прода общий с другими системами, `query_log` на нём
+  выключен: чужой тяжёлый запрос не отследить, отказы 241 там по умолчанию чужие. Версия прода прогоняется
+  `NEXUS_TEST_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:25.3.2.39-alpine`. Healthcheck
+  этих compose-файлов логин и пароль не передаёт — на 26.3 `clickhouse-client` по-прежнему берёт
+  их из `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD` окружения (проверено с непустым паролем; с
+  очищенным окружением — `AUTHENTICATION_FAILED`).
+- **§109.7: смена версии на KZ (KZ.2, 24.09.2026) — как прошла.** Перед сменой 26.3 поднят
+  локально с ТОЧНЫМИ копиями `config.d`/`users.d` KZ: риск — конфиг с `<ttl>` системных таблиц,
+  несовместимый с новым `config.xml` образа (цикл рестартов Code 36), не подтвердился; новые
+  системные таблицы 26.3 (`error_log`, `background_schedule_pool_log`, `query_metric_log`) под
+  нагрузкой почти не растут — урок 17.08 (системные логи съели CPU KZ) не повторяется. Образ
+  скачан заранее, пока работал старый, поэтому простой один — 23 с (стоп → tar тома → `up -d`),
+  а не два, как по порядку шагов §5.4.2. Отказов вставки за окно 2 (DNS `no such host` при
+  пересоздании контейнера), дозаписаны через retry-топик §38.
 - **§109.7: кеш условий запросов ClickHouse 25.3+ ломает замеры `read_rows`.** На 26.3
   `use_query_condition_cache` = 1 по умолчанию: повторный запрос с тем же фильтром читает только
   гранулы, совпавшие в прошлый раз. `TestClickHouse_DateCreatePruning_E2E` на 26.3 упал —

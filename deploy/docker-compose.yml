@@ -52,7 +52,14 @@ services:
     networks: [nexus_net]
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24-alpine
+    # §109.7: версия ЗАКРЕПЛЕНА, как в шаблонах standalone. На плавающем
+    # 24-alpine (24.10.2.80) учёт памяти «уплывал» с аптаймом, и вставки логов
+    # падали MEMORY_LIMIT_EXCEEDED при почти пустом процессе. Работающий стек с
+    # данными переводите по DEPLOYMENT §5.4.2 — с бэкапом тома: данные,
+    # записанные 26.3, прежняя 24.x может не прочитать.
+    image: clickhouse/clickhouse-server:26.3.33.24-alpine
+    # Коррекция учёта памяти по jemalloc/cgroup: в 26.3 по умолчанию выключена.
+    command: ["--", "--memory_worker_correct_memory_tracker=1"]
     restart: unless-stopped
     environment:
       CLICKHOUSE_DB: nexus_default

@@ -39,10 +39,11 @@ func (s stubHTTP) Do(_ context.Context, _ *senderport.HTTPRequest) (*senderport.
 	return s.resp, nil
 }
 
-// defaultClickHouseImage — версия ClickHouse боевых инсталляций. Переопределяется
-// переменной NEXUS_TEST_CLICKHOUSE_IMAGE: так кандидат на смену версии (§109.7)
-// прогоняется всем набором integration-тестов без правки кода.
-const defaultClickHouseImage = "clickhouse/clickhouse-server:24-alpine"
+// defaultClickHouseImage — версия ClickHouse, закреплённая в compose-файлах
+// репозитория (§109.7). Переопределяется переменной NEXUS_TEST_CLICKHOUSE_IMAGE:
+// так без правки кода прогоняются кандидат на смену версии и версия внешнего
+// ClickHouse основного прода (25.3.2.39-alpine на 24.09.2026).
+const defaultClickHouseImage = "clickhouse/clickhouse-server:26.3.33.24-alpine"
 
 func clickHouseImage() string {
 	if img := os.Getenv("NEXUS_TEST_CLICKHOUSE_IMAGE"); img != "" {

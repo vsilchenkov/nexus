@@ -79,6 +79,11 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 Проверка состояния — **deps: status**; логи Kafka — **deps: logs (kafka)**; полный сброс
 данных — **deps: down + reset volumes**.
 
+> **ClickHouse закреплён на `26.3.33.24-alpine`** (§109.7, раньше — плавающий `24-alpine`).
+> Существующий том `nexus_clickhouse` при первом `up -d` после обновления репозитория откроется
+> новой версией и будет переписан ею. Вернуться на 24.x с этим томом нельзя — только
+> `down -v` (логи локальных узлов пропадут, для разработки это обычно не важно).
+
 > **Kafka занимает ~1.2 ГБ памяти** — брокер стартует с `KAFKA_HEAP_OPTS=-Xmx1G -Xms1G`
 > (значение по умолчанию в compose совпадает с дефолтом `kafka-server-start.sh`). На машине,
 > где памяти в обрез, положите в `.env` строку `KAFKA_HEAP_OPTS=-Xmx512m -Xms256m` и пересоздайте
@@ -290,10 +295,12 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   выключение журнала, скоупы команд. Входит в общий `make test-integration`. Тесты гоняются
   на `postgres:12-alpine` — той же мажорной версии, что на бою.
 - **Версии хранилищ в integration-тестах переопределяются переменными**: `NEXUS_TEST_PG_IMAGE`
-  (дефолт `postgres:12-alpine`) и `NEXUS_TEST_CLICKHOUSE_IMAGE` (§109.7, дефолт
-  `clickhouse/clickhouse-server:24-alpine`). Дефолты — минимальные поддерживаемые версии: тест на
-  более свежей пропустил бы то, чего на бою нет. Кандидат на смену версии прогоняется без правки
-  кода: `NEXUS_TEST_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:26.3.33.24-alpine make test-integration`.
+  (дефолт `postgres:12-alpine` — мажорная версия боевого PostgreSQL) и
+  `NEXUS_TEST_CLICKHOUSE_IMAGE` (§109.7, дефолт `clickhouse/clickhouse-server:26.3.33.24-alpine` —
+  версия, закреплённая во всех compose-файлах репозитория). Основной прод ходит во внешний
+  ClickHouse (вариант C) другой версии — `25.3.2.39` на 24.09.2026 (`SELECT version()`; из Nexus
+  её не видно). Перед релизом, меняющим работу с ClickHouse, прогоните и её без правки кода:
+  `NEXUS_TEST_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:25.3.2.39-alpine make test-integration`.
 - `make check-alerts` (§101.11) — `promtool check rules` и `promtool test rules` по
   `deploy/prometheus.alerts*.yml` в образе `prom/prometheus` той же версии, что в compose (нужен
   Docker). В CI — job `alerts-check`. Поменяли правило алерта — поправьте и
