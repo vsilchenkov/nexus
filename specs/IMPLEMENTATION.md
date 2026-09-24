@@ -6801,7 +6801,7 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
 | ТЗ §109 + инструмент разбора Sentry | ✅ Phase 109.0 | [sections/109-sender-restart-resilience.md](sections/109-sender-restart-resilience.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); скилл [sentry-fix](../.claude/skills/sentry-fix/SKILL.md) + [sentry.ps1](../.claude/skills/sentry-fix/scripts/sentry.ps1) (список за 7 сут через орг-endpoint, разбор issue по видам ошибок, маска токенов ботов в выводе), ссылка из [nexus-sentry](../.claude/skills/nexus-sentry/SKILL.md) |
 | §109.5 невалидный UTF-8 в пути → 404; журнал отказов не теряет пачку на мусоре | ✅ Phase 109.1 | обёртка `validUTF8Reader` + `errInvalidUTF8Path` в [receiver/usecase/resolver.go](../internal/receiver/usecase/resolver.go) (тест `TestResolveNode_InvalidUTF8`); санитизация образца `Collector.sanitize`/`clientIP` в [rejectlog/collector.go](../internal/receiver/adapter/out/rejectlog/collector.go), `truncateRunes` приводит к валидному UTF-8, `TruncateRequestID` в [domain/rejected.go](../internal/domain/rejected.go) (тест `TestCollectorSanitizesSample`, integration `TestRejectedFlush_GarbageSampleKeepsBatch_E2E`) |
 | §109.4 уход клиента: 499 Receiver, Debug Web | ✅ Phase 109.2 | предикат [platform/clientgone](../internal/platform/clientgone/clientgone.go); перевод gRPC `Canceled` — `translateError` в [grpcsender/client.go](../internal/platform/grpcsender/client.go); Receiver `replyClientGone` + `statusClientClosedRequest` в [handler.go](../internal/receiver/adapter/in/http/handler.go), пропуск 499 в `rejectReason` ([reject_middleware.go](../internal/receiver/adapter/in/http/reject_middleware.go)); Web `logServerError` в [server_error.go](../internal/web/adapter/in/http/server_error.go) (58 мест), 499 в [receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go), replay — тот же предикат; спан 499 → `cancelled` в [sentry/middleware.go](../internal/platform/sentry/middleware.go). Тесты: `TestIs`, `TestGRPCSender_CallerCancelIsContextCanceled`, `TestReplyClientGone`, `TestLogServerError`, `TestReceiverProxy_ClientGone` |
-| §109.2 быстрый старт Sender, фоновый backfill | ⛔ | — |
+| §109.2 быстрый старт Sender, фоновый backfill | ✅ Phase 109.3 | [sender/startup.go](../internal/sender/startup.go) (`startBodySizeBackfill`, `startupPhases`, строка `sender startup phases`), `ensureCHSchema` возвращает таблицы и больше не делает backfill ([sender/app.go](../internal/sender/app.go)); Web — `bodySizeBackfillDone` в [web/app.go](../internal/web/app.go); проверка `ctx.Err()` в цикле `BackfillBodySizes` ([ensure_schema.go](../internal/platform/clickhouse/ensure_schema.go)). Тесты `TestStartBodySizeBackfill_DoesNotBlockStart`, `TestStartupPhases` |
 | §109.3 переподключение, ожидание готовности, 503 | ⛔ | — |
 | §109.6 scrubbing `bot<id>:<secret>` в Sentry | ⛔ | — |
 | §109.7 образ ClickHouse для integration, кандидат 26.3 | ⛔ | — |
@@ -6835,3 +6835,12 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
 - **§109.4: в Web 499 ставит только прокси.** Обработчики после ошибки пишут `localizedError(c,
   500, …)`, и `c.Status(499)` до него был бы молча перезаписан; переписывать ответ в 58 местах ради
   метрики ушедшего клиента не стали — границы в §109.8.
+- **§109.2: backfill §42.10 остаётся на каждом старте, но в фоне.** Его guard-count — `SELECT
+  count() … WHERE (request_size=0 AND request!='') OR …`, полный проход по колонкам тел каждой
+  таблицы, даже когда разовый backfill давно выполнен. Убрать его совсем нельзя (новая нода,
+  таблица, созданная старой версией), а синхронно он держал закрытым gRPC-порт Sender'а. Колонки
+  (`ADD COLUMN`) — синхронно: без них упал бы первый INSERT.
+- **§109.2: `until_grpc_ms` меряет от `App.Start`, а не от старта процесса.** Подключения из `main`
+  (`MustPG`, `MustClickHouse`, `MustRedis`, `MustEnsureKafkaTopics`) идут раньше; при недоступной
+  зависимости время уходит туда, и строка фаз этого не покажет — смотреть время между строками
+  «starting service» и «sender grpc listening».

@@ -101,6 +101,13 @@ type App struct {
 	shipperDone      <-chan struct{} // §51: done-канал шиппера служебных логов
 	// §106.3: done-канал задачи дозаполнения client_host (nil, если не запущена).
 	clientHostBackfillDone <-chan struct{}
+	// §109.2: done-канал фонового backfill размеров тел §42.10 (nil, если не
+	// запущен).
+	bodySizeBackfillDone <-chan struct{}
+
+	// startup — длительности фаз старта для строки «sender startup phases»
+	// (§109.2); пишется в Start до запуска слушателей, читается в startGRPC.
+	startup *startupPhases
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
@@ -144,6 +151,10 @@ func New(
 }
 
 func (a *App) Start(ctx context.Context) error {
+	// §109.2: пока gRPC-порт закрыт, sync-трафик отказывает целиком — фазы
+	// старта меряются, чтобы было видно, куда уходит это время.
+	phases := newStartupPhases(time.Now())
+
 	// §95: провайдер маскирования создаём ДО chWriter (initClickHouseAndProducer
 	// передаёт его в WriterManager). Набор шаблонов сидим из PG сразу после —
 	// до первого лога, чтобы секрет не проскочил незамаскированным на старте.
@@ -151,18 +162,26 @@ func (a *App) Start(ctx context.Context) error {
 	a.maskReader = maskpg.New(a.pg, a.logger)
 
 	chGuard := a.initClickHouseAndProducer()
+	phases.mark("clickhouse_producer", time.Now())
 	a.seedLogMasks(ctx)
+	phases.mark("log_masks", time.Now())
 
 	sendUC, breaker, nodeStatus := a.buildSendUsecase(ctx)
 
 	// gRPC adapter для sync.
 	grpcSvc := grpcadapter.NewServer(sendUC, a.metrics, nodeStatus, a.logger)
+	phases.mark("send_usecase", time.Now())
 
 	nodeReader := nodepg.New(a.pg, a.cipher, a.logger)
-	a.ensureCHSchema(ctx, nodeReader, chGuard)
+	backfillTables := a.ensureCHSchema(ctx, nodeReader, chGuard)
+	phases.mark("schema", time.Now())
 	a.startAsyncPipeline(ctx, nodeReader, sendUC, breaker, nodeStatus)
+	phases.mark("async_pipeline", time.Now())
 	a.startBackgroundJobs(ctx, nodeReader, chGuard)
+	a.startBodySizeBackfill(ctx, backfillTables) // §109.2: в фоне, порт его не ждёт
+	phases.mark("background_jobs", time.Now())
 
+	a.startup = phases
 	return a.serveEndpoints(ctx, grpcSvc)
 }
 
@@ -326,9 +345,12 @@ func (a *App) buildSendUsecase(ctx context.Context) (*usecase.SendUsecase, useca
 // ensureCHSchema приводит существующие лог-таблицы к текущей схеме ДО старта
 // consumer'ов: иначе первый же INSERT по новой схеме упадёт на старой таблице.
 // Все операции идемпотентны (ADD COLUMN IF NOT EXISTS).
-func (a *App) ensureCHSchema(ctx context.Context, nodeReader *nodepg.Reader, chGuard *chpf.Guard) {
+//
+// Возвращает таблицы своего обслуживания — для фонового backfill размеров тел
+// (§109.2): сам он здесь больше не выполняется, см. startBodySizeBackfill.
+func (a *App) ensureCHSchema(ctx context.Context, nodeReader *nodepg.Reader, chGuard *chpf.Guard) []string {
 	if a.chMgr == nil {
-		return
+		return nil
 	}
 	// §37: миграция CH-таблиц — добавить колонку node_id ДО старта consumer'а и
 	// репроцессора (иначе INSERT по новой схеме упадёт на старых таблицах).
@@ -336,7 +358,7 @@ func (a *App) ensureCHSchema(ctx context.Context, nodeReader *nodepg.Reader, chG
 	tables, err := nodeReader.ListClickHouseTables(ctx)
 	if err != nil {
 		a.logger.Warn("§37 ensure node_id: list tables failed", a.logger.Err(err))
-		return
+		return nil
 	}
 	// §70.4: чужие таблицы из обслуживания схемы исключаются (ADD COLUMN
 	// фиксирует порядок колонок, backfill мутирует все строки).
@@ -344,8 +366,8 @@ func (a *App) ensureCHSchema(ctx context.Context, nodeReader *nodepg.Reader, chG
 	chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
 	chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
 	chpf.EnsureClientHostColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §67
-	chpf.EnsureBodySizeColumns(ctx, a.chMgr.Conn(), tables, a.logger)  // §42-доп
-	chpf.BackfillBodySizes(ctx, a.chMgr.Conn(), tables, a.logger)      // §42-доп
+	chpf.EnsureBodySizeColumns(ctx, a.chMgr.Conn(), tables, a.logger)  // §42.10
+	return tables
 }
 
 // startAsyncPipeline поднимает всё, что обрабатывает очереди: основной
@@ -614,6 +636,7 @@ func (a *App) startGRPC(svc *grpcadapter.Server) error {
 
 	a.logger.Info("sender grpc listening",
 		a.logger.Str("addr", a.cfg.Sender.GRPCAddr))
+	a.logStartupPhases(time.Now())
 
 	if err := a.grpcSrv.Serve(lis); err != nil {
 		return fmt.Errorf("sender grpc serve: %w", err)
@@ -807,6 +830,7 @@ func (a *App) awaitBackgroundJobs(ctx context.Context) {
 
 	safego.Await(awaitCtx, a.housekeepingDone, a.logger, "sender.chHousekeeping")
 	safego.Await(awaitCtx, a.clientHostBackfillDone, a.logger, "sender.clientHostBackfill") // §106.3: nil, если не запущена
+	safego.Await(awaitCtx, a.bodySizeBackfillDone, a.logger, "sender.bodySizeBackfill")     // §109.2: nil, если не запущен
 	safego.Await(awaitCtx, a.kafkaLagDone, a.logger, "sender.reportKafkaLag")
 	safego.Await(awaitCtx, a.reloadDone, a.logger, "sender.reloadSubscriber")
 	safego.Await(awaitCtx, a.dlqReprocDone, a.logger, "sender.dlqReprocessor")

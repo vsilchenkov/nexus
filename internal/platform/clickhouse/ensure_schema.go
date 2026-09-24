@@ -78,8 +78,9 @@ func EnsureBodySizeColumns(ctx context.Context, conn driver.Conn, tables []strin
 // мутацию на каждом старте: после успешного backfill подходящих строк не
 // остаётся (у новых записей размеры пишет Sender). Мутации ALTER…UPDATE
 // асинхронные, завершения не ждём; ошибка по таблице — log+continue, старт
-// не валим. Вызывается после EnsureBodySizeColumns на старте Web и Sender:
-// повторный/конкурентный запуск безопасен — мутации идемпотентны (пишут те
+// не валим. Вызывается после EnsureBodySizeColumns на старте Web и Sender —
+// в фоне (§109.2): guard-count — полный проход по колонкам тел, и синхронно он
+// держал старт сервиса. Повторный/конкурентный запуск безопасен — мутации идемпотентны (пишут те
 // же значения), а после первого прохода guard находит 0 строк.
 func BackfillBodySizes(ctx context.Context, conn driver.Conn, tables []string, logger logging.Logger) {
 	if conn == nil {
@@ -87,6 +88,13 @@ func BackfillBodySizes(ctx context.Context, conn driver.Conn, tables []string, l
 	}
 	seen := make(map[string]bool, len(tables))
 	for _, t := range tables {
+		if err := ctx.Err(); err != nil {
+			// §109.2: backfill идёт в фоне и переживает начало остановки
+			// сервиса — без этой проверки каждая оставшаяся таблица дала бы
+			// Warn «count failed: context canceled».
+			logger.Debug("backfill body sizes: stopped", logger.Err(err))
+			return
+		}
 		if t == "" || seen[t] || !ensureTableNamePattern.MatchString(t) {
 			continue
 		}

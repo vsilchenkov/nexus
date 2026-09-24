@@ -45,13 +45,17 @@
 ## 109.2 Sender поднимается быстро
 
 - `BackfillBodySizes` уходит из синхронного старта: запускается **в фоне** (`safego.Go`, контекст
-  сервиса, ожидание в `awaitBackgroundJobs`) после того, как gRPC-порт открыт. То же в Web — там
-  backfill переезжает в фон и перестаёт держать старт HTTP-сервера.
+  сервиса, ожидание в `awaitBackgroundJobs`) — открытие gRPC-порта его не ждёт. То же в Web — там
+  backfill переезжает в фон и перестаёт держать старт HTTP-сервера (ожидание в `Stop`).
+- Backfill проверяет контекст перед каждой таблицей: на остановке сервиса фон прекращается сразу,
+  без Warn «count failed» по каждой оставшейся таблице.
 - `ADD COLUMN IF NOT EXISTS` остаются синхронными: это метаданные, и без колонки первый же INSERT
   по новой схеме упадёт.
-- Старт Sender'а пишет Info-строку `sender startup phases` с длительностью фаз
-  (`clickhouse_producer_ms`, `schema_ms`, `async_pipeline_ms`, `background_jobs_ms`,
-  `until_grpc_ms`) — видно, куда уходит время, и на стенде, и на бою после выката.
+- Старт Sender'а пишет Info-строку `sender startup phases`, когда gRPC-порт уже слушает, с
+  длительностью фаз от предыдущей отметки: `clickhouse_producer_ms`, `log_masks_ms`,
+  `send_usecase_ms`, `schema_ms`, `async_pipeline_ms`, `background_jobs_ms` и `until_grpc_ms` —
+  всё время от начала `App.Start` до открытого порта. Подключения из `main` (PostgreSQL,
+  ClickHouse, Redis, топики Kafka) в него не входят — они идут до `App.Start`.
 
 ## 109.3 Receiver переживает рестарт Sender
 
