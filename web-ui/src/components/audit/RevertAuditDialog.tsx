@@ -79,7 +79,9 @@ export function RevertAuditDialog({ entryId, onClose }: { entryId: string; onClo
     },
   });
 
-  const canApply = !!p?.node && selected.size > 0 && !apply.isPending;
+  // Пока предпросмотр перечитывается (после 409), версия узла в нём старая —
+  // отправка дала бы тот же 409.
+  const canApply = !!p?.node && selected.size > 0 && !apply.isPending && !preview.isFetching;
 
   return (
     <Modal

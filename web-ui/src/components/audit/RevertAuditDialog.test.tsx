@@ -100,6 +100,21 @@ describe("RevertAuditDialog (§108.8)", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("пока предпросмотр перечитывается после 409, применить нельзя", async () => {
+    apiPost.mockRejectedValue({ response: { status: 409, data: { code: "audit.revert.conflict" } } });
+    renderDialog();
+    await waitFor(() => expect(checkbox("status")).not.toBeNull());
+    let release: (v: RevertPreview) => void = () => {};
+    apiGet.mockImplementationOnce(() => new Promise<RevertPreview>((r) => (release = r)));
+    fireEvent.click(screen.getByText("audit.revert.submit"));
+
+    await screen.findByText("audit.revert.conflict_refreshed");
+    const submit = screen.getByText("audit.revert.submit").closest("button");
+    await waitFor(() => expect(submit).toBeDisabled());
+    release(preview({ node: { id: "n1", path: "svc/x", team_id: "t1", updated_at: "2026-09-24T11:00:00Z" } }));
+    await waitFor(() => expect(submit).not.toBeDisabled());
+  });
+
   it("значения не удержались — код и поля в сообщении", async () => {
     apiPost.mockRejectedValue({
       response: { status: 400, data: { code: "audit.revert.not_held", error: "x", fields: ["sse_decline"] } },
