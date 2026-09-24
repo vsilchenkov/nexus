@@ -418,7 +418,10 @@ func (a *App) Start(ctx context.Context) error {
 	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTLProvider.Get, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
-	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
+	// §108: отмена изменения узла из журнала аудита.
+	auditRevertUC := usecase.NewAuditRevertUsecase(auditRepo, nodeRepo, nodeUC, a.logger)
+	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger).WithRevert(auditRevertUC)
+	auditRevertHandler := httpadapter.NewAuditRevertHandler(auditRevertUC, a.logger)
 	appSettingsHandler := httpadapter.NewAppSettingsHandler(
 		appSettingsUC, settingsTester, a.cfg.Web.NodeDefaultMaxBodySize,
 		a.identity.ID.CHDatabasePrefix(), // §70.8: предпросмотр имени БД команды
@@ -812,6 +815,7 @@ func (a *App) Start(ctx context.Context) error {
 		Token:         tokenHandler,
 		Team:          teamHandler,
 		Audit:         auditHandler,
+		AuditRevert:   auditRevertHandler,
 		DryRun:        dryRunHandler,
 		Replay:        replayHandler,
 		Logs:          logsHandler,

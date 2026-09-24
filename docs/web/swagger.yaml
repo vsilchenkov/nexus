@@ -1134,6 +1134,90 @@ definitions:
       team_slug:
         type: string
     type: object
+  internal_web_adapter_in_http.RevertApplyRequest:
+    properties:
+      expected_updated_at:
+        description: ExpectedUpdatedAt — node.updated_at из предпросмотра, строкой
+          как пришла.
+        type: string
+      fields:
+        items:
+          type: string
+        type: array
+    required:
+    - expected_updated_at
+    - fields
+    type: object
+  internal_web_adapter_in_http.RevertDryRunDTO:
+    properties:
+      code:
+        type: string
+      error:
+        type: string
+      field:
+        type: string
+      not_held:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_web_adapter_in_http.RevertEntryDTO:
+    properties:
+      action:
+        example: node.update
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      user_login:
+        type: string
+    type: object
+  internal_web_adapter_in_http.RevertFieldDTO:
+    properties:
+      after: {}
+      before: {}
+      current: {}
+      name:
+        type: string
+      status:
+        example: overwritten
+        type: string
+      warning:
+        example: credentials
+        type: string
+    type: object
+  internal_web_adapter_in_http.RevertNodeDTO:
+    properties:
+      id:
+        type: string
+      path:
+        type: string
+      team_id:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  internal_web_adapter_in_http.RevertPreviewResponse:
+    properties:
+      dry_run:
+        $ref: '#/definitions/internal_web_adapter_in_http.RevertDryRunDTO'
+      entry:
+        $ref: '#/definitions/internal_web_adapter_in_http.RevertEntryDTO'
+      fields:
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.RevertFieldDTO'
+        type: array
+      moved:
+        type: boolean
+      node:
+        allOf:
+        - $ref: '#/definitions/internal_web_adapter_in_http.RevertNodeDTO'
+        description: Node — текущий узел; null — узел удалён.
+      state:
+        example: stale
+        type: string
+    type: object
   internal_web_adapter_in_http.RotateTokenResponse:
     properties:
       token:
@@ -1515,6 +1599,12 @@ definitions:
         type: string
       ip_address:
         type: string
+      revert:
+        allOf:
+        - $ref: '#/definitions/internal_web_adapter_in_http.revertMarkResponse'
+        description: |-
+          Revert — разметка для отмены из журнала (§108.7): только у строк
+          node.update/node.revert и только в admin-сессии.
       target_id:
         type: string
       target_type:
@@ -2596,6 +2686,17 @@ definitions:
         type: string
       usage_count:
         type: integer
+    type: object
+  internal_web_adapter_in_http.revertMarkResponse:
+    properties:
+      overwritten:
+        additionalProperties: {}
+        type: object
+      revertible:
+        type: boolean
+      state:
+        example: stale
+        type: string
     type: object
   internal_web_adapter_in_http.seriesPointDTO:
     properties:
@@ -3859,6 +3960,83 @@ paths:
       - CookieAuth: []
       - ApiTokenAuth: []
       summary: Выгрузка audit-log в CSV (operator+, §7.13/§87).
+      tags:
+      - audit
+  /api/audit/revert/{id}:
+    get:
+      description: 'Строка node.update/node.revert против текущего узла: статус каждого
+        поля, состояние строки и пробный прогон отмены выбора по умолчанию. node =
+        null — узел удалён. Недоступно по API-токену.'
+      parameters:
+      - description: id строки журнала
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.RevertPreviewResponse'
+        "400":
+          description: audit.revert.not_revertible
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: audit.revert.entry_not_found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Предпросмотр отмены изменения узла из журнала (admin, §108).
+      tags:
+      - audit
+    post:
+      consumes:
+      - application/json
+      description: Возвращает выбранным полям значения «Было» и пишет в журнал строку
+        node.revert. expected_updated_at — updated_at узла из предпросмотра без преобразований;
+        узел изменился — 409.
+      parameters:
+      - description: id строки журнала
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: поля и версия узла
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.RevertApplyRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: not_revertible / field_invalid / not_held / валидация узла
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: entry_not_found / node_gone
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: conflict / путь занят
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Отменить изменение узла из журнала (admin, §108).
       tags:
       - audit
   /api/auth/login:
