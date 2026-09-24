@@ -104,8 +104,10 @@ func WithReadyWaitObserver(o ReadyWaitObserver) Option {
 	}
 }
 
-// defaultReadyWait — потолок ожидания, если ready_wait_ms = 0 (§109.3).
-const defaultReadyWait = 15 * time.Second
+// defaultReadyWait — потолок ожидания, если ready_wait_ms = 0 (§109.3). В лад
+// с config.defaultSenderReadyWaitMs: сюда ноль доходит только в обход
+// applyDefaults (тесты, ручная сборка конфига).
+const defaultReadyWait = 30 * time.Second
 
 // readyWaitFromConfig: <0 — выключено, 0 — дефолт, >0 — как задано.
 func readyWaitFromConfig(ms int) time.Duration {
@@ -194,6 +196,11 @@ func New(cfg *config.ReceiverSenderGRPCConfig, logger logging.Logger, opts ...Op
 			// §109.3: момент отправки вызова — для честного 503 и таймера
 			// ожидания готовности. См. sendTracker.
 			grpc.WithStatsHandler(sendTracker{}),
+			// §109.3: канал не уходит в idle. pick предпочитает готовые
+			// соединения, и канал, простоявший 30 минут (дефолт gRPC), обратно
+			// бы уже не вернулся — весь sync шёл бы по одному соединению пула.
+			// Простой соединения стоит лишь keepalive-пингов.
+			grpc.WithIdleTimeout(0),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:    time.Duration(cfg.KeepaliveTimeSec) * time.Second,
 				Timeout: time.Duration(cfg.KeepaliveTimeoutSec) * time.Second,
@@ -214,6 +221,9 @@ func New(cfg *config.ReceiverSenderGRPCConfig, logger logging.Logger, opts ...Op
 			}
 			return nil, fmt.Errorf("grpc.NewClient %s: %w", cfg.Addr, err)
 		}
+		// grpc.NewClient ленивый: без Connect канал ждёт первого вызова, а
+		// первый вызов при этом ждёт соединения — и засчитывается ожиданием.
+		cc.Connect()
 		conns = append(conns, cc)
 		clients = append(clients, senderv1.NewSenderServiceClient(cc))
 	}
@@ -255,12 +265,20 @@ func (c *Client) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1
 // pick — индекс соединения: первое готовое, начиная с очередного по
 // round-robin; готовых нет — очередное. Обход дешёвый: GetState читает
 // состояние без блокировки канала, соединений в пуле единицы.
+//
+// Пропущенное соединение в IDLE будится Connect: из IDLE канал выходит только
+// по вызову или Connect, а вызовов ему, пока рядом есть готовое, pick не даёт —
+// без побудки пул схлопывался до одного соединения (ревизия §109).
 func (c *Client) pick() int {
 	n := uint64(len(c.conns))
 	start := c.next.Add(1)
 	for i := range n {
-		if j := (start + i) % n; c.conns[j].GetState() == connectivity.Ready {
+		j := (start + i) % n
+		switch c.conns[j].GetState() {
+		case connectivity.Ready:
 			return int(j)
+		case connectivity.Idle:
+			c.conns[j].Connect()
 		}
 	}
 	return int(start % n)

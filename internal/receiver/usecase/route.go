@@ -18,6 +18,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/sensitive"
 	"nexus/internal/receiver/usecase/port"
 	senderv1 "nexus/proto/sender/v1"
 )
@@ -107,13 +108,14 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	in.notifyResolved(teamSlug, node.Path)
 	// §51.9: маршрутизация невосстановима постфактум — на debug видно, какой
 	// узел выбран и какой хвост пути уйдёт дальше.
+	// Путь и хвост задал клиент: у passthrough-адреса в хвосте токен бота.
 	u.logger.Debug("route: node resolved",
 		u.logger.Str("team", in.TeamSlug),
-		u.logger.Str("path", in.NodePath),
+		u.logger.Str("path", sensitive.MaskBotTokens(in.NodePath)),
 		u.logger.Str("node", node.Path),
 		u.logger.Str("node_team", teamSlug),
 		u.logger.Str("node_id", node.ID),
-		u.logger.Str("remainder", remainder),
+		u.logger.Str("remainder", sensitive.MaskBotTokens(remainder)),
 		u.logger.Str("status", string(node.Status)),
 		u.logger.Int("hop", hop))
 
@@ -160,7 +162,7 @@ func (u *RouteUsecase) NodeRootMethod(ctx context.Context, teamSlug, nodePath st
 	}
 	u.logger.Debug("route: root method resolved for short url",
 		u.logger.Str("team", teamSlug),
-		u.logger.Str("path", nodePath),
+		u.logger.Str("path", sensitive.MaskBotTokens(nodePath)),
 		u.logger.Str("node", node.Path),
 		u.logger.Str("node_id", node.ID),
 		u.logger.Str("root_method", string(node.RootMethod)),
@@ -344,18 +346,20 @@ func (u *RouteUsecase) callSender(
 
 // redactURLString отрезает query/fragment от URL для логов (§51.9): в query
 // могут быть токены динамической авторизации. Невалидный URL — как есть без
-// части после «?».
+// части после «?». Токен бота маскируется и в пути (§109.6): у passthrough-узла
+// целевой URL — это target_url плюс хвост адреса клиента, а в хвосте Telegram
+// Bot API передаёт токен (`/bot<id>:<secret>/getUpdates`).
 func redactURLString(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		if before, _, ok := strings.Cut(raw, "?"); ok {
-			return before
+			return sensitive.MaskBotTokens(before)
 		}
-		return raw
+		return sensitive.MaskBotTokens(raw)
 	}
 	u.RawQuery = ""
 	u.Fragment = ""
-	return u.String()
+	return sensitive.MaskBotTokens(u.String())
 }
 
 // methodMatches сравнивает фактический HTTP-метод входящего запроса с

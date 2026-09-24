@@ -8,9 +8,12 @@ package config
 const defaultGRPCMaxMessageBytes = 64 * 1024 * 1024
 
 // defaultSenderReadyWaitMs — §109.3: сколько вызов ждёт готовности транспорта к
-// Sender'у (`sender_grpc.ready_wait_ms`). Больше рестарта Sender'а после §109.2
-// (секунды), меньше типичных таймаутов клиентов шины.
-const defaultSenderReadyWaitMs = 15000
+// Sender'у (`sender_grpc.ready_wait_ms`). Отсчёт идёт с перехода Sender'а в
+// NOT_SERVING, а не с его подъёма: в бюджет входят дренаж (`shutdown.drain_sec`,
+// 5 с), GracefulStop с доигрыванием текущих вызовов, пересоздание контейнера и
+// старт до порта. Одно окно NOT_SERVING на бою длилось 8–10 с, поэтому 15 с
+// было впритык; 30 с — с запасом и всё ещё меньше типичных таймаутов клиентов.
+const defaultSenderReadyWaitMs = 30000
 
 // defaultMaxAsyncBodyBytes — дефолтный потолок тела для async-приёма (10 МиБ).
 //

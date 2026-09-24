@@ -7145,8 +7145,9 @@ Sender'а — 46–96 с полного отказа sync (до 441 запрос
 **Что делается.**
 - Sender и Web запускают `BackfillBodySizes` в фоне; `ADD COLUMN IF NOT EXISTS` остаются
   синхронными. Старт Sender'а пишет `sender startup phases` с длительностями фаз.
-- `platform/grpcsender`: `WithConnectParams` (100 мс…2 с), выбор готового соединения пула, вызов
-  с `WaitForReady`, который таймер `sender_grpc.ready_wait_ms` (дефолт 15000, `<0` — выкл)
+- `platform/grpcsender`: `WithConnectParams` (100 мс…2 с), выбор готового соединения пула
+  (соединения подключаются сразу и не засыпают в idle), вызов с `WaitForReady`, который таймер
+  `sender_grpc.ready_wait_ms` (дефолт 30000 от перехода Sender'а в `NOT_SERVING`, `<0` — выкл)
   отменяет, только пока вызов не отправлен (событие `OutHeader`) — поэтому дублей нет. Счётчик
   `nexus_sender_ready_wait_total{outcome}`.
 - Не отправленный за `ready_wait_ms` вызов и `codes.Unavailable` у неотправленного →

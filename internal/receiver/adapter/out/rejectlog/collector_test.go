@@ -381,6 +381,17 @@ func TestCollectorSanitizesSample(t *testing.T) {
 			},
 		},
 		{
+			name: "пустой адрес → unspecified (INET NOT NULL пустую строку не примет)",
+			mutate: func(s *rejectlog.Sample) {
+				s.ClientIP = ""
+			},
+			check: func(t *testing.T, a domain.RejectedAggregate) {
+				assert.Equal(t, "0.0.0.0", a.Samples[0].ClientIP)
+				require.Len(t, a.Clients, 1)
+				assert.Equal(t, "0.0.0.0", a.Clients[0].IP)
+			},
+		},
+		{
 			name: "IPv6 с зоной → без зоны (INET её не разбирает)",
 			mutate: func(s *rejectlog.Sample) {
 				s.ClientIP = "fe80::1%eth0"

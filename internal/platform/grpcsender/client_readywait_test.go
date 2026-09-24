@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	"nexus/internal/domain"
@@ -220,4 +221,97 @@ func TestSend_BreakMidCall_NotSenderUnavailable(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 	assert.NotErrorIs(t, err, domain.ErrSenderUnavailable)
+}
+
+// peerServer — Sender, запоминающий соединения, по которым пришли вызовы: у
+// каждого соединения пула свой клиентский адрес.
+type peerServer struct {
+	senderv1.UnimplementedSenderServiceServer
+	mu    sync.Mutex
+	peers map[string]struct{}
+}
+
+func newPeerServer() *peerServer { return &peerServer{peers: map[string]struct{}{}} }
+
+func (s *peerServer) Send(ctx context.Context, _ *senderv1.SendRequest) (*senderv1.SendResponse, error) {
+	if p, ok := peer.FromContext(ctx); ok {
+		s.mu.Lock()
+		s.peers[p.Addr.String()] = struct{}{}
+		s.mu.Unlock()
+	}
+	return &senderv1.SendResponse{StatusCode: 200}, nil
+}
+
+func (s *peerServer) distinct() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.peers)
+}
+
+// sendUntilSpread шлёт вызовы, пока они не разойдутся по всем pool
+// соединениям; не разошлись за 200 вызовов — пул схлопнулся.
+func sendUntilSpread(t *testing.T, cl *grpcsender.Client, srv *peerServer, pool int) {
+	t.Helper()
+	for range 200 {
+		_, err := cl.Send(context.Background(), &senderv1.SendRequest{NodePath: "vika/telephony"})
+		require.NoError(t, err)
+		if srv.distinct() == pool {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("вызовы шли по %d соединениям пула из %d", srv.distinct(), pool)
+}
+
+// TestSend_PoolSpreadsCalls — ревизия §109: pick предпочитает готовые
+// соединения, а grpc.NewClient ленивый, и пул схлопывался до одного
+// соединения — остальные так и стояли в IDLE. Весь sync шёл по одному
+// HTTP/2-каналу: большие тела задерживали остальные вызовы, а потолок стримов
+// соединения (§109.8) наступал впятеро раньше. После рестарта Sender'а
+// соединения переподключаются — и вызовы снова обязаны расходиться по всем.
+func TestSend_PoolSpreadsCalls(t *testing.T) {
+	t.Parallel()
+
+	const pool = 4
+	addr := freeAddr(t)
+	first := newPeerServer()
+	g1, _ := serveOn(t, addr, first)
+
+	cl, err := grpcsender.New(&config.ReceiverSenderGRPCConfig{
+		Addr: addr, PoolSize: pool, KeepaliveTimeSec: 30, KeepaliveTimeoutSec: 10, ReadyWaitMs: 5_000,
+	}, logging.NewNoop())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = cl.Close() })
+
+	sendUntilSpread(t, cl, first, pool)
+
+	g1.Stop()
+	second := newPeerServer()
+	g2, _ := serveOn(t, addr, second)
+	t.Cleanup(g2.Stop)
+	sendUntilSpread(t, cl, second, pool)
+}
+
+// TestSend_SentCallOutlivesReadyWait — ревизия §109: таймер ready_wait
+// обрывает только НЕ отправленный вызов, ушедший Sender'у (long-poll бота,
+// медленный узел) живёт сколько угодно дольше. Сломайся отслеживание отправки
+// (обновление gRPC, чужой stats-хендлер) — таймер оборвал бы вызов посреди
+// доставки: клиент получил бы 503 с Retry-After, повторил, и у получателя
+// вышел бы дубль. BreakMidCall этого не ловит — там обрыв наступает сразу.
+func TestSend_SentCallOutlivesReadyWait(t *testing.T) {
+	t.Parallel()
+
+	const serverDelay = 600 * time.Millisecond
+	addr, stop := startSlowGRPC(t, serverDelay)
+	defer stop()
+
+	obs := &recordingObserver{}
+	cl := newClient(t, addr, 100, obs) // ready_wait вшестеро короче ответа
+
+	start := time.Now()
+	resp, err := cl.Send(context.Background(), &senderv1.SendRequest{NodePath: "telegram/getUpdates"})
+	require.NoError(t, err, "таймер ready_wait не трогает отправленный вызов")
+	assert.Equal(t, int32(200), resp.GetStatusCode())
+	assert.GreaterOrEqual(t, time.Since(start), serverDelay)
+	assert.NotContains(t, obs.all(), grpcsender.ReadyWaitTimeout)
 }

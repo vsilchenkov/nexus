@@ -54,7 +54,9 @@ func (r errRow) Scan(...any) error { return r.err }
 // TestStartBodySizeBackfill_DoesNotBlockStart — §109.2 (Sentry NEXUS-T/S):
 // backfill размеров тел больше не держит старт — метод возвращается сразу,
 // пока guard-count ещё идёт, а остановка сервиса дожидается фоновой задачи и
-// не опрашивает оставшиеся таблицы.
+// не опрашивает оставшиеся таблицы. Проверяется сам запуск в фоне; что Start
+// зовёт именно его, а не синхронный BackfillBodySizes, видно на стенде: строки
+// «backfill body sizes» идут ПОСЛЕ «sender startup phases».
 func TestStartBodySizeBackfill_DoesNotBlockStart(t *testing.T) {
 	t.Parallel()
 

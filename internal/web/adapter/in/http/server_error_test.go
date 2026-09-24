@@ -85,7 +85,10 @@ func TestReceiverProxy_ClientGone(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(100*time.Millisecond, cancel)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, web.URL+"/api/v1/request/vika/slow", nil)
+	// Путь passthrough-узла с токеном бота: в строке лога его быть не должно.
+	const secret = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw_"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		web.URL+"/api/v1/request/telegram/bot1:"+secret+"/getUpdates", nil)
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(req)
 	if err == nil {
@@ -101,4 +104,6 @@ func TestReceiverProxy_ClientGone(t *testing.T) {
 	}
 	assert.False(t, strings.Contains(buf.String(), `"level":"ERROR"`), buf.String())
 	assert.Contains(t, buf.String(), "canceled by client")
+	assert.NotContains(t, buf.String(), secret)
+	assert.Contains(t, buf.String(), "bot1:***")
 }

@@ -15,6 +15,7 @@ import (
 	"nexus/internal/platform/clientip"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
+	"nexus/internal/platform/sensitive"
 	"nexus/internal/receiver/usecase"
 )
 
@@ -179,7 +180,7 @@ func (h *Handler) handleAuto(c *gin.Context, rest string) {
 		// несуществующий узел: факт существования наружу не раскрываем.
 		c.Set(metrics.RootMethodLabelKey, metrics.RootMethodShortURL)
 		h.logger.Debug("receiver.auto: node has no http ingress",
-			h.logger.Str("path", nodePath),
+			h.logger.Str("path", sensitive.MaskBotTokens(nodePath)),
 			h.logger.Str("root_method", string(root)))
 		h.replyDomainError(c, domain.ErrNodeNotFound, nodePath, "receiver.auto")
 	}
@@ -616,12 +617,16 @@ const statusClientClosedRequest = 499
 // строка лога — Debug, журнал отказов §94 такой статус пропускает
 // (rejectReason). Отмена при живом контексте запроса сюда не попадает и
 // остаётся ошибкой. Тела у ответа нет: читать его некому.
+//
+// Путь узла — как в error-строке (nodeForErrorLog): клиент может уйти ещё во
+// время поиска узла, и тогда путь целиком задал он сам — у passthrough-адреса
+// за путём узла идут токены ботов, а debug-строке секреты запрещены (§51.9).
 func (h *Handler) replyClientGone(c *gin.Context, err error, nodePath, op string) bool {
 	if !clientgone.Is(c.Request.Context(), err) {
 		return false
 	}
 	h.logger.Debug("receiver request canceled by client",
-		h.logger.Str("node", nodeForLog(c, nodePath)),
+		h.logger.Str("node", nodeForErrorLog(c, nodePath)),
 		h.logger.Str("op", op),
 		h.logger.Str("method", c.Request.Method),
 		h.logger.Str("client_ip", c.ClientIP()),
@@ -634,9 +639,10 @@ func (h *Handler) replyClientGone(c *gin.Context, err error, nodePath, op string
 // Sender'е (§109.3): рестарт Sender'а после §109.2 занимает секунды.
 const senderRetryAfterSec = "5"
 
-// replySenderUnavailable отвечает 503 + Retry-After, если готового транспорта
-// к Sender'у не было и за ready_wait_ms он не появился (§109.3). Вызов не
-// отправлялся — клиенту честно предложить повтор. Раньше это был 502
+// replySenderUnavailable отвечает 503 + Retry-After, если вызов не удалось
+// отправить Sender'у: за ready_wait_ms не нашлось готового транспорта, либо
+// ожидание выключено и транспорта не было (§109.3, domain.ErrSenderUnavailable).
+// Вызов до Sender'а не дошёл — клиенту честно предложить повтор. Раньше это был 502
 // «internal routing error» и ERROR в Sentry на каждый запрос окна выката
 // (NEXUS-T/S); теперь WARN: сигнал о настоящем падении Sender'а — алерт на его
 // недоступность и счётчик nexus_sender_ready_wait_total{outcome="timeout"}. В
@@ -699,12 +705,14 @@ func nodeLabelSetter(c *gin.Context) func(teamSlug, nodePath string) {
 // nodeForLog — путь узла для строк лога: путь найденного узла, если резолв уже
 // состоялся, иначе путь из адреса. Ошибки после резолва уходят и в Sentry, а
 // хвост passthrough-адреса несёт секреты; путь из адреса остаётся только у
-// отказов до резолва — там он и нужен («почему 404»).
+// отказов до резолва — там он и нужен («почему 404»). Токен бота в нём
+// маскируется (§109.6): debug-строке секреты запрещены (§51.9), а форма пути
+// для диагностики остаётся.
 func nodeForLog(c *gin.Context, fromURL string) string {
 	if v := resolvedNodeLabel(c); v != "" {
 		return v
 	}
-	return fromURL
+	return sensitive.MaskBotTokens(fromURL)
 }
 
 // nodeForErrorLog — путь узла для error-строки лога (§101.13). Она уходит и в

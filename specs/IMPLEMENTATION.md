@@ -6805,6 +6805,7 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
 | §109.3 переподключение, ожидание готовности, 503 | ✅ Phase 109.4 | `connectParams`, `pick`, `boundWait`, `observeWait`, `translateError`, `WithReadyWaitObserver` в [grpcsender/client.go](../internal/platform/grpcsender/client.go), `callState` и stats-хендлер `sendTracker` в [sendtrack.go](../internal/platform/grpcsender/sendtrack.go); `domain.ErrSenderUnavailable` ([errors.go](../internal/domain/errors.go)); `replySenderUnavailable` (503 + `Retry-After: 5`, WARN) в [receiver handler.go](../internal/receiver/adapter/in/http/handler.go); ключ `sender_grpc.ready_wait_ms` ([config.go](../internal/platform/config/config.go), `defaultSenderReadyWaitMs` в defaults.go, три YAML); счётчик `nexus_sender_ready_wait_total{outcome}` ([metrics.go](../internal/platform/metrics/metrics.go)), wiring в receiver/app.go и web/app.go; Swagger `@Failure 503`; CHANGELOG `[Unreleased]`; DEPLOYMENT §9.1.6. Тесты [client_readywait_test.go](../internal/platform/grpcsender/client_readywait_test.go) (рестарт Sender'а как при выкате: `NOT_SERVING` → дренаж → `GracefulStop` — ровно один вызов; таймаут и выключенное ожидание → `ErrSenderUnavailable`; отмена во время ожидания; обрыв посреди вызова — НЕ `ErrSenderUnavailable`), [sendtrack_test.go](../internal/platform/grpcsender/sendtrack_test.go) (отправка и истечение взаимоисключающие, устаревший `READY` в счётчике, `translateError`), `TestReplySenderUnavailable` |
 | §109.6 scrubbing `bot<id>:<secret>` в Sentry | ✅ Phase 109.5 | `MaskBotTokens` в [sensitive/bottoken.go](../internal/platform/sensitive/bottoken.go) (табличный тест, fuzz, бенчмарк — 0 аллокаций без токена); `maskEventTokens`, `maskTokensStr`, `maskTokensAny` и спаны/крошки в [sentry/sentry.go](../internal/platform/sentry/sentry.go); тесты [tokens_test.go](../internal/platform/sentry/tokens_test.go) — токен во всех полях, проверка итогового JSON события (красные без маскировщика); CHANGELOG `### Security` |
 | §109.7 версия ClickHouse: кандидат 26.3 LTS | ✅ Phase 109.6 | `clickHouseImage()` + `NEXUS_TEST_CLICKHOUSE_IMAGE` в [tests/integration/clickhouse_test.go](../tests/integration/clickhouse_test.go) (дефолт `24-alpine`); полный `make test-integration` на `26.3.33.24-alpine` зелёный после правки замера в [log_partition_pruning_test.go](../tests/integration/log_partition_pruning_test.go) (`dropQueryConditionCache`); `image:` + `command: ["--", "--memory_worker_correct_memory_tracker=1"]` в [standalone.override](../deploy/docker-compose.standalone.override.yml) и [ha.standalone.override](../deploy/docker-compose.ha.standalone.override.yml); DEPLOYMENT §5.4.2 и §9.1.6, DEVELOPMENT (переменные версий хранилищ), CHANGELOG |
+| Ревизия перед сдачей (ревьюер + стенд) | ✅ Phase 109.7 | пул gRPC: `Connect` в `New`, `WithIdleTimeout(0)`, побудка `IDLE` в `pick` ([grpcsender/client.go](../internal/platform/grpcsender/client.go), тесты `TestSend_PoolSpreadsCalls`, `TestSend_SentCallOutlivesReadyWait`); дефолт `ready_wait_ms` 30000 ([config/defaults.go](../internal/platform/config/defaults.go)); токен бота в строках Receiver'а — `nodeForLog`, `redactURLString`, резолв, кеш узлов, rate-limit — и прокси Web (тесты `TestRoute_DebugLogMasksBotToken`, `TestReplyDomainError_NotFoundMasksBotToken`, `TestReplyClientGone_NoPathSecretInLog`, `TestReceiverProxy_ClientGone`); пустой адрес в журнале отказов — `0.0.0.0`; DEPLOYMENT §9.1.6/§5.4.2 — шаблоны через `-f`, откат с потерей логов |
 
 **Неочевидности §109 (пополняется по блокам):**
 
@@ -6902,3 +6903,34 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
   холодным кешем 200 000 → 24 576 строк, 3 → 1 часть). Замер теперь сбрасывает кеш
   (`SYSTEM DROP QUERY CONDITION CACHE`, только на ≥ 25.3 — в 24.x команды нет). Для продукта это
   не дефект: повторные чтения логов тем же фильтром (опрос окна в UI) на 26.3 дешевле.
+- **Ревизия §109: `pick` с предпочтением `READY` схлопывал пул до одного соединения.**
+  `grpc.NewClient` ленивый: канал выходит из `IDLE` только по вызову или `Connect`, а `pick` не
+  даёт ему вызовов, пока рядом есть готовое соединение. Вдобавок канал, простоявший 30 минут без
+  вызовов (дефолтный idle timeout gRPC), уходил обратно в `IDLE` — за тихую ночь пул таял. Весь
+  sync шёл по одному HTTP/2-соединению: большие тела задерживали остальные вызовы, потолок стримов
+  наступал в N раз раньше, а выход из `IDLE` засчитывался ожиданием (`outcome="ready"` на холодном
+  старте — ложное подтверждение проверки выката). Лечение из трёх частей: `Connect` в `New`,
+  `WithIdleTimeout(0)`, `pick` будит пропущенные `IDLE` (после рестарта Sender'а каналы тоже могут
+  остаться в `IDLE`). `TestSend_PoolSpreadsCalls` на старом коде: «1 соединение из 4».
+- **Ревизия §109: бюджет `ready_wait_ms` отсчитывается от `NOT_SERVING`, а не от подъёма.**
+  Health-проверка исключает реплику из round_robin сразу при `grpcHealth.Shutdown()`, дальше —
+  дренаж 5 с, `stopQueueConsumers`, `GracefulStop` (ждёт текущие вызовы до `shutdown.timeout_sec`),
+  выход процесса, пересоздание контейнера, подключения в `main`, `App.Start`. Окно `NOT_SERVING`
+  на бою — 8–10 с, поэтому исходные 15 с были впритык; дефолт поднят до 30 с. Стенд (нативный,
+  жёсткое убийство Sender'а, `ready_wait_ms` тогда 15000): простой 8 с — четыре запроса окна ждали
+  11,6–13 с и прошли, 88 из 88 ответов 200; простой 22 с — ровно 15 с ожидания и 503 +
+  `Retry-After: 5`, WARN вместо ERROR, следующие запросы дождались Sender'а. Порт Sender'а
+  открывается через 2,3–2,7 с после старта (`schema_ms` почти всё время), backfill идёт после.
+- **Ревизия §109 (стенд): токен бота печатался в debug-строках Receiver'а.** Резолв перебирает
+  префиксы адреса, и `node cache: redis miss` пишется на КАЖДЫЙ кандидат; `route: node resolved`
+  пишет путь и хвост, `route: forwarding to sender` — целевой URL (target_url + хвост), а
+  `redactURLString` отрезал только query. У passthrough-узла Telegram Bot API в хвосте токен.
+  Строки старше §109, но §51.9 запрещает секреты в debug, а консоль «Логи» §51 показывает их в UI.
+  Маскирование точечное — `sensitive.MaskBotTokens` там, куда попадает путь клиента; сплошной
+  фильтр в цепочке slog-хендлеров не делался (это правка общей обвязки логгера трёх сервисов).
+  Нашёл только стенд: юнит-тесты шли с `logging.NewNoop()`, а debug-строки на стенде видны лишь
+  после подъёма уровня логов (см. STAND_TESTING, «Диагностика»).
+- **Ревизия §109: пустой адрес клиента в журнале отказов — `0.0.0.0`.** `clientIP` после §109.5
+  превращает всё неразбираемое, включая пустую строку, в unspecified; проверка `ClientIP == ""` в
+  `absorbClient` стала мёртвой и удалена. Для образца это и нужно: `rejected_samples.client_ip` —
+  `INET NOT NULL`, пустая строка уронила бы пачку.

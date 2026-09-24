@@ -80,7 +80,8 @@ func EnsureBodySizeColumns(ctx context.Context, conn driver.Conn, tables []strin
 // асинхронные, завершения не ждём; ошибка по таблице — log+continue, старт
 // не валим. Вызывается после EnsureBodySizeColumns на старте Web и Sender —
 // в фоне (§109.2): guard-count — полный проход по колонкам тел, и синхронно он
-// держал старт сервиса. Повторный/конкурентный запуск безопасен — мутации идемпотентны (пишут те
+// держал старт сервиса. Повторный/конкурентный запуск безопасен — мутации
+// идемпотентны (пишут те
 // же значения), а после первого прохода guard находит 0 строк.
 func BackfillBodySizes(ctx context.Context, conn driver.Conn, tables []string, logger logging.Logger) {
 	if conn == nil {

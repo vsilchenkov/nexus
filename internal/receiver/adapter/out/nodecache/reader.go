@@ -23,6 +23,7 @@ import (
 	"nexus/internal/platform/crypto"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/safego"
+	"nexus/internal/platform/sensitive"
 	"nexus/internal/receiver/usecase/port"
 )
 
@@ -82,13 +83,15 @@ func (r *Reader) Get(ctx context.Context, teamSlug, path string) (*domain.Node, 
 	} else if !errors.Is(err, domain.ErrNodeNotFound) && !isRedisUnavailable(err) {
 		r.logger.Warn("redis read failed, falling back to postgres",
 			r.logger.Str("team", teamSlug),
-			r.logger.Str("path", path), r.logger.Err(err))
+			r.logger.Str("path", sensitive.MaskBotTokens(path)), r.logger.Err(err))
 	} else {
 		// §51.9: miss/decrypt-fail раньше молча превращались в поход в PG —
 		// главное слепое пятно кеша (в т.ч. «старый формат после ротации ключа»).
+		// path — кандидат резолва, то есть префикс адреса клиента: у
+		// passthrough-адреса в нём токен бота (§109.6).
 		r.logger.Debug("node cache: redis miss, reading postgres",
 			r.logger.Str("team", teamSlug),
-			r.logger.Str("path", path),
+			r.logger.Str("path", sensitive.MaskBotTokens(path)),
 			r.logger.Err(err))
 	}
 

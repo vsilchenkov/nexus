@@ -27,9 +27,11 @@ const (
 // unknownClientIP — адрес клиента, который не разбирается как IP (§109.5).
 // Первый элемент X-Forwarded-For задаёт сам клиент (nginx дописывает к нему
 // свой, а не заменяет), и мусор в нём проваливал приведение к INET — вместе
-// со всей пачкой. Unspecified-адрес реальным клиентом быть не может, поэтому
-// в журнале он читается однозначно: «адрес был подделан». PTR для него не
-// резолвится (rdns пропускает unspecified).
+// со всей пачкой. Пустой адрес — туда же: client_ip в обеих таблицах журнала
+// INET NOT NULL, и пустая строка уронила бы пачку так же. Unspecified-адрес
+// реальным клиентом быть не может, поэтому в журнале он читается однозначно:
+// «адрес подделан или неизвестен». PTR для него не резолвится (rdns пропускает
+// unspecified).
 const unknownClientIP = "0.0.0.0"
 
 // flushTimeout — потолок одной записи пачки. Больше интервала сброса, чтобы
@@ -301,9 +303,6 @@ func (c *Collector) absorb(buf map[domain.RejectedGroupKey]*aggregate, s Sample)
 }
 
 func (c *Collector) absorbClient(a *aggregate, s Sample) {
-	if s.ClientIP == "" {
-		return
-	}
 	cl := a.clients[s.ClientIP]
 	if cl == nil {
 		if len(a.clients) >= domain.RejectedMaxClientsPerGroup {

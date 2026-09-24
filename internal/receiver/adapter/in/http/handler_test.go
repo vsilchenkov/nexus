@@ -419,3 +419,50 @@ func TestReplySenderUnavailable(t *testing.T) {
 	assert.Empty(t, sink.samples, "сбой шины — не отказ клиенту")
 	assert.Empty(t, m.calls)
 }
+
+// TestReplyClientGone_NoPathSecretInLog — ревизия §109: клиент ушёл во время
+// поиска узла, метки резолва ещё нет, и путь целиком задал он сам. У
+// passthrough-адреса за путём узла идёт токен бота — в debug-строке его быть не
+// должно (§51.9); остаётся первый сегмент, как в error-строке (§101.13).
+func TestReplyClientGone_NoPathSecretInLog(t *testing.T) {
+	t.Parallel()
+
+	const secret = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw_"
+	var logBuf bytes.Buffer
+	logger := logging.NewLogger(slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	h := &Handler{logger: logger}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/telegram/bot1:"+secret+"/getUpdates", nil)
+	_, _, w := runReject(t, req, func(c *gin.Context) {
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		cancel()
+		c.Request = c.Request.WithContext(ctx)
+		h.replyDomainError(c, fmt.Errorf("lookup: %w", context.Canceled), "telegram/bot1:"+secret+"/getUpdates", "test")
+	})
+
+	assert.Equal(t, statusClientClosedRequest, w.Code)
+	assert.Contains(t, logBuf.String(), "canceled by client")
+	assert.NotContains(t, logBuf.String(), secret)
+}
+
+// TestReplyDomainError_NotFoundMasksBotToken — ревизия §109 (стенд): отказ до
+// резолва (404 на адрес с токеном) пишет в debug путь из адреса — он нужен для
+// разбора «почему 404», но токен бота в нём маскируется (§51.9).
+func TestReplyDomainError_NotFoundMasksBotToken(t *testing.T) {
+	t.Parallel()
+
+	const secret = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw_"
+	var logBuf bytes.Buffer
+	logger := logging.NewLogger(slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	h := &Handler{logger: logger}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/nope/bot1:"+secret+"/getUpdates", nil)
+	_, _, w := runReject(t, req, func(c *gin.Context) {
+		h.replyDomainError(c, domain.ErrNodeNotFound, "nope/bot1:"+secret+"/getUpdates", "test")
+	})
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, logBuf.String(), "receiver request rejected")
+	assert.Contains(t, logBuf.String(), "nope/bot1:***/getUpdates", "форма пути для разбора 404 остаётся")
+	assert.NotContains(t, logBuf.String(), secret)
+}
