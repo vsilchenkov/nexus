@@ -219,6 +219,7 @@ receiver:
     keepalive_time_sec: 30       # Период keepalive-ping'ов по соединению (сек).
     keepalive_timeout_sec: 10    # Ожидание ответа на keepalive-ping до разрыва (сек).
     max_message_bytes: 402653184 # Лимит размера gRPC-сообщения клиента (оба напр.) = 384 МиБ. Дефолт gRPC 4 МиБ мал для больших тел (ответ апстрима → ResourceExhausted). Должен быть ≥ receiver.max_body_bytes (300 МиБ) с запасом на envelope и совпадать с sender.grpc_max_message_bytes.
+    ready_wait_ms: 30000         # §109.3: сколько sync-вызов ждёт готовности соединения к Sender'у (рестарт Sender'а), прежде чем ответить 503 + Retry-After. Вызов до готовности не отправляется — дублей у получателя нет. Отсчёт — с перехода Sender'а в NOT_SERVING (дренаж + остановка + старт). 0 = дефолт 30000, <0 = не ждать (прежний fail-fast).
   swagger_enabled: false         # Отдавать ли Swagger UI Receiver'а (выключай в prod).
   # In-memory L2-кеш конфига узлов (§9.2). Снимает нагрузку с Redis на
   # пиковом RPS и спасает при кратковременном Redis-flutter'е. При
@@ -371,6 +372,7 @@ web:
     keepalive_time_sec: 30       # Период keepalive-ping'ов по соединению (сек).
     keepalive_timeout_sec: 10    # Ожидание ответа на keepalive-ping до разрыва (сек).
     max_message_bytes: 402653184 # Лимит размера gRPC-сообщения = 384 МиБ (как у receiver.sender_grpc).
+    ready_wait_ms: 30000         # §109.3: то же для реального вызова dry-run (§55) — ожидание готовности соединения к Sender'у.
   # §32.2: «свои» authority (host или host:port) для запрета self-referencing target_url узла.
   # Пусто → выводится из receiver_url. Полезно за реверс-прокси, когда внешний адрес отличается.
   self_ingress_hosts: []                        # напр.: ["nexus.example.com", "receiver:8080"]

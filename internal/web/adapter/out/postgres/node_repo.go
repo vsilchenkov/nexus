@@ -33,6 +33,7 @@ var (
 	_ port.NodeRepo         = (*NodeRepoPg)(nil)
 	_ port.NodeTableUsage   = (*NodeRepoPg)(nil)
 	_ port.NodePathResolver = (*NodeRepoPg)(nil)
+	_ port.NodeBatchReader  = (*NodeRepoPg)(nil)
 	_ port.NodeKeyResolver  = (*NodeRepoPg)(nil)
 )
 
@@ -59,7 +60,8 @@ const nodeColumns = `
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
 	created_by, updated_by, external_table,
 	circuit_breaker_threshold, circuit_breaker_cooldown_sec,
-	async_ack_spec, group_id`
+	async_ack_spec, group_id,
+	sse_decline, breaker_ignore_timeouts`
 
 // nodeGroupFKConstraint — имя FK nodes.group_id → node_groups.id (§99). Задано
 // явно в миграции 0042.
@@ -68,6 +70,32 @@ const nodeGroupFKConstraint = "nodes_group_id_fkey"
 func (r *NodeRepoPg) Get(ctx context.Context, id string) (*domain.Node, error) {
 	row := r.db.QueryRow(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = $1`, id)
 	return r.scan(row)
+}
+
+// GetByIDs реализует port.NodeBatchReader (§108.7): узлы по набору id одним
+// запросом, без team-скоупа (см. godoc порта). Креды расшифровываются тем же
+// scan, что у Get, — узел в памяти всегда plaintext.
+func (r *NodeRepoPg) GetByIDs(ctx context.Context, ids []string) (map[string]*domain.Node, error) {
+	out := make(map[string]*domain.Node, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := r.db.Query(ctx, `SELECT `+nodeColumns+` FROM nodes WHERE id = ANY($1::uuid[])`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("get nodes by ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		n, err := r.scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[n.ID] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get nodes by ids rows: %w", err)
+	}
+	return out, nil
 }
 
 func (r *NodeRepoPg) GetByPath(ctx context.Context, path string) (*domain.Node, error) {
@@ -357,7 +385,8 @@ INSERT INTO nodes (
 	incoming_auth_dynamic_source, incoming_auth_dynamic_field,
 	created_by, updated_by, external_table,
 	circuit_breaker_threshold, circuit_breaker_cooldown_sec,
-	async_ack_spec, group_id
+	async_ack_spec, group_id,
+	sse_decline, breaker_ignore_timeouts
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -377,7 +406,8 @@ INSERT INTO nodes (
 	$47, $48,
 	$49, $50, $51,
 	$52, $53,
-	$54::jsonb, $55
+	$54::jsonb, $55,
+	$56, $57
 ) RETURNING id, created_at, updated_at`
 
 	err = r.db.QueryRow(ctx, q,
@@ -405,6 +435,8 @@ INSERT INTO nodes (
 		ack,
 		// §99: пусто → NULL, «узел без группы».
 		nullUUID(n.GroupID),
+		// §107: отказ от SSE-подписки и таймауты вне breaker'а.
+		n.SSEDecline, n.BreakerIgnoreTimeouts,
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
@@ -464,6 +496,7 @@ UPDATE nodes SET
 	updated_by = $50, external_table = $51,
 	circuit_breaker_threshold = $52, circuit_breaker_cooldown_sec = $53,
 	async_ack_spec = $54::jsonb, group_id = $55,
+	sse_decline = $56, breaker_ignore_timeouts = $57,
 	updated_at = now()
 WHERE id = $1
 RETURNING updated_at`
@@ -494,6 +527,8 @@ RETURNING updated_at`
 		ack,
 		// §99: пусто → NULL, «узел без группы».
 		nullUUID(n.GroupID),
+		// §107: отказ от SSE-подписки и таймауты вне breaker'а.
+		n.SSEDecline, n.BreakerIgnoreTimeouts,
 	).Scan(&n.UpdatedAt)
 
 	if err != nil {
@@ -634,6 +669,7 @@ func (r *NodeRepoPg) scan(row rowScanner) (*domain.Node, error) {
 		&n.CreatedBy, &n.UpdatedBy, &n.ExternalTable,
 		&cbThreshold, &cbCooldown,
 		&ackRaw, &groupID,
+		&n.SSEDecline, &n.BreakerIgnoreTimeouts,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) || isInvalidUUID(err) {

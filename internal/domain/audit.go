@@ -27,6 +27,12 @@ const (
 	ActionNodeCreate = "node.create"
 	ActionNodeUpdate = "node.update"
 	ActionNodeDelete = "node.delete"
+	// ActionNodeRevert — §108: администратор отменил строку node.update (или
+	// node.revert) из журнала. Отдельное действие, а не node.update: фильтр и
+	// CSV-экспорт работают по action, и «кто откатывал узлы» по вложенному
+	// полю было бы не найти. Формат details тот же, что у node.update, плюс
+	// reverted_from / reverted_from_at — поэтому отмену тоже можно отменить.
+	ActionNodeRevert = "node.revert"
 
 	ActionUserLogin       = "user.login.success"
 	ActionUserLoginFailed = "user.login.failed"

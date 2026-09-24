@@ -6642,3 +6642,328 @@ sessionStorage (§54) переживали выход и вход другого
 - **Закрытый порт на Windows даёт таймаут, а не быструю ошибку.** На Linux ICMP port unreachable
   приходит в подключённый UDP-сокет как `ECONNREFUSED`, на Windows-машине разработчика тест
   закрытого порта ждал весь таймаут. Тест проверяет только «ошибка, а не имя».
+
+### 4.92 §107 — потоковые подписки и медленные ответы: SSE на GET и таймауты вне breaker
+
+Раздел [107-node-streams-and-slow-timeouts.md](sections/107-node-streams-and-slow-timeouts.md).
+Ветка `feature/node-sse-breaker-timeout`. Статус ✅ — блоки 107.0–107.6, полный `make test`,
+golangci-lint, `make test-integration` (все 10 групп), `-race` в контейнере, ревизия diff'а и
+стенд пройдены при сдаче 23.09.2026; в `dev` не слита. Повод — разбор боевой команды `mcp`
+23.09.2026 (MCP-серверы за шиной: GET-канал SSE висел до таймаута и открывал брейкер).
+
+**Стенд (23.09.2026, поддельный MCP-апстрим).**
+
+- Без флага GET-подписка — 504 через 3,09 с (таймаут узла), поток дошёл до апстрима.
+- С флагом:
+  - 405 за 13 мс с `Allow`, на коротком адресе §78 тоже;
+  - POST, DELETE и GET без SSE-`Accept` проходят, до апстрима подписка не дошла;
+  - журнал отказов пуст;
+  - debug-строка без query.
+- Breaker при пороге 2:
+  - четыре таймаута ответа с флагом — защита закрыта, `failures: 0`, debug «response timeout not
+    counted by node setting»;
+  - без флага два таймаута открыли защиту, следующий запрос — 503 за 18 мс.
+- Форма и вкладка «Конфиг» совпадают с эскизами; у `requestAsync` и у входящего POST
+  SSE-переключатель скрыт.
+- Dry-run подписки даёт один шаг `stream.declined`.
+- Ошибок в консоли браузера 0.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §107 | ✅ Phase 107.0 | [sections/107-node-streams-and-slow-timeouts.md](sections/107-node-streams-and-slow-timeouts.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); §80.5 п. 2 и §81.6 помечены закрытыми §107 |
+| §107.6 кеш Receiver читает все поля узла | ✅ Phase 107.1 | [nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go) — `incoming_auth_dynamic_source/field` в SELECT и Scan; сторож [receiver_node_cache_fields_test.go](../tests/integration/receiver_node_cache_fields_test.go) |
+| §107.2/§107.3 модель: флаги `sse_decline`, `breaker_ignore_timeouts` | ✅ Phase 107.2 | миграция [0043](../migrations/0043_node_sse_breaker_timeout.up.sql); [domain/node.go](../internal/domain/node.go) (`SSEDecline` сбрасывается `NormalizeForRootMethod` не у `request`); Web [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), [dto.go](../internal/web/adapter/in/http/dto.go), аудит `diffNodes`; колонки в кеше Receiver'а; тесты [node_sse_test.go](../internal/domain/node_sse_test.go), [node_sse_audit_test.go](../internal/web/usecase/node_sse_audit_test.go), integration [node_repo_stream_flags_test.go](../tests/integration/node_repo_stream_flags_test.go) |
+| §107.2 Receiver отвечает 405 на SSE-подписку | ✅ Phase 107.3 | [domain/node_stream.go](../internal/domain/node_stream.go) (`IsSSESubscribe`, `Node.DeclineStream`, `StreamDeclinedError{Allow}`); [route.go](../internal/receiver/usecase/route.go) `checkNodeAcceptsSync` — после `Disabled`, до `Paused`/метода/авторизации; [handler.go](../internal/receiver/adapter/in/http/handler.go) `replySyncRouteError` → `replyStreamDeclined` (405 + `Allow` + `MarkProxiedResponse`); dry-run шаг `stream.declined` ([dry_run.go](../internal/web/usecase/dry_run.go)); swagger Receiver — `405`; тесты [node_stream_test.go](../internal/domain/node_stream_test.go) (+ `FuzzIsSSESubscribe`), [route_sse_test.go](../internal/receiver/usecase/route_sse_test.go), [handler_sse_test.go](../internal/receiver/adapter/in/http/handler_sse_test.go), [dry_run_sse_test.go](../internal/web/usecase/dry_run_sse_test.go), integration [receiver_sse_decline_test.go](../tests/integration/receiver_sse_decline_test.go) |
+| §107.3 таймаут ответа не засчитывается breaker'у | ✅ Phase 107.4 | sentinel `port.ErrResponseTimeout` ([port/log_writer.go](../internal/sender/usecase/port/log_writer.go)); [httpclient/client.go](../internal/sender/adapter/out/httpclient/client.go) `withConnTrace` (`httptrace` `GetConn`/`GotConn`) + `markResponseTimeout` (ошибка `Do` и ошибка чтения тела); [breaker_vote.go](../internal/sender/usecase/breaker_vote.go) `classifyUpstream(…, ignoreTimeouts)` → `voteAbstain`, `logAbstain`; `SendInput.BreakerIgnoreTimeouts`; proto `breaker_ignore_timeouts = 34` ([sender.proto](../proto/sender/v1/sender.proto)); маппинг: Receiver `buildSendRequest`, gRPC-адаптер Sender'а, async `buildSendInput`, [nodepg](../internal/sender/adapter/out/nodepg/reader.go); тесты [client_timeout_test.go](../internal/sender/adapter/out/httpclient/client_timeout_test.go), `TestClassifyUpstream` и `TestSend_ResponseTimeout_*` ([breaker_vote_test.go](../internal/sender/usecase/breaker_vote_test.go)), маппинги (`TestServer_Send_BreakerIgnoreTimeoutsReachesUsecase`, `TestRoute_BreakerIgnoreTimeoutsForwarded`, `TestBuildSendInput_BreakerPolicyFromNode`), integration [circuitbreaker_ignore_timeouts_test.go](../tests/integration/circuitbreaker_ignore_timeouts_test.go) |
+| §107.4 интерфейс: два переключателя и строки вкладки «Настройки» | ✅ Phase 107.5 | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) — SSE-переключатель в карточке «Маршрут» только у `request` (`buildPayload` шлёт `sse_decline=false` у остальных типов), переключатель таймаутов под сеткой breaker; [ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx) — строки только при включённом флаге; i18n `node.form.*`, `node.help.*`, `node.fields.*` в [en.json](../web-ui/src/locales/en.json)/[ru.json](../web-ui/src/locales/ru.json); тесты [NodeSettings.streamflags.test.tsx](../web-ui/src/pages/NodeSettings.streamflags.test.tsx), [ConfigTab.test.tsx](../web-ui/src/components/node/ConfigTab.test.tsx); встроенный бандл пересобран |
+| §107.2 SSE-флаг только у узла, принимающего GET | ✅ Phase 107.6 | `Node.sseDeclineApplies` ([node_stream.go](../internal/domain/node_stream.go)) — нормализация и `DeclineStream`; форма и вкладка «Конфиг» по тому же условию; тип `HTTPMethod` фронта знает `ANY`; тесты `TestNode_NormalizeForRootMethod_SSEDeclineNeedsGET`, строки `TestNode_DeclineStream`, integration `TestNodeRepoStreamFlags_E2E`, vitest формы и `ConfigTab` |
+
+**Неочевидности §107:**
+
+- **Кеш узла Receiver'а читает PostgreSQL урезанным SELECT'ом, и промах Redis — штатный путь, а не
+  редкость.** После каждого сохранения узла Receiver по событию §57 удаляет ключ, так что первое же
+  чтение идёт в PG. Забытая колонка тихо становится zero value — ровно после правки узла. Так
+  дважды терялись поля: колонки breaker'а (§81.9) и входящей авторизации §41
+  (`incoming_auth_dynamic_source/field`, до §107.1). Узел с токеном в `?api_key=` после любого
+  сохранения начинал искать его в заголовке `Authorization` и отвечал 401. Истечение TTL не
+  лечит: write-back кладёт в Redis уже урезанный узел. Unit-тест на текст SELECT такого не ловит
+  (он проверяет одну колонку). Поэтому стоит integration-сторож `TestNodeCache_ReceiverReadsAllFieldsFromPostgres`:
+  - эталон — узел, прочитанный Web-репозиторием;
+  - поля `domain.Node` сравниваются рефлексией, и при промахе, и после write-back в Redis;
+  - исключения перечислены **с причинами** в `receiverCacheSkippedFields()`;
+  - нулевое значение в фикстуре роняет тест. Новое поле узла без решения «читать» или «исключить»
+    не проходит, иначе забытая колонка и фикстура дали бы одинаковый ноль.
+
+  Имя начинается с `TestNodeCache`, чтобы попасть в группу `test-int-pg`: префикс `TestReceiver`
+  без подчёркивания не ловит ни один фильтр `make test-integration`.
+- **405 на SSE-подписку — не отказ шины, поэтому `MarkProxiedResponse`.** Статус задала настройка
+  узла, как статус получателя или шаблона приёма §83. Без пометки `RejectLogMiddleware` записал бы
+  каждую подписку MCP-клиента в журнал §94 как `method_not_allowed`, и бейдж «Логи → Отказы» горел
+  бы постоянно. Ровно из-за этого пользователь отверг вариант «входящий метод = POST».
+  В `nexus_requests_total{status="405"}` ответ попадает сам: пометка на счётчик запросов не влияет.
+  `TestHandleSync_SSEDecline` падает, если пометку убрать.
+- **Порядок в `checkNodeAcceptsSync`: `Disabled` → SSE → `Paused` → метод → авторизация.**
+  - До паузы: иначе подписка к узлу на паузе ушла бы в очередь (§3.6), и Sender висел бы на
+    бесконечном потоке уже в async-пути.
+  - До авторизации: 405 не зовёт получателя. Цена — клиент без токена получает 405, а не 401.
+  - После `Disabled`: выключенный узел по-прежнему отвечает «узла нет».
+- **Пустой `Allow` пишется через `c.Writer.Header().Set`, а не `c.Header`.** В gin `c.Header(k, "")`
+  удаляет заголовок. У узла, принимающего только GET, другого метода нет, но заголовок в 405
+  обязателен (RFC 9110 §15.5.6).
+- **POST с `Accept: text/event-stream` — не подписка.** Так MCP-клиент вызывает инструменты. Сервер
+  вправе ответить коротким SSE, у такого ответа есть конец, и шина отдаёт его целиком. Флаг
+  трогает только GET.
+- **SSE-флаг применим только к узлу, принимающему GET (входящий `ANY` или `GET`).** Правило
+  добавлено по замечанию со стенда (Phase 107.6): переключатель показывался у узла с входящим
+  POST, где смысла не имеет — такой узел и без флага отвечает на GET отказом §40. Условие
+  проверяется в трёх местах одинаково:
+  - `Node.sseDeclineApplies` в домене — нормализация сбрасывает флаг (с записью в `cleared`),
+    `DeclineStream` его не применяет;
+  - `sseDeclineApplies` в [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) — скрывает
+    переключатель и шлёт `false`;
+  - условие строки в [ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx).
+
+  Если флаг скрыть только в форме, выставленный через API или оставшийся от прежнего метода флаг
+  продолжал бы молча действовать: 405 вне журнала отказов вместо штатного отказа метода.
+- **vitest не проверяет типы — ошибку типа ловит только `tsc` в `npm run build`.** Тип
+  `HTTPMethod` в [api/client.ts](../web-ui/src/api/client.ts) не знал `ANY` (§40), хотя сервер его
+  отдаёт. Тесты с `incoming_method: "ANY"` проходили, а `make build-ui` падал на TS2322/TS2367.
+  После правки фронта гонять именно `npm run build`, а не только vitest.
+- **«Таймаут ответа» отличается от «таймаута подключения» только через `httptrace.GotConn`.** Опыт
+  на net/http: `context deadline exceeded` одинаково дают получатель, который принял запрос и молчит,
+  заглохшее тело SSE (ошибка уже в `io.ReadAll`) и «чёрная дыра» при подключении (SYN без ответа,
+  зависшее TLS-рукопожатие). По тексту или типу ошибки их не различить, а третий случай §80.5
+  требует считать отказом: получателя, может быть, нет. `GotConn` срабатывает после TCP и TLS (у
+  HTTP/2 transport вызывает его сам), `GetConn` сбрасывает признак на каждом переходе редиректа.
+  Метка — обёртка `%w: %w`: цепочка `DeadlineExceeded` цела, и `failureReason`, `504` и
+  `out.Timeout` не меняются. `TestClient_Do_ResponseTimeoutMarking` гоняет все четыре случая на
+  настоящем транспорте.
+- **Флаг даёт воздержание, а не успех.** `RecordSuccess` обнулял бы счёт настоящих отказов:
+  чередование «отказ соединения / таймаут ответа» никогда не открыло бы защиту.
+- **Статус узла флаг не трогает.** `out.ParentGone` зависит только от `ctx.Err()` родителя
+  ([send.go](../internal/sender/usecase/send.go)), поэтому исход таймаута по-прежнему пишется в бейдж
+  §52 и gauge §41. Медленный узел остаётся виден медленным. `TestSend_ResponseTimeout_IgnoredByNodeFlag`
+  держит `ParentGone=false`.
+- **Sync-путь Sender'а узел из БД не читает — флаг едет полем 34 запроса.** Потерянный маппинг в
+  `buildSendRequest` или gRPC-адаптере сделал бы настройку косметической именно на sync-узлах
+  (MCP), поэтому оба конца покрыты тестом. Старый Sender поле игнорирует (proto3), и флаг не
+  действует, пока Sender не обновлён. Новый Sender читает колонку в `nodepg` и на схеме без 0043
+  падал бы на каждом async-сообщении, отсюда порядок выката Receiver → Sender → Web (DEPLOYMENT §9.1.5).
+
+### 4.93 §108 — отмена изменения узла из журнала аудита
+
+Раздел [108-audit-revert.md](sections/108-audit-revert.md). Ветка `feature/audit-revert`. Статус ✅ —
+сдано (гейты, ревизия, стенд), в `dev` не слито. Миграций и конфига нет, выкат только Web.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §108 | ✅ Phase 108.0 | [sections/108-audit-revert.md](sections/108-audit-revert.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md), `node.revert` в §7.13 ([07-web-ui.md](sections/07-web-ui.md)) |
+| §108.2 реестр полей узла: diff аудита и отмена из одного списка | ✅ Phase 108.1 | [node_fields.go](../internal/web/usecase/node_fields.go) — `nodeFieldRegistry` (24 поля: `get` в типе записи журнала, `set` через JSON в типизированное поле, `applies` для `rmq_*`/`pull_*`), `nodeSecretRegistry` (креды + связанные поля), `diffSecretsAndAck`; `diffNodes` ([node.go](../internal/web/usecase/node.go)) строится по реестру; тесты [node_fields_test.go](../internal/web/usecase/node_fields_test.go) — golden формата (написан и зелёный до рефакторинга), полнота, round-trip через float64, отказы `set`, `applies` |
+| §108.3–§108.6 usecase отмены: классификация полей, применение, разметка выдачи | ✅ Phase 108.2 | `ActionNodeRevert`, ошибки `ErrAudit*` ([domain/audit.go](../internal/domain/audit.go), [errors.go](../internal/domain/errors.go)); `AuditFilter.ID` ([port/audit_repo.go](../internal/web/usecase/port/audit_repo.go), `auditWhere`); порт `NodeBatchReader` + `NodeRepoPg.GetByIDs`; [node_save.go](../internal/web/usecase/node_save.go) — `Update`/`SetStatus` разрезаны на `prepareChanged`/`commitChanged`/`commitStatus`/`writeNodeChange` (поведение прежнее); [node_revert.go](../internal/web/usecase/node_revert.go) — `Revert`/`PreviewRevert`, `cloneNode`, `RevertNotHeldError`; [audit_revert_classify.go](../internal/web/usecase/audit_revert_classify.go) — статусы полей, состояние строки; [audit_revert.go](../internal/web/usecase/audit_revert.go) — `AuditRevertUsecase` (`Preview`/`Apply`/`Annotate`); тесты [audit_revert_classify_test.go](../internal/web/usecase/audit_revert_classify_test.go), [node_revert_test.go](../internal/web/usecase/node_revert_test.go), [audit_revert_test.go](../internal/web/usecase/audit_revert_test.go) |
+| §108.7 API: предпросмотр, применение, разметка `GET /api/audit` | ✅ Phase 108.3 | [audit_revert_handler.go](../internal/web/adapter/in/http/audit_revert_handler.go) — `GET/POST /api/audit/revert/:id` (`authedAdmin` + `RequireSessionOnly`, [routes.go](../internal/web/adapter/in/http/routes.go)), карта ошибок `revertErrorReply` (общая для ответа POST и `dry_run` предпросмотра); [audit_handler.go](../internal/web/adapter/in/http/audit_handler.go) — `WithRevert` + поле `revert` у строк выдачи только для admin-сессии (`viaAPIToken` в [api_token_middleware.go](../internal/web/adapter/in/http/api_token_middleware.go)); провязка в [app.go](../internal/web/app.go); ключи `audit.revert.*` в [i18n.go](../internal/platform/i18n/i18n.go); тесты [audit_revert_handler_test.go](../internal/web/adapter/in/http/audit_revert_handler_test.go), роли в [routes_role_test.go](../internal/web/adapter/in/http/routes_role_test.go), integration [audit_revert_test.go](../tests/integration/audit_revert_test.go) (группа `test-int-misc`) |
+| §108.8 интерфейс: колонка отмены, подсветка, диалог | ✅ Phase 108.4 | [AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx) — колонка ↺ у admin (`useRoleAtLeast("admin")`), фон `bg-warn/5` + чип «неактуально»/«узел удалён», `node.revert` в фильтре и тон `warning`; [AuditDetailsCell.tsx](../web-ui/src/components/AuditDetailsCell.tsx) — diff и для `node.revert`, строка «отмена записи от …» вместо `reverted_from*`, зачёркнутое «Стало» с подсказкой «сейчас: X», приглушённый diff неактуальной строки; [components/audit/RevertAuditDialog.tsx](../web-ui/src/components/audit/RevertAuditDialog.tsx) + [revert.ts](../web-ui/src/components/audit/revert.ts) (типы, выбор по умолчанию, формат значения); ключи `audit.revert.*`, `audit.state.*`, `audit.diff.now`, `audit.revert_source` в `en.json`/`ru.json`; тесты [AuditLog.revert.test.tsx](../web-ui/src/pages/AuditLog.revert.test.tsx), [RevertAuditDialog.test.tsx](../web-ui/src/components/audit/RevertAuditDialog.test.tsx), [AuditDetailsCell.test.tsx](../web-ui/src/components/AuditDetailsCell.test.tsx); бандл `internal/web/static` пересобран |
+| Сдача: ревизия diff'а, гейты, стенд | ✅ Phase 108.5 | Ревизия нашла: после 409 кнопка применения оставалась активной, пока предпросмотр перечитывается, — повторное нажатие слало прежний `updated_at` (исправлено, регрессионный тест красный на старом коде). Гейты: `make test`, `golangci-lint`, полный `-race` в контейнере `golang:1.26.6` (60 пакетов), `make test-integration` (10 групп, 184 теста), фронт lint + 953 теста (98 файлов). Стенд (Web нативно на стеке `services`, браузер): подсветка и зачёркивание, диалог по эскизу, 409 при параллельной правке с перечитанным предпросмотром, POST с `updated_at` байт в байт из предпросмотра, повтор изменения через `node.revert`, лёгкий путь статуса, «узел удалён» без кнопки, оператор — 6 колонок, без `revert` в ответе, предпросмотр 403 |
+
+**Неочевидности §108 (пополняется по блокам):**
+
+- `expected_updated_at` разбирается `time.RFC3339Nano` из строки, пришедшей в предпросмотре;
+  сериализация `time.Time` в JSON отдаёт микросекунды PostgreSQL без потерь, поэтому сравнение
+  `Equal` сходится. Integration-тест гоняет значение через `Format`/`Parse`, как это делает HTTP.
+- Пробный прогон предпросмотра **не видит** занятость пути: уникальность `(team_id, path)` проверяет
+  только запись (23505 → `ErrNodeAlreadyExists` → 409). Строка отмены откатывается вместе с узлом
+  (UoW) — проверено integration-тестом.
+- Внутренняя ошибка пробного прогона (сбой ClickHouse при проверке таблицы) предпросмотр не роняет:
+  `dry_run.code = error.internal`, причина — в лог Warn, текст наружу не уходит.
+- Текст ошибки `ShouldBindJSON` в ответ не вклеивается (`invalid request body`): `encoding/json`
+  цитирует куски тела.
+- Выбор полей в диалоге хранится вместе с версией предпросмотра (`dataUpdatedAt`), а не
+  выставляется эффектом: после 409 предпросмотр перечитывается, и выбор сам возвращается к
+  умолчанию нового состояния узла. `refetchOnWindowFocus: false` — иначе возврат фокуса в окно
+  молча сбрасывал бы отмеченные поля.
+- Кнопка отмены в строке — `<button>` с `title`, а не Radix-`Tooltip`: так же сделаны кнопки строк
+  справочников, и страница не требует `TooltipProvider` в тестах.
+- В тестах страницы журнала строки берутся через `table.tBodies[0].rows`: селектор `tbody tr`
+  цепляет и строки вложенных таблиц diff в ячейке «Детали».
+- Строка `node.update` с пустым diff (правка только комментария/группы/логирования — полей вне
+  `diffNodes`) у живого узла разметки не получает (`none`), а у удалённого — чип «узел удалён»:
+  `gone` проверяется раньше сравнимости полей, и это верно — узла действительно нет.
+- При окне уже ~1100px правые колонки таблицы журнала («Стало» и кнопка отмены) уходят под
+  горизонтальный скролл. Это было и до §108: колонка «Стало» не помещалась и без новой колонки.
+
+### 4.94 §109 — устойчивость sync к рестарту Sender и шум Sentry
+
+Раздел [109-sender-restart-resilience.md](sections/109-sender-restart-resilience.md). Ветка
+`feature/sender-restart-resilience`. Статус ✅ — сдано (гейты, ревизия, стенд), в `dev` не слито.
+Миграций нет; новый ключ `sender_grpc.ready_wait_ms` с рабочим дефолтом (30000). Выкат
+Receiver → Sender → Web; смена версии ClickHouse на KZ (KZ.2) — отдельной операцией по
+DEPLOYMENT §5.4.2.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §109 + инструмент разбора Sentry | ✅ Phase 109.0 | [sections/109-sender-restart-resilience.md](sections/109-sender-restart-resilience.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); скилл [sentry-fix](../.claude/skills/sentry-fix/SKILL.md) + [sentry.ps1](../.claude/skills/sentry-fix/scripts/sentry.ps1) (список за 7 сут через орг-endpoint, разбор issue по видам ошибок, маска токенов ботов в выводе), ссылка из [nexus-sentry](../.claude/skills/nexus-sentry/SKILL.md) |
+| §109.5 невалидный UTF-8 в пути → 404; журнал отказов не теряет пачку на мусоре | ✅ Phase 109.1 | обёртка `validUTF8Reader` + `errInvalidUTF8Path` в [receiver/usecase/resolver.go](../internal/receiver/usecase/resolver.go) (тест `TestResolveNode_InvalidUTF8`); санитизация образца `Collector.sanitize`/`clientIP` в [rejectlog/collector.go](../internal/receiver/adapter/out/rejectlog/collector.go), `truncateRunes` приводит к валидному UTF-8, `TruncateRequestID` в [domain/rejected.go](../internal/domain/rejected.go) (тест `TestCollectorSanitizesSample`, integration `TestRejectedFlush_GarbageSampleKeepsBatch_E2E`) |
+| §109.4 уход клиента: 499 Receiver, Debug Web | ✅ Phase 109.2 | предикат [platform/clientgone](../internal/platform/clientgone/clientgone.go); перевод gRPC `Canceled` — `translateError` в [grpcsender/client.go](../internal/platform/grpcsender/client.go); Receiver `replyClientGone` + `statusClientClosedRequest` в [handler.go](../internal/receiver/adapter/in/http/handler.go), пропуск 499 в `rejectReason` ([reject_middleware.go](../internal/receiver/adapter/in/http/reject_middleware.go)); Web `logServerError` в [server_error.go](../internal/web/adapter/in/http/server_error.go) (58 мест), 499 в [receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go), replay — тот же предикат; спан 499 → `cancelled` в [sentry/middleware.go](../internal/platform/sentry/middleware.go). Тесты: `TestIs`, `TestGRPCSender_CallerCancelIsContextCanceled`, `TestReplyClientGone`, `TestLogServerError`, `TestReceiverProxy_ClientGone` |
+| §109.2 быстрый старт Sender, фоновый backfill | ✅ Phase 109.3 | [sender/startup.go](../internal/sender/startup.go) (`startBodySizeBackfill`, `startupPhases`, строка `sender startup phases`), `ensureCHSchema` возвращает таблицы и больше не делает backfill ([sender/app.go](../internal/sender/app.go)); Web — `bodySizeBackfillDone` в [web/app.go](../internal/web/app.go); проверка `ctx.Err()` в цикле `BackfillBodySizes` ([ensure_schema.go](../internal/platform/clickhouse/ensure_schema.go)). Тесты `TestStartBodySizeBackfill_DoesNotBlockStart`, `TestStartupPhases` |
+| §109.3 переподключение, ожидание готовности, 503 | ✅ Phase 109.4 | `connectParams`, `pick`, `boundWait`, `observeWait`, `translateError`, `WithReadyWaitObserver` в [grpcsender/client.go](../internal/platform/grpcsender/client.go), `callState` и stats-хендлер `sendTracker` в [sendtrack.go](../internal/platform/grpcsender/sendtrack.go); `domain.ErrSenderUnavailable` ([errors.go](../internal/domain/errors.go)); `replySenderUnavailable` (503 + `Retry-After: 5`, WARN) в [receiver handler.go](../internal/receiver/adapter/in/http/handler.go); ключ `sender_grpc.ready_wait_ms` ([config.go](../internal/platform/config/config.go), `defaultSenderReadyWaitMs` в defaults.go, три YAML); счётчик `nexus_sender_ready_wait_total{outcome}` ([metrics.go](../internal/platform/metrics/metrics.go)), wiring в receiver/app.go и web/app.go; Swagger `@Failure 503`; CHANGELOG `[Unreleased]`; DEPLOYMENT §9.1.6. Тесты [client_readywait_test.go](../internal/platform/grpcsender/client_readywait_test.go) (рестарт Sender'а как при выкате: `NOT_SERVING` → дренаж → `GracefulStop` — ровно один вызов; таймаут и выключенное ожидание → `ErrSenderUnavailable`; отмена во время ожидания; обрыв посреди вызова — НЕ `ErrSenderUnavailable`), [sendtrack_test.go](../internal/platform/grpcsender/sendtrack_test.go) (отправка и истечение взаимоисключающие, устаревший `READY` в счётчике, `translateError`), `TestReplySenderUnavailable` |
+| §109.6 scrubbing `bot<id>:<secret>` в Sentry | ✅ Phase 109.5 | `MaskBotTokens` в [sensitive/bottoken.go](../internal/platform/sensitive/bottoken.go) (табличный тест, fuzz, бенчмарк — 0 аллокаций без токена); `maskEventTokens`, `maskTokensStr`, `maskTokensAny` и спаны/крошки в [sentry/sentry.go](../internal/platform/sentry/sentry.go); тесты [tokens_test.go](../internal/platform/sentry/tokens_test.go) — токен во всех полях, проверка итогового JSON события (красные без маскировщика); CHANGELOG `### Security` |
+| §109.7 версия ClickHouse: кандидат 26.3 LTS | ✅ Phase 109.6 | `clickHouseImage()` + `NEXUS_TEST_CLICKHOUSE_IMAGE` в [tests/integration/clickhouse_test.go](../tests/integration/clickhouse_test.go) (дефолт `26.3.33.24-alpine` с 24.09, прежний `24-alpine` — переменной); полный `make test-integration` на `26.3.33.24-alpine` зелёный после правки замера в [log_partition_pruning_test.go](../tests/integration/log_partition_pruning_test.go) (`dropQueryConditionCache`); `image:` + `command: ["--", "--memory_worker_correct_memory_tracker=1"]` в [standalone.override](../deploy/docker-compose.standalone.override.yml), [ha.standalone.override](../deploy/docker-compose.ha.standalone.override.yml), [deploy/docker-compose.yml](../deploy/docker-compose.yml) (Вариант A, job `loadtest`) и [docker-compose.deps.yml](../deploy/docker-compose.deps.yml); DEPLOYMENT §5.4.2 и §9.1.6, DEVELOPMENT (переменные версий хранилищ), CHANGELOG |
+| Ревизия перед сдачей (ревьюер + стенд) | ✅ Phase 109.7 | пул gRPC: `Connect` в `New`, `WithIdleTimeout(0)`, побудка `IDLE` в `pick` ([grpcsender/client.go](../internal/platform/grpcsender/client.go), тесты `TestSend_PoolSpreadsCalls`, `TestSend_SentCallOutlivesReadyWait`); дефолт `ready_wait_ms` 30000 ([config/defaults.go](../internal/platform/config/defaults.go)); токен бота в строках Receiver'а — `nodeForLog`, `redactURLString`, резолв, кеш узлов, rate-limit — и прокси Web (тесты `TestRoute_DebugLogMasksBotToken`, `TestReplyDomainError_NotFoundMasksBotToken`, `TestReplyClientGone_NoPathSecretInLog`, `TestReceiverProxy_ClientGone`); пустой адрес в журнале отказов — `0.0.0.0`; DEPLOYMENT §9.1.6/§5.4.2 — шаблоны через `-f`, откат с потерей логов |
+
+**Неочевидности §109 (пополняется по блокам):**
+
+- Sentry группирует issue по стеку, а не по тексту: в NEXUS-S лежат и `Unavailable` выката, и
+  `Canceled` ушедшего клиента. Виды ошибок видны только по событиям (`sentry.ps1 -Issue`), не по
+  заголовку issue.
+- **§109.5: проверка UTF-8 стоит на каждом `Get`, а не одна на входе `resolveNode`.** Отказ на
+  входе сломал бы passthrough (§39): узел-префикс валиден, а хвост в cp1251 должен уйти получателю
+  как есть. До §109.5 такой запрос тоже падал 502 — первым идёт точный поиск по полному пути, и он
+  уходил в PostgreSQL с невалидной строкой.
+- **§109.5: одно «плохое» поле роняло ВСЮ пачку журнала отказов §94.** `Repo.Flush` пишет пачку
+  одной транзакцией, и PostgreSQL отвергал её целиком: невалидный UTF-8 (22021 — 404 на путь в
+  cp1251 сам попадает в журнал), `X-Request-Id` длиннее `VARCHAR(64)` (22001 — `requestid` берёт
+  заголовок клиента как есть), мусор в первом элементе `X-Forwarded-For` (22P02 на `::inet` — nginx
+  дописывает свой адрес через `$proxy_add_x_forwarded_for`, а не заменяет клиентский), IPv6 с
+  зоной `fe80::1%eth0` (INET зону не разбирает). Терялись отказы всех групп за интервал сброса, а
+  одним запросом раз в интервал журнал можно было ослепить. Санитизация — в `Collector.Add`
+  (граница с хранилищем), не только в middleware; не-адрес пишется как `0.0.0.0` (реальным клиентом
+  быть не может, PTR для него не резолвится). Integration-тест на старом коде давал 0 групп из 2.
+- **§109.4: gRPC-статус `Canceled` не оборачивает `context.Canceled`.** `errors.Is(err,
+  context.Canceled)` для вызова Sender'а, оборванного уходом клиента, ложен — поэтому
+  `grpcsender.Client.Send` переводит код сам (`translateError`), и только при отменённом контексте
+  вызывающего: `Canceled` при живом контексте — чужая отмена, её прятать нельзя. Истёкший срок
+  (`DeadlineExceeded`) уходом клиента не считается нигде.
+- **§109.4: 499 в Receiver обязан быть исключён из журнала отказов явно.** `rejectReason` пишет
+  любой 4xx без причины по статусу — без исключения каждый ушедший клиент стал бы «отказом шины»
+  в §94 и метрике `nexus_ingress_rejected_total`.
+- **§109.4: в Web 499 ставит только прокси.** Обработчики после ошибки пишут `localizedError(c,
+  500, …)`, и `c.Status(499)` до него был бы молча перезаписан; переписывать ответ в 58 местах ради
+  метрики ушедшего клиента не стали — границы в §109.8.
+- **§109.2: backfill §42.10 остаётся на каждом старте, но в фоне.** Его guard-count — `SELECT
+  count() … WHERE (request_size=0 AND request!='') OR …`, полный проход по колонкам тел каждой
+  таблицы, даже когда разовый backfill давно выполнен. Убрать его совсем нельзя (новая нода,
+  таблица, созданная старой версией), а синхронно он держал закрытым gRPC-порт Sender'а. Колонки
+  (`ADD COLUMN`) — синхронно: без них упал бы первый INSERT.
+- **§109.2: `until_grpc_ms` меряет от `App.Start`, а не от старта процесса.** Подключения из `main`
+  (`MustPG`, `MustClickHouse`, `MustRedis`, `MustEnsureKafkaTopics`) идут раньше; при недоступной
+  зависимости время уходит туда, и строка фаз этого не покажет — смотреть время между строками
+  «starting service» и «sender grpc listening».
+- **§109.3: признак «вызов отправлен» — событие `OutHeader`, а не состояние соединения.**
+  `Unavailable` gRPC одинаков для «транспорта нет» (connection refused, `TRANSIENT_FAILURE`,
+  `NOT_SERVING` по health) и «транспорт оборвался посреди вызова». Первая версия различала их по
+  `GetState()` соединения на момент вызова — и врала: сразу после падения Sender'а соединение ещё
+  числится `READY` (состояние обновляется асинхронно), вызов падал мгновенно и не ждал
+  (`TestSend_SurvivesSenderRestart` краснел за 0.01 с). Теперь stats-хендлер `sendTracker`
+  ([sendtrack.go](../internal/platform/grpcsender/sendtrack.go)) отмечает в `callState` (лежит в
+  ctx вызова) событие `OutHeader{Client:true}`: gRPC эмитит его в `http2Client.NewStream` после
+  постановки заголовков в очередь живого транспорта, на контексте, производном от контекста
+  вызова. Не отправлен → `ErrSenderUnavailable` (503), отправлен → прежние 502 + ERROR (урок §82.1).
+- **§109.3: ожидание — `WaitForReady(true)` + таймер, а не `retryPolicy` и не своё ожидание по
+  состояниям.** `retryPolicy` повторяет и уже ушедший вызов (дубль у получателя). Голый
+  `WaitForReady` ждёт без предела, кроме контекста запроса, а у входящего HTTP-запроса Receiver'а
+  срока нет. Своё ожидание через `WaitForStateChange` (первая версия) не видит устаревший `READY`
+  и требует ручного `Connect()` из `IDLE`. Поэтому вызов идёт с `WaitForReady`, а
+  `time.AfterFunc(ready_wait)` отменяет его контекст, только если CAS `pending→expired` в
+  `callState` успел раньше `pending→sent` из `OutHeader`. Отправленный вызов таймер не трогает.
+  Узкое окно на самой границе `ready_wait_ms` (транспорт выбран, заголовки ещё не поставлены) —
+  в §109.8.
+- **§109.3: устаревший `READY` лечит сам gRPC.** Если транспорт уже закрыт, а соединение ещё
+  считается готовым, `NewStream` падает с `AllowTransparentRetry` (закрытие, GOAWAY) — gRPC
+  повторяет попытку прозрачно, и с `WaitForReady` она блокируется в выборе транспорта, пока Sender
+  не вернётся. Такой вызов виден по событию `DelayedPickComplete`: по нему он попадает в счётчик
+  ожиданий, хотя на старте соединение было `READY`. Жёсткое падение Sender'а (без GOAWAY) в первые
+  миллисекунды даёт 502: вызов успел уйти в мёртвый сокет, исход неотличим от обрыва.
+- **§109.3: тест рестарта моделирует выкат, а не `Stop()`.** Sender останавливается так:
+  health `NOT_SERVING` → дренаж → `GracefulStop` (GOAWAY) — `TestSend_SurvivesSenderRestart`
+  делает то же. Жёсткий `Stop()` прямо перед вызовом даёт честный 502 (вызов ушёл в мёртвый сокет) —
+  этот случай проверяет `TestSend_BreakMidCall_NotSenderUnavailable`, а не тест рестарта.
+- **§109.6: маскирование по значению, а не по имени поля.** `maskMap`/`maskAny` ищут секрет по
+  ключу (`token`, `authorization`…), а токен бота приходит в пути URL passthrough-узла — под ключом
+  `node`, в message, тексте ошибки, имени транзакции. Поэтому отдельный проход `maskEventTokens` по
+  всем строковым значениям. Порядок в SDK безопасен: `BeforeSend`/`BeforeSendTransaction`
+  вызываются ДО `MakeSerializationSafe` (sentry-go 0.46 предсериализует теги/данные спанов в
+  `json.RawMessage` при постановке в очередь отправки) — правки из хуков попадают в отправку. У
+  `Event` в 0.46 нет поля `Extra`, а `sentry.Context` — алиас `map[string]any` (второй case в
+  type switch не компилируется).
+- **§109.7: коррекция счётчика памяти в 26.3 выключена по умолчанию.**
+  `memory_worker_correct_memory_tracker` = 0 в `system.server_settings` свежего `26.3.33.24-alpine`
+  — одна смена версии дрейф не лечит. Включается аргументом запуска
+  `-- --memory_worker_correct_memory_tracker=1` (entrypoint образа передаёт аргументы после `--`
+  серверу как переопределения конфига; `changed=1` проверено); файл в `config.d` тоже работает, но
+  шаблон `standalone.override` конфигов не монтирует. 24.10.2.80 с этим аргументом и с этим
+  ключом в `config.d` стартует и игнорирует его — откат образа не ломается.
+- **§109.7: закреплены ОБА шаблона самодостаточного стека.** Только `standalone.override` —
+  и переход на пары реплик (§5.5.2-a) через `ha.standalone.override` с `24-alpine` понизил бы
+  версию на томе, записанном 26.3. Цена: HA-шаблон подключается `-f` напрямую из репозитория,
+  поэтому такой стек обновит ClickHouse при следующем пересоздании контейнера — предупреждение и
+  бэкап в DEPLOYMENT §9.1.6.
+- **§109.7: после KZ.2 версия 26.3 закреплена во ВСЕХ compose-файлах с контейнером ClickHouse**
+  (24.09.2026, по решению пользователя «как на KZ»): `deploy/docker-compose.yml` (Вариант A и job
+  `loadtest`) и `deploy/docker-compose.deps.yml`, integration-тесты по умолчанию тоже на 26.3.
+  Прод (Вариант C, корневой `docker-compose.yml`) ходит во внешний ClickHouse, его версия из Nexus
+  не видна: `version()` нигде не запрашивается, а ошибки клиента в Sentry версию сервера не несут
+  (строку `version X (official build)` пишет только лог самого сервера). Узнаётся только SQL у
+  пользователя: 24.09.2026 — **25.3.2.39** (а не 24.x, как считалось), аптайм 9 мес,
+  `MemoryTracking` 2.74 ГиБ при `MemoryResident` 2.00 ГиБ (+37 % — не дрейф KZ), 276
+  `MEMORY_LIMIT_EXCEEDED` за аптайм; коррекция счётчика в 25.3 тоже есть и тоже выключена.
+  Последний отказ (18.09) — запрос, попросивший разом 2.99 ГиБ при RSS 7.93 ГиБ из 10.45: реальная
+  нагрузка, а не дрейф, и в Sentry прода событий о памяти ClickHouse нет — вставки Sender'а и
+  выборки Web тогда не падали. ClickHouse прода общий с другими системами, `query_log` на нём
+  выключен: чужой тяжёлый запрос не отследить, отказы 241 там по умолчанию чужие. Версия прода прогоняется
+  `NEXUS_TEST_CLICKHOUSE_IMAGE=clickhouse/clickhouse-server:25.3.2.39-alpine`. Healthcheck
+  этих compose-файлов логин и пароль не передаёт — на 26.3 `clickhouse-client` по-прежнему берёт
+  их из `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD` окружения (проверено с непустым паролем; с
+  очищенным окружением — `AUTHENTICATION_FAILED`).
+- **§109.7: смена версии на KZ (KZ.2, 24.09.2026) — как прошла.** Перед сменой 26.3 поднят
+  локально с ТОЧНЫМИ копиями `config.d`/`users.d` KZ: риск — конфиг с `<ttl>` системных таблиц,
+  несовместимый с новым `config.xml` образа (цикл рестартов Code 36), не подтвердился; новые
+  системные таблицы 26.3 (`error_log`, `background_schedule_pool_log`, `query_metric_log`) под
+  нагрузкой почти не растут — урок 17.08 (системные логи съели CPU KZ) не повторяется. Образ
+  скачан заранее, пока работал старый, поэтому простой один — 23 с (стоп → tar тома → `up -d`),
+  а не два, как по порядку шагов §5.4.2. Отказов вставки за окно 2 (DNS `no such host` при
+  пересоздании контейнера), дозаписаны через retry-топик §38.
+- **§109.7: кеш условий запросов ClickHouse 25.3+ ломает замеры `read_rows`.** На 26.3
+  `use_query_condition_cache` = 1 по умолчанию: повторный запрос с тем же фильтром читает только
+  гранулы, совпавшие в прошлый раз. `TestClickHouse_DateCreatePruning_E2E` на 26.3 упал —
+  «несуженный» запрос после первого подтеста прочитал 8192 строки из 200 000, и проверка
+  «сужение по date_create сокращает чтение кратно» потеряла базу. Сужение при этом работает (с
+  холодным кешем 200 000 → 24 576 строк, 3 → 1 часть). Замер теперь сбрасывает кеш
+  (`SYSTEM DROP QUERY CONDITION CACHE`, только на ≥ 25.3 — в 24.x команды нет). Для продукта это
+  не дефект: повторные чтения логов тем же фильтром (опрос окна в UI) на 26.3 дешевле.
+- **Ревизия §109: `pick` с предпочтением `READY` схлопывал пул до одного соединения.**
+  `grpc.NewClient` ленивый: канал выходит из `IDLE` только по вызову или `Connect`, а `pick` не
+  даёт ему вызовов, пока рядом есть готовое соединение. Вдобавок канал, простоявший 30 минут без
+  вызовов (дефолтный idle timeout gRPC), уходил обратно в `IDLE` — за тихую ночь пул таял. Весь
+  sync шёл по одному HTTP/2-соединению: большие тела задерживали остальные вызовы, потолок стримов
+  наступал в N раз раньше, а выход из `IDLE` засчитывался ожиданием (`outcome="ready"` на холодном
+  старте — ложное подтверждение проверки выката). Лечение из трёх частей: `Connect` в `New`,
+  `WithIdleTimeout(0)`, `pick` будит пропущенные `IDLE` (после рестарта Sender'а каналы тоже могут
+  остаться в `IDLE`). `TestSend_PoolSpreadsCalls` на старом коде: «1 соединение из 4».
+- **Ревизия §109: бюджет `ready_wait_ms` отсчитывается от `NOT_SERVING`, а не от подъёма.**
+  Health-проверка исключает реплику из round_robin сразу при `grpcHealth.Shutdown()`, дальше —
+  дренаж 5 с, `stopQueueConsumers`, `GracefulStop` (ждёт текущие вызовы до `shutdown.timeout_sec`),
+  выход процесса, пересоздание контейнера, подключения в `main`, `App.Start`. Окно `NOT_SERVING`
+  на бою — 8–10 с, поэтому исходные 15 с были впритык; дефолт поднят до 30 с. Раскладка по
+  событиям NEXUS-T двух выкатов (Sentry API `events/?full=true`: время и адрес из текста ошибки): 08.09 —
+  health 13:27:04–08, старый контейнер `172.18.0.6` refused 13:27:09–13, новый `172.18.0.5` refused
+  13:27:16–42; 23.09 — health 06:28:28–37, старый `.5` 06:28:37–42, новый `.6` 06:28:45–06:29:51.
+  От начала остановки до первого обращения к новому контейнеру — 12–17 с, дальше его старт
+  (тогда 26–66 с из-за backfill, после §109.2 — секунды). IP Sender'а при пересоздании МЕНЯЕТСЯ,
+  но Receiver переходит на новый адрес за ~3 с: опасение, что DNS-резолвер gRPC
+  (`MinResolutionInterval` 30 с) задержит переход, на бою не подтвердилось. Стенд (нативный,
+  жёсткое убийство Sender'а, `ready_wait_ms` тогда 15000): простой 8 с — четыре запроса окна ждали
+  11,6–13 с и прошли, 88 из 88 ответов 200; простой 22 с — ровно 15 с ожидания и 503 +
+  `Retry-After: 5`, WARN вместо ERROR, следующие запросы дождались Sender'а. Порт Sender'а
+  открывается через 2,3–2,7 с после старта (`schema_ms` почти всё время), backfill идёт после.
+- **Ревизия §109 (стенд): токен бота печатался в debug-строках Receiver'а.** Резолв перебирает
+  префиксы адреса, и `node cache: redis miss` пишется на КАЖДЫЙ кандидат; `route: node resolved`
+  пишет путь и хвост, `route: forwarding to sender` — целевой URL (target_url + хвост), а
+  `redactURLString` отрезал только query. У passthrough-узла Telegram Bot API в хвосте токен.
+  Строки старше §109, но §51.9 запрещает секреты в debug, а консоль «Логи» §51 показывает их в UI.
+  Маскирование точечное — `sensitive.MaskBotTokens` там, куда попадает путь клиента; сплошной
+  фильтр в цепочке slog-хендлеров не делался (это правка общей обвязки логгера трёх сервисов).
+  Нашёл только стенд: юнит-тесты шли с `logging.NewNoop()`, а debug-строки на стенде видны лишь
+  после подъёма уровня логов (см. STAND_TESTING, «Диагностика»).
+- **Ревизия §109: пустой адрес клиента в журнале отказов — `0.0.0.0`.** `clientIP` после §109.5
+  превращает всё неразбираемое, включая пустую строку, в unspecified; проверка `ClientIP == ""` в
+  `absorbClient` стала мёртвой и удалена. Для образца это и нужно: `rejected_samples.client_ip` —
+  `INET NOT NULL`, пустая строка уронила бы пачку.

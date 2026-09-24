@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -20,11 +21,25 @@ import (
 // AuditHandler — GET /api/audit (operator+, §26/§87).
 type AuditHandler struct {
 	uc     *usecase.AuditUsecase
+	revert auditRevertAnnotator
 	logger logging.Logger
+}
+
+// auditRevertAnnotator — разметка строк node.update/node.revert для отмены
+// из журнала (§108.7).
+type auditRevertAnnotator interface {
+	Annotate(ctx context.Context, entries []*domain.AuditEntry) map[string]usecase.RevertMark
 }
 
 func NewAuditHandler(uc *usecase.AuditUsecase, logger logging.Logger) *AuditHandler {
 	return &AuditHandler{uc: uc, logger: logger}
+}
+
+// WithRevert включает в выдаче журнала поле revert (§108.7). Без него выдача
+// прежняя.
+func (h *AuditHandler) WithRevert(a auditRevertAnnotator) *AuditHandler {
+	h.revert = a
+	return h
 }
 
 type auditEntryResponse struct {
@@ -38,6 +53,17 @@ type auditEntryResponse struct {
 	Details    map[string]any `json:"details"`
 	IPAddress  string         `json:"ip_address,omitempty"`
 	CreatedAt  time.Time      `json:"created_at"`
+	// Revert — разметка для отмены из журнала (§108.7): только у строк
+	// node.update/node.revert и только в admin-сессии.
+	Revert *revertMarkResponse `json:"revert,omitempty"`
+}
+
+// revertMarkResponse — состояние строки относительно текущего узла.
+// Overwritten — текущие значения полей, отличающихся от «Стало».
+type revertMarkResponse struct {
+	State       string         `json:"state" example:"stale"`
+	Revertible  bool           `json:"revertible"`
+	Overwritten map[string]any `json:"overwritten,omitempty"`
 }
 
 func toAuditResp(e *domain.AuditEntry) auditEntryResponse {
@@ -151,7 +177,7 @@ func (h *AuditHandler) listEntries(c *gin.Context, f port.AuditFilter, op string
 		entries, err = h.uc.List(ctx, f)
 	}
 	if err != nil {
-		h.logger.ErrorWithOp("audit list failed", err, op)
+		logServerError(c, h.logger, "audit list failed", err, op)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return nil, false
 	}
@@ -191,11 +217,26 @@ func (h *AuditHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
+	marks := h.revertMarks(c, entries)
 	out := make([]auditEntryResponse, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, toAuditResp(e))
+		r := toAuditResp(e)
+		if m, ok := marks[e.ID]; ok {
+			r.Revert = &revertMarkResponse{State: string(m.State), Revertible: m.Revertible, Overwritten: m.Overwritten}
+		}
+		out = append(out, r)
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out})
+}
+
+// revertMarks — разметка страницы для отмены (§108.7). Только admin и только
+// UI-сессия: разметка раскрывает текущие значения узлов любой команды, а
+// API-токен закреплён за одной командой (§18.3).
+func (h *AuditHandler) revertMarks(c *gin.Context, entries []*domain.AuditEntry) map[string]usecase.RevertMark {
+	if h.revert == nil || !isAdminSession(c) || viaAPIToken(c) {
+		return nil
+	}
+	return h.revert.Annotate(c.Request.Context(), entries)
 }
 
 // Count godoc
@@ -237,7 +278,7 @@ func (h *AuditHandler) Count(c *gin.Context) {
 		n, err = h.uc.Count(ctx, f)
 	}
 	if err != nil {
-		h.logger.ErrorWithOp("audit count failed", err, "audit.count")
+		logServerError(c, h.logger, "audit count failed", err, "audit.count")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -286,7 +327,7 @@ func (h *AuditHandler) ExportCSV(c *gin.Context) {
 
 	// BOM для корректного открытия в Excel (UTF-8).
 	if _, err := c.Writer.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
-		h.logger.ErrorWithOp("audit export bom failed", err, "audit.export")
+		logServerError(c, h.logger, "audit export bom failed", err, "audit.export")
 		return
 	}
 	header := []string{
@@ -294,7 +335,7 @@ func (h *AuditHandler) ExportCSV(c *gin.Context) {
 		"target_type", "target_id", "ip_address", "details",
 	}
 	if err := w.Write(header); err != nil {
-		h.logger.ErrorWithOp("audit export header failed", err, "audit.export")
+		logServerError(c, h.logger, "audit export header failed", err, "audit.export")
 		return
 	}
 	for _, e := range entries {
@@ -317,7 +358,7 @@ func (h *AuditHandler) ExportCSV(c *gin.Context) {
 			details,
 		}
 		if err := w.Write(row); err != nil {
-			h.logger.ErrorWithOp("audit export row failed", err, "audit.export")
+			logServerError(c, h.logger, "audit export row failed", err, "audit.export")
 			return
 		}
 	}

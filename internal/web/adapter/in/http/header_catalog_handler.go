@@ -164,7 +164,7 @@ func (h *HeaderCatalogHandler) replyCode(c *gin.Context, status int, code string
 }
 
 func (h *HeaderCatalogHandler) replyServerError(c *gin.Context, err error, op string) {
-	h.logger.ErrorWithOp("header catalog handler error", err, op,
+	logServerError(c, h.logger, "header catalog handler error", err, op,
 		h.logger.Str("path", c.Request.URL.Path))
 	localizedError(c, http.StatusInternalServerError, "error.internal")
 }

@@ -1,8 +1,11 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -330,4 +333,136 @@ func TestReadBody_LimitAndErrorMapping(t *testing.T) {
 	c3.Request = httptest.NewRequest(http.MethodPost, "/", nil)
 	replyReadBodyError(c3, errBodyTooLarge)
 	assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
+}
+
+// TestReplyClientGone — §109.4 (Sentry NEXUS-S): запрос, который оборвал сам
+// клиент, получает 499, строку лога Debug и не попадает в журнал отказов §94;
+// раньше — 502 «internal routing error» и ERROR в Sentry. Отмена при ЖИВОМ
+// контексте запроса и другие ошибки при ушедшем клиенте остаются прежними.
+func TestReplyClientGone(t *testing.T) {
+	t.Parallel()
+
+	canceledSend := fmt.Errorf("sender.Send: %w", context.Canceled)
+	cases := []struct {
+		name       string
+		clientGone bool
+		err        error
+		async      bool
+		wantStatus int
+		wantError  bool // строка уровня ERROR (уходит в Sentry)
+		wantReject bool
+	}{
+		{name: "sync: клиент ушёл", clientGone: true, err: canceledSend, wantStatus: statusClientClosedRequest},
+		{name: "async: клиент ушёл", clientGone: true, err: canceledSend, async: true, wantStatus: statusClientClosedRequest},
+		{name: "клиент ушёл, но ошибка другая → прежний 502", clientGone: true, err: assert.AnError, wantStatus: http.StatusBadGateway, wantError: true},
+		{name: "отмена при живом запросе → прежний 502", err: canceledSend, wantStatus: http.StatusBadGateway, wantError: true},
+		{name: "клиент ушёл во время поиска узла (PG/Redis) → 499", clientGone: true, err: fmt.Errorf("lookup: %w", context.Canceled), wantStatus: statusClientClosedRequest},
+		{name: "404 при живом запросе → в журнал", err: domain.ErrNodeNotFound, wantStatus: http.StatusNotFound, wantReject: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var logBuf bytes.Buffer
+			logger := logging.NewLogger(slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			h := &Handler{logger: logger}
+
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/vika/telephony", nil)
+			sink, m, w := runReject(t, req, func(c *gin.Context) {
+				ctx, cancel := context.WithCancel(c.Request.Context())
+				defer cancel()
+				if tc.clientGone {
+					cancel()
+				}
+				c.Request = c.Request.WithContext(ctx)
+				if tc.async {
+					h.replyAsyncError(c, tc.err, "telephony", "test")
+				} else {
+					h.replyDomainError(c, tc.err, "telephony", "test")
+				}
+			})
+
+			assert.Equal(t, tc.wantStatus, w.Code)
+			assert.Equal(t, tc.wantError, strings.Contains(logBuf.String(), `"level":"ERROR"`), logBuf.String())
+			if tc.wantReject {
+				assert.Len(t, sink.samples, 1)
+				return
+			}
+			assert.Empty(t, sink.samples, "в журнал отказов не пишется")
+			assert.Empty(t, m.calls)
+		})
+	}
+}
+
+// TestReplySenderUnavailable — §109.3 (Sentry NEXUS-T/S): Sender не поднялся
+// за ready_wait_ms — клиент получает 503 + Retry-After (вызов не отправлялся,
+// повтор безопасен), строка лога WARN вместо ERROR, в журнал отказов §94 не
+// пишется. Раньше — 502 «internal routing error» и событие Sentry на каждый
+// запрос окна выката.
+func TestReplySenderUnavailable(t *testing.T) {
+	t.Parallel()
+
+	var logBuf bytes.Buffer
+	logger := logging.NewLogger(slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	h := &Handler{logger: logger}
+
+	err := fmt.Errorf("sender.Send: %w: rpc error: code = Unavailable desc = connection refused", domain.ErrSenderUnavailable)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/vika/telephony", nil)
+	sink, m, w := runReject(t, req, func(c *gin.Context) {
+		h.replyDomainError(c, err, "telephony", "receiver.sync")
+	})
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "5", w.Header().Get("Retry-After"))
+	assert.JSONEq(t, `{"error":"sender unavailable"}`, w.Body.String())
+	assert.Contains(t, logBuf.String(), `"level":"WARN"`)
+	assert.NotContains(t, logBuf.String(), `"level":"ERROR"`)
+	assert.Empty(t, sink.samples, "сбой шины — не отказ клиенту")
+	assert.Empty(t, m.calls)
+}
+
+// TestReplyClientGone_NoPathSecretInLog — ревизия §109: клиент ушёл во время
+// поиска узла, метки резолва ещё нет, и путь целиком задал он сам. У
+// passthrough-адреса за путём узла идёт токен бота — в debug-строке его быть не
+// должно (§51.9); остаётся первый сегмент, как в error-строке (§101.13).
+func TestReplyClientGone_NoPathSecretInLog(t *testing.T) {
+	t.Parallel()
+
+	const secret = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw_"
+	var logBuf bytes.Buffer
+	logger := logging.NewLogger(slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	h := &Handler{logger: logger}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/telegram/bot1:"+secret+"/getUpdates", nil)
+	_, _, w := runReject(t, req, func(c *gin.Context) {
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		cancel()
+		c.Request = c.Request.WithContext(ctx)
+		h.replyDomainError(c, fmt.Errorf("lookup: %w", context.Canceled), "telegram/bot1:"+secret+"/getUpdates", "test")
+	})
+
+	assert.Equal(t, statusClientClosedRequest, w.Code)
+	assert.Contains(t, logBuf.String(), "canceled by client")
+	assert.NotContains(t, logBuf.String(), secret)
+}
+
+// TestReplyDomainError_NotFoundMasksBotToken — ревизия §109 (стенд): отказ до
+// резолва (404 на адрес с токеном) пишет в debug путь из адреса — он нужен для
+// разбора «почему 404», но токен бота в нём маскируется (§51.9).
+func TestReplyDomainError_NotFoundMasksBotToken(t *testing.T) {
+	t.Parallel()
+
+	const secret = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw_"
+	var logBuf bytes.Buffer
+	logger := logging.NewLogger(slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	h := &Handler{logger: logger}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/nope/bot1:"+secret+"/getUpdates", nil)
+	_, _, w := runReject(t, req, func(c *gin.Context) {
+		h.replyDomainError(c, domain.ErrNodeNotFound, "nope/bot1:"+secret+"/getUpdates", "test")
+	})
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Contains(t, logBuf.String(), "receiver request rejected")
+	assert.Contains(t, logBuf.String(), "nope/bot1:***/getUpdates", "форма пути для разбора 404 остаётся")
+	assert.NotContains(t, logBuf.String(), secret)
 }

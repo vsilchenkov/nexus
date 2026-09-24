@@ -48,7 +48,8 @@ SELECT
 	n.created_at, n.updated_at,
 	n.incoming_method, n.outgoing_method,
 	n.dlq_ttl_seconds, n.dlq_retry_delay_seconds,
-	n.circuit_breaker_threshold, n.circuit_breaker_cooldown_sec
+	n.circuit_breaker_threshold, n.circuit_breaker_cooldown_sec,
+	n.breaker_ignore_timeouts
 FROM nodes n
 JOIN teams t ON t.id = n.team_id`
 
@@ -165,6 +166,7 @@ func scanNodeRow(row pgx.Row) (*domain.Node, encryptedCreds, error) {
 		&incomingMethod, &outgoingMethod,
 		&n.DLQTTLSeconds, &n.DLQRetryDelaySeconds,
 		&cbThreshold, &cbCooldown,
+		&n.BreakerIgnoreTimeouts,
 	)
 	if err != nil {
 		return nil, encryptedCreds{}, err

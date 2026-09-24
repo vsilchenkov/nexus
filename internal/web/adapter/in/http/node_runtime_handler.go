@@ -51,7 +51,7 @@ func (h *NodeRuntimeHandler) State(c *gin.Context) {
 			localizedError(c, http.StatusNotFound, "node.not_found")
 			return
 		}
-		h.logger.ErrorWithOp("node runtime failed", err, "node.runtime",
+		logServerError(c, h.logger, "node runtime failed", err, "node.runtime",
 			h.logger.Str("node_id", c.Param("id")))
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return

@@ -998,7 +998,10 @@ services:
 на сервере компилируется Go (образ `golang:1.26-alpine`, три бинаря, самый крупный — `web`
 с вшитым SPA, ~65 МБ). Если сервер на 2 ГБ, собирайте по одному сервису
 (`docker compose build web`, затем `receiver`, `sender`) — параллельная сборка трёх образов может
-упереться в память линкера (см. также §6 про `-ldflags="-s -w"` при OOM).
+упереться в память линкера (см. также §6 про `-ldflags="-s -w"` при OOM). Базовый образ сборка
+берёт из локального кеша Docker и не проверяет реестр. Поэтому если в релизе поднята версия Go в
+`go.mod`, сначала выполните `docker pull golang:1.26-alpine`, иначе сборка упадёт с `go.mod
+requires go >= …` (§13).
 
 **Внешний ClickHouse.** Сам сервер CH в этот бюджет не входит: в простое контейнер
 `clickhouse-server:24-alpine` занимает ~525 МиБ, рабочий минимум — 2 vCPU / 2–4 ГБ.
@@ -1135,6 +1138,104 @@ docker compose --profile nginx \r
 Убрать `COMPOSE_PROFILES=nginx` и оверлей из `COMPOSE_FILE`, затем `docker compose up -d` —
 публикация портов вернётся к `web`/`receiver`. Остановленный контейнер балансировщика удаляется
 `docker compose rm -f nginx`.
+
+### 5.4.2. ClickHouse: «уплывший» учёт памяти и смена версии (§109.7)
+
+**Симптом.** Вставки логов периодически падают с
+`code: 241, Memory limit (total) exceeded: would use 1.0x GiB … current RSS 150–250 MiB, maximum: 1.00 GiB`
+(в Sentry — «clickhouse batch insert failed»), в `system.part_log` копятся упавшие слияния с
+`error = 241`, а сам процесс ClickHouse занимает в разы меньше лимита. Потерь нет: отказ вставки
+уходит в `nexus.logs.retry` (§38) и дозаписывается, но при длинной серии отстают слияния.
+
+**Причина.** Внутренний счётчик памяти сервера (`MemoryTracking`) расходится с реальной памятью
+процесса и растёт с аптаймом. Замер на ноде с `24.10.2.80` (плавающий тег `24-alpine`, аптайм 31
+сутки): `MemoryTracking` 4.71 ТиБ при RSS 250 МиБ, 1.15 млн `MEMORY_LIMIT_EXCEEDED`. Коррекции
+счётчика по данным jemalloc/cgroup в 24.10 нет — конфигом не лечится.
+
+**Проверка** (`docker compose exec clickhouse clickhouse-client --query "…"`):
+
+```sql
+SELECT formatReadableSize(value) FROM system.metrics WHERE metric = 'MemoryTracking';
+SELECT formatReadableSize(value) FROM system.asynchronous_metrics WHERE metric = 'MemoryResident';
+SELECT value, last_error_time FROM system.errors WHERE name = 'MEMORY_LIMIT_EXCEEDED';
+SELECT event_date, count() FROM system.part_log WHERE error = 241 GROUP BY event_date ORDER BY event_date;
+```
+
+`MemoryTracking` больше `MemoryResident` в разы, а не на проценты, — это оно.
+
+**Лечение.**
+
+1. Быстро: `docker compose restart clickhouse` (10–20 с; вставки на это время уходят в
+   retry-топик и дозаписываются, логи в UI кратко недоступны). После рестарта `MemoryTracking`
+   ≈ `MemoryResident`, но дрейф со временем возвращается.
+2. Надёжно: смена версии на `clickhouse/clickhouse-server:26.3.33.24-alpine` (LTS; прогнана всем
+   набором integration-тестов Nexus) **с включённой коррекцией счётчика** — в 26.3 она есть, но по
+   умолчанию выключена. Все compose-файлы репозитория с контейнером ClickHouse —
+   `deploy/docker-compose.yml` (Вариант A), шаблоны `deploy/docker-compose.standalone.override.yml`
+   и `deploy/docker-compose.ha.standalone.override.yml`, `deploy/docker-compose.deps.yml`
+   (разработка) — задают обе строки:
+
+   ```yaml
+   clickhouse:
+     image: clickhouse/clickhouse-server:26.3.33.24-alpine
+     command: ["--", "--memory_worker_correct_memory_tracker=1"]
+   ```
+
+**Смена версии ClickHouse на работающем сервере** (самодостаточный стек, CH в Docker):
+
+1. **Бэкап тома — обязателен**: вернуться на 24.x после записи данных новой версией может не
+   получиться. Имя тома — `docker volume ls | grep clickhouse` (обычно `nexus_clickhouse_data`).
+
+   ```bash
+   cd /opt/nexus
+   docker compose stop clickhouse
+   mkdir -p /opt/backup
+   docker run --rm -v nexus_clickhouse_data:/data:ro -v /opt/backup:/backup alpine \
+     tar czf /backup/ch-$(date +%F).tgz -C /data .
+   docker compose start clickhouse
+   ```
+
+   Пока ClickHouse остановлен, вставки уходят в retry-топик — это штатно.
+2. В локальном `docker-compose.override.yml` сервиса `clickhouse` заменить `image:` и добавить
+   `command:` (как в шаблоне выше). Локальный файл мог отстать от шаблона — сверьте `diff`, но
+   переносите только эти две строки.
+3. Двумя шагами, чтобы не упереться в память малого сервера:
+   `docker compose pull clickhouse`, затем `docker compose up -d clickhouse`.
+
+   **Стек, где версия приходит из репозитория** — Вариант A (`deploy/docker-compose.yml`) или
+   шаблон через `-f` (способ 2 §5.3.1, HA-шаблон): шаг 2 не нужен — строки уже пришли с тегом.
+   Бэкап (шаг 1) делается ДО первого `up -d` после обновления репозитория. Чтобы
+   пока остаться на прежней версии, положите рядом файл `docker-compose.clickhouse-pin.yml`
+
+   ```yaml
+   services:
+     clickhouse:
+       image: clickhouse/clickhouse-server:24-alpine
+   ```
+
+   и добавляйте его последним `-f` в каждую команду compose (аргумент `command:` из шаблона 24.x
+   игнорирует). Тот же файл с `26.3.33.24-alpine` держит новую версию при откате релиза.
+4. Проверка: `docker compose ps clickhouse` — `healthy`; `SELECT version()` — 26.3;
+   `SELECT value FROM system.server_settings WHERE name = 'memory_worker_correct_memory_tracker'`
+   — `1`; в логах Sender'а и Web нет ошибок ClickHouse; `nexus_kafka_lag{topic="nexus.logs.retry"}`
+   возвращается к нулю; логи узлов открываются в UI; через сутки `MemoryTracking` ≈
+   `MemoryResident`.
+5. Откат: вернуть прежние `image:`/`command:` и восстановить том из архива шага 1. **Логи узлов,
+   записанные после бэкапа, при этом пропадут**: 24.x их читать не обязан, а взять их повторно
+   неоткуда.
+
+   ```bash
+   cd /opt/nexus
+   docker compose stop clickhouse
+   docker run --rm -v nexus_clickhouse_data:/data -v /opt/backup:/backup alpine \
+     sh -c 'find /data -mindepth 1 -delete && tar xzf /backup/ch-<дата>.tgz -C /data'
+   docker compose up -d clickhouse
+   ```
+
+Интроспекция схемы логов (§56: TTL, кодеки, индексы) на 26.3 видит таблицы так же, как на 24.x —
+цикла `MODIFY TTL` после смены версии нет (сверено `SHOW CREATE TABLE`/`system.columns` на обеих).
+
+---
 
 ### 5.5. Развёртывание без простоя: две реплики каждого сервиса (§93)
 
@@ -2535,6 +2636,104 @@ rm /tmp/prom-admin.yml
 Повторное обновление в пределах 30 суток после отката бейджи заново не переносит (отметка
 переноса жива): простаивающие узлы до первого вызова показывают исход, записанный до отката.
 
+### 9.1.5. Что изменится после обновления на §107
+
+**Миграция 0043** добавляет в `nodes` две колонки `BOOLEAN NOT NULL DEFAULT false`:
+`sse_decline` («Не открывать поток (SSE) на GET») и `breaker_ignore_timeouts` («Не считать таймаут
+отказом защиты»). Миграция аддитивная (§74.2), на PostgreSQL 12 выполняется мгновенно: значение по
+умолчанию у `BOOLEAN NOT NULL` записывается в каталог, таблица не переписывается. Все существующие
+узлы получают `false`, то есть прежнее поведение.
+
+**Порядок выката: Receiver → Sender → Web.** Миграцию применяет первый стартовавший `receiver`
+(или `web`). Sender сам не мигрирует, а новый Sender читает `breaker_ignore_timeouts` при разборе
+async-сообщений и на старой схеме падал бы на каждом сообщении. Поэтому его обновляют после
+Receiver'а. Смешанные версии:
+
+| Сочетание | Поведение |
+|---|---|
+| новый Receiver, старый Sender | SSE-флаг работает (его применяет Receiver); флаг таймаутов старый Sender не знает — таймауты по-прежнему открывают защиту |
+| новые Receiver и Sender, старый Web | оба флага выключены у всех узлов, включить их нечем: форма старая. Старый Web при сохранении узла колонки не трогает, включённые флаги не сбрасываются |
+| старый Receiver, новый Sender | так выкатывать нельзя: схема без 0043, если её не применил Web |
+
+Команды для одиночного стека (Вариант C; образы собираются заранее, чтобы окно смешанных версий
+было коротким):
+
+```bash
+docker compose build receiver
+docker compose build sender
+docker compose build web
+docker compose up -d --no-deps --wait receiver   # применяет 0043; --wait ждёт healthy
+docker compose up -d --no-deps sender
+docker compose up -d --no-deps web
+```
+
+**`--no-deps` обязателен.** У `receiver` в compose `depends_on: sender`, и `up -d receiver` без
+флага сначала пересоздаёт Sender, если его образ уже пересобран, — то есть ровно запрещённый
+порядок: новый Sender стартует раньше миграции. Compose v2 пересоздаёт зависимость, у которой
+сменился образ (проверено на Compose v5.1). Обычная команда §9.1
+`up -d --build web receiver sender` порядок тоже не соблюдает. Профиль двух реплик:
+`./scripts/deploy/rolling.sh --services "receiver sender web"` — скрипт сам применяет миграции до
+замены реплик и пересоздаёт их с `--no-deps`.
+
+**После выката на бою** (команда `mcp`): включить «Не открывать поток (SSE) на GET» на MCP-узлах
+(`mcp-1c-*`, `onec-rest-*`) и вернуть порог защиты с временных 100 к пустому полю (глобальное
+значение). Переключатель виден только у узла `request` с входящим методом `ANY` или `GET`: узел с
+другим входящим методом и так отвечает на GET отказом метода, и флаг у него сбрасывается при
+сохранении. Проверка через сутки — в «Ошибках» этих узлов нет `upstream_timeout` у GET и
+`circuit_breaker_open` у POST.
+
+**Откат.** Схему откатывать не нужно (§10.2): прежний код колонки не читает. `--migrate-down 1`
+удаляет обе колонки, и значения флагов теряются (см. §10.6).
+
+### 9.1.6. Что изменится после обновления на §109
+
+**Миграций нет.** Меняется поведение sync-трафика в окне выката Sender'а и уровень шумных строк лога.
+
+- **Ответ на недоступный Sender — 503 вместо 502.** Если вызов не удалось отправить Sender'у за
+  `sender_grpc.ready_wait_ms` (дефолт 30000; Sender перезапускается или лежит), клиент получает
+  `503 {"error":"sender unavailable"}` и `Retry-After: 5`: вызов не отправлялся, повтор безопасен.
+  Раньше тот же случай давал `502 «internal routing error»`. Клиентам, которые различают коды,
+  стоит повторять 503. Обрыв Sender'а **посреди** вызова по-прежнему даёт 502: исход у получателя
+  неизвестен.
+- **Выкат одиночного Sender'а больше не рвёт sync-запросы**, если от начала его остановки
+  (переход в `NOT_SERVING`) до открытого порта нового проходит меньше `ready_wait_ms`: дренаж 5 с +
+  доигрывание текущих вызовов + пересоздание контейнера + старт. Запросы окна ждут его и уходят;
+  рост латентности на время рестарта — норма. Долгие вызовы в полёте (long-poll ботов) держат
+  остановку до `shutdown.timeout_sec`, и тогда окно может превысить 30 с — такие запросы получат 503.
+  Проверка после выката: в метрике `nexus_sender_ready_wait_total` растёт `outcome="ready"` (в
+  простое соединения к Sender'у не засыпают, поэтому `ready` — это настоящие ожидания выката), а
+  `timeout` остаётся нулевым; в логе Sender'а строка `sender startup phases` с `until_grpc_ms`
+  (время от начала старта приложения до открытого gRPC-порта).
+- **Новый ключ `sender_grpc.ready_wait_ms`** (в секциях `receiver` и `web`, рабочий дефолт —
+  конфиг править не нужно). `<0` возвращает прежний fail-fast.
+- **Уход клиента — 499 и Debug.** Клиент закрыл соединение, не дождавшись ответа: Receiver
+  отвечает 499 (в журнал отказов §94 не пишется), Web пишет строку на Debug. Такие события
+  перестают приходить в Sentry.
+- **Путь в чужой кодировке** (`%CE%F0`) — 404 вместо 502.
+- **Токены ботов маскируются в Sentry по значению** (`bot<id>:***`) в любом поле события.
+- **Compose-файлы с контейнером ClickHouse закрепили 26.3 LTS** (`deploy/docker-compose.yml`,
+  оба шаблона standalone, `deploy/docker-compose.deps.yml`) с коррекцией учёта памяти
+  (§5.4.2). Установки, где override — локальная КОПИЯ шаблона (способ 1 §5.3.1), не
+  затрагиваются: версия меняется только по процедуре §5.4.2.
+  ⚠️ Стек, подключающий шаблон напрямую через `-f` или `COMPOSE_FILE` —
+  `deploy/docker-compose.standalone.override.yml` (способ 2 §5.3.1, в том числе вместе с профилем
+  малой памяти) или `deploy/docker-compose.ha.standalone.override.yml`, — получит ClickHouse 26.3
+  при первом же пересоздании контейнера `clickhouse` (например, `up -d --build` без списка
+  сервисов). **Перед обновлением такого стека сделайте бэкап тома** по шагу 1 §5.4.2 — или
+  закрепите прежний образ отдельным `-f`-файлом (§5.4.2, «Стек, где версия приходит из
+  репозитория»). То же относится к **Варианту A** (`deploy/docker-compose.yml`): версия
+  закреплена и в нём.
+  ⚠️ **Откат релиза** для такого стека вернёт шаблону `24-alpine` поверх тома, уже записанного
+  26.3. Перед откатом закрепите `26.3.33.24-alpine` отдельным `-f`-файлом либо откатывайте и том
+  (шаг 5 §5.4.2).
+
+**Порядок выката: Receiver → Sender → Web**, командами с `--no-deps` из §9.1.5. Смешанные версии совместимы: протокол
+Receiver↔Sender не менялся. Выигрыш от быстрого старта (§109.2) даёт новый Sender, ожидание
+готовности (§109.3) — новый Receiver, поэтому первым обновляется Receiver: следующий за ним рестарт
+Sender'а он уже переживает.
+
+**Откат.** Схему откатывать не нужно: миграций нет. Ключ `ready_wait_ms` прежний код игнорирует.
+
 ### 9.2. Готовые образы из registry — больше не используется
 
 Раньше образы публиковались GoReleaser'ом в GitLab Container Registry по тегу `v*`, и прод
@@ -2850,6 +3049,7 @@ docker compose run --rm web --migrate-force 28
 | `0023`, `0025`, `0031`, `0032` | `DROP TABLE` — теряются избранное, история поиска, персональные периоды, реестр инстансов |
 | `0026`, `0027`, `0028`, `0033` и прочие `ADD COLUMN` | удаляют только добавленную колонку (у `0033` — per-node настройки защиты узла; узлы возвращаются к глобальной политике) |
 | `0034` | удаляет колонку `async_ack_spec` — настроенные шаблоны ответа приёма теряются, узлы возвращаются к `{"result":true,"id":…}`. Откатывать ПОСЛЕ возврата старого образа Receiver'а (см. §83 выше) |
+| `0043` | удаляет колонки `sse_decline` и `breaker_ignore_timeouts` (§107) — флаги узлов теряются; подписка SSE снова висит до таймаута, таймаут снова открывает защиту |
 
 `python scripts/release/rollback_info.py <от-тега> <до-тега>` помечает такие миграции
 автоматически (по `DROP TABLE`/`DROP COLUMN`/`DELETE FROM` в `*.down.sql`).
@@ -3093,3 +3293,4 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
 | В логе старта `postgres schema is newer than this build; starting anyway`, метрика `nexus_pg_schema_ahead` = 1 | Не поломка: код откачен, схема осталась от новой версии — штатное временное состояние (§10.2). Доведите откат до конца (§10.3) либо выкатите исправленную версию вперёд. |
 | Сервис не стартует: `Dirty database version N. Fix and force version.` | Миграция оборвалась на середине; ни `up`, ни `down` в этом состоянии не работают. Приведите схему руками и объявите версию `--migrate-force N` (§10.4) — SQL он не выполняет. |
 | `образ nexus-web:<версия> не найден` при `images.sh rollback` | Перед обновлением не выполнялся `images.sh tag`, и прежний образ остался безымянным. Смотрите сохранённые версии `images.sh list`; если нужной нет — долгий путь через `git checkout` + `up -d --build` (§10.1). |
+| Сборка образа падает: `go: go.mod requires go >= 1.26.8 (running go 1.26.3; GOTOOLCHAIN=local)` | В кеше Docker лежит устаревший `golang:1.26-alpine`: сборка берёт локальную копию и не проверяет реестр, а в релизе поднята версия Go в `go.mod`. Обновите базовый образ (`docker pull golang:1.26-alpine`) и повторите сборку; вместо этого можно выполнить `docker compose build --pull <сервис>`. Упавшая сборка не пересоздаёт работающие контейнеры, поэтому старая версия продолжает обслуживать трафик. |

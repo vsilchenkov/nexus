@@ -19,6 +19,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/sensitive"
 	"nexus/internal/receiver/usecase/port"
 )
 
@@ -135,7 +136,7 @@ func (r *L2Reader) Get(ctx context.Context, teamSlug, path string) (*domain.Node
 			r.mx.IncL2Hit("stale")
 			r.logger.Warn("nodecache L2 stale-hit (downstream error)",
 				r.logger.Str("team", teamSlug),
-				r.logger.Str("path", path),
+				r.logger.Str("path", sensitive.MaskBotTokens(path)),
 				r.logger.Int("age_ms", int(age.Milliseconds())),
 				r.logger.Err(err))
 			return v, nil

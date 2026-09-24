@@ -97,6 +97,7 @@ type App struct {
 	rejectedHousekeepingDone <-chan struct{}
 	shipperDone              <-chan struct{} // §51: done-канал шиппера служебных логов
 	statusMigrationDone      <-chan struct{} // §101.6: перенос ключей исхода узлов
+	bodySizeBackfillDone     <-chan struct{} // §109.2: фоновый backfill размеров тел §42.10
 
 	// §51: ручка runtime-уровня логов + кольцо для Redis-шиппера.
 	logCtl *bootstrap.LogController
@@ -239,8 +240,14 @@ func (a *App) Start(ctx context.Context) error {
 			chpf.EnsureNodeIDColumn(ctx, a.chMgr.Conn(), tables, a.logger)
 			chpf.EnsureHTTPMethodColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §39
 			chpf.EnsureClientHostColumn(ctx, a.chMgr.Conn(), tables, a.logger) // §67
-			chpf.EnsureBodySizeColumns(ctx, a.chMgr.Conn(), tables, a.logger)  // §42-доп
-			chpf.BackfillBodySizes(ctx, a.chMgr.Conn(), tables, a.logger)      // §42-доп
+			chpf.EnsureBodySizeColumns(ctx, a.chMgr.Conn(), tables, a.logger)  // §42.10
+			// §109.2: backfill — в фоне. Его guard-count проходит колонки тел
+			// каждой таблицы и держал старт HTTP-сервера; колонки выше уже
+			// добавлены синхронно, SELECT от фона не зависит.
+			conn := a.chMgr.Conn()
+			a.bodySizeBackfillDone = safego.Go(a.logger, "web.bodySizeBackfill", func() {
+				chpf.BackfillBodySizes(ctx, conn, tables, a.logger)
+			})
 		}
 	}
 
@@ -418,7 +425,10 @@ func (a *App) Start(ctx context.Context) error {
 	authHandler := httpadapter.NewAuthHandler(authUC, &a.cfg.Web, sessionTTLProvider.Get, a.logger)
 	userHandler := httpadapter.NewUserHandler(userUC, authUC, a.logger)
 	tokenHandler := httpadapter.NewAPITokenHandler(tokenUC, a.logger)
-	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger)
+	// §108: отмена изменения узла из журнала аудита.
+	auditRevertUC := usecase.NewAuditRevertUsecase(auditRepo, nodeRepo, nodeUC, a.logger)
+	auditHandler := httpadapter.NewAuditHandler(auditUC, a.logger).WithRevert(auditRevertUC)
+	auditRevertHandler := httpadapter.NewAuditRevertHandler(auditRevertUC, a.logger)
 	appSettingsHandler := httpadapter.NewAppSettingsHandler(
 		appSettingsUC, settingsTester, a.cfg.Web.NodeDefaultMaxBodySize,
 		a.identity.ID.CHDatabasePrefix(), // §70.8: предпросмотр имени БД команды
@@ -523,7 +533,8 @@ func (a *App) Start(ctx context.Context) error {
 	// из-за инструмента отладки; nil-клиент отчёт объяснит.
 	var senderClient webport.SenderClient
 	if addr := a.cfg.Web.SenderGRPC.Addr; addr != "" {
-		sc, err := grpcsender.New(&a.cfg.Web.SenderGRPC, a.logger)
+		sc, err := grpcsender.New(&a.cfg.Web.SenderGRPC, a.logger,
+			grpcsender.WithReadyWaitObserver(a.metrics)) // §109.3
 		if err != nil {
 			a.logger.Warn("§55 dry-run: sender client init failed, real mode disabled",
 				a.logger.Str("addr", addr), a.logger.Err(err))
@@ -812,6 +823,7 @@ func (a *App) Start(ctx context.Context) error {
 		Token:         tokenHandler,
 		Team:          teamHandler,
 		Audit:         auditHandler,
+		AuditRevert:   auditRevertHandler,
 		DryRun:        dryRunHandler,
 		Replay:        replayHandler,
 		Logs:          logsHandler,
@@ -933,6 +945,7 @@ func (a *App) Stop(ctx context.Context) error {
 	safego.Await(awaitCtx, a.rejectedHousekeepingDone, a.logger, "web.rejectedHousekeeping")
 	safego.Await(awaitCtx, a.shipperDone, a.logger, "web.logShipper")
 	safego.Await(awaitCtx, a.statusMigrationDone, a.logger, "web.nodeStatusMigration")
+	safego.Await(awaitCtx, a.bodySizeBackfillDone, a.logger, "web.bodySizeBackfill")
 	awaitCancel()
 	if a.chMgr != nil {
 		closeCtx, cancelClose := context.WithTimeout(ctx, 5*time.Second)

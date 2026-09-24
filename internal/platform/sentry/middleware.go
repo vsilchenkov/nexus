@@ -126,6 +126,9 @@ func rootMethod(c *gin.Context) string {
 	return c.GetString(metrics.RootMethodLabelKey)
 }
 
+// httpStatusToSpanStatus — статус спана транзакции по HTTP-коду ответа.
+// 499 (клиент ушёл, §109.4) — Canceled: Sentry не считает его отказом в
+// failure_rate, как и сама шина не считает его ошибкой.
 func httpStatusToSpanStatus(code int) sentry.SpanStatus {
 	switch {
 	case code >= 200 && code < 300:
@@ -138,6 +141,8 @@ func httpStatusToSpanStatus(code int) sentry.SpanStatus {
 		return sentry.SpanStatusNotFound
 	case code == 429:
 		return sentry.SpanStatusResourceExhausted
+	case code == 499:
+		return sentry.SpanStatusCanceled
 	case code >= 400 && code < 500:
 		return sentry.SpanStatusInvalidArgument
 	case code >= 500:

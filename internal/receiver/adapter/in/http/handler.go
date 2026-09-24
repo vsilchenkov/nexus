@@ -11,9 +11,11 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nexus/internal/domain"
+	"nexus/internal/platform/clientgone"
 	"nexus/internal/platform/clientip"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/metrics"
+	"nexus/internal/platform/sensitive"
 	"nexus/internal/receiver/usecase"
 )
 
@@ -147,6 +149,8 @@ func (h *Handler) handleIngress(c *gin.Context) {
 // @Success  200  {object}  map[string]interface{}  "ответ внешнего узла (sync) либо {result:true,id} (async)"
 // @Success  202  {object}  map[string]interface{}  "queued (paused node, §3.6)"
 // @Failure  404  {object}  map[string]string  "node not found (в т.ч. узел RabbitMQAsync — входящего HTTP у него нет)"
+// @Failure  405  {object}  map[string]string  "метод не принимается узлом; либо GET-подписка SSE у узла с отказом от потока (§107, заголовок Allow)"
+// @Failure  503  {object}  map[string]string  "sender unavailable — Sender перезапускается и не поднялся за sender_grpc.ready_wait_ms; вызов не отправлялся, повторить после Retry-After (§109.3)"
 // @Router   /api/v1/{path} [post]
 //
 // handleAuto — короткая форма адреса §78.1: /api/v1/<team_slug>/<node_path> без
@@ -176,7 +180,7 @@ func (h *Handler) handleAuto(c *gin.Context, rest string) {
 		// несуществующий узел: факт существования наружу не раскрываем.
 		c.Set(metrics.RootMethodLabelKey, metrics.RootMethodShortURL)
 		h.logger.Debug("receiver.auto: node has no http ingress",
-			h.logger.Str("path", nodePath),
+			h.logger.Str("path", sensitive.MaskBotTokens(nodePath)),
 			h.logger.Str("root_method", string(root)))
 		h.replyDomainError(c, domain.ErrNodeNotFound, nodePath, "receiver.auto")
 	}
@@ -211,6 +215,8 @@ func splitTeamSlugAndPath(raw string) (teamSlug, nodePath string) {
 // @Success  200  {object}  map[string]interface{}  "ответ внешнего узла (тело/код проксируются)"
 // @Failure  403  {object}  map[string]string  "url not in allowlist"
 // @Failure  404  {object}  map[string]string  "node not found"
+// @Failure  405  {object}  map[string]string  "метод не принимается узлом; либо GET-подписка SSE у узла с отказом от потока (§107, заголовок Allow)"
+// @Failure  503  {object}  map[string]string  "sender unavailable — Sender перезапускается и не поднялся за sender_grpc.ready_wait_ms; вызов не отправлялся, повторить после Retry-After (§109.3)"
 // @Router   /api/v1/request/{path} [post]
 //
 // rest — путь после сегмента метода (или весь путь при короткой форме §78.1),
@@ -250,26 +256,7 @@ func (h *Handler) handleSync(c *gin.Context, rest string) {
 	}
 	out, err := h.route.Route(c.Request.Context(), in)
 	if err != nil {
-		// §3.6: paused-узел в sync-режиме переключается на async и
-		// отвечает 202 + queued:true (см. handleAsync).
-		if errors.Is(err, domain.ErrNodePaused) {
-			// §3.6 + разделённые лимиты: sync принимает тела крупнее, чем влезает
-			// в Kafka-конверт. Запрос к paused-узлу уходит в очередь, поэтому
-			// здесь действует АСИНХРОННЫЙ потолок — иначе тело было бы принято
-			// (200 клиенту), а затем отвергнуто брокером при публикации, то есть
-			// потеряно молча.
-			if len(in.Body) > asyncLimit {
-				h.logger.Warn("sync request to paused node exceeds async body limit",
-					h.logger.Str("node", nodeForLog(c, nodePath)),
-					h.logger.Int("body_len", len(in.Body)),
-					h.logger.Int("limit", asyncLimit))
-				replyReadBodyError(c, errBodyTooLargeForQueue)
-				return
-			}
-			h.handleAsyncFromInput(c, in)
-			return
-		}
-		h.replyDomainError(c, err, nodePath, "receiver.sync")
+		h.replySyncRouteError(c, in, err, nodePath, asyncLimit)
 		return
 	}
 	for k, v := range out.Headers {
@@ -284,6 +271,54 @@ func (h *Handler) handleSync(c *gin.Context, rest string) {
 	// попадал бы в журнал отказов как отказ шины.
 	MarkProxiedResponse(c)
 	c.Data(out.StatusCode, out.Headers["Content-Type"], out.Body)
+}
+
+// replySyncRouteError — ответ на ошибку sync-маршрутизации: paused-узел уходит
+// в очередь (§3.6), отказ от SSE-подписки отвечает 405 по настройке узла
+// (§107.2), остальное — доменная ошибка.
+func (h *Handler) replySyncRouteError(c *gin.Context, in usecase.RouteInput, err error, nodePath string, asyncLimit int) {
+	var declined *domain.StreamDeclinedError
+	switch {
+	case errors.Is(err, domain.ErrNodePaused):
+		// §3.6 + разделённые лимиты: sync принимает тела крупнее, чем влезает
+		// в Kafka-конверт. Запрос к paused-узлу уходит в очередь, поэтому
+		// здесь действует АСИНХРОННЫЙ потолок — иначе тело было бы принято
+		// (200 клиенту), а затем отвергнуто брокером при публикации, то есть
+		// потеряно молча.
+		if len(in.Body) > asyncLimit {
+			h.logger.Warn("sync request to paused node exceeds async body limit",
+				h.logger.Str("node", nodeForLog(c, nodePath)),
+				h.logger.Int("body_len", len(in.Body)),
+				h.logger.Int("limit", asyncLimit))
+			replyReadBodyError(c, errBodyTooLargeForQueue)
+			return
+		}
+		h.handleAsyncFromInput(c, in)
+	case errors.As(err, &declined):
+		h.replyStreamDeclined(c, declined, nodePath)
+	default:
+		h.replyDomainError(c, err, nodePath, "receiver.sync")
+	}
+}
+
+// replyStreamDeclined — §107.2: узел не открывает поток событий на GET. 405
+// задала настройка узла, а не отказ шины, поэтому ответ помечен как
+// MarkProxiedResponse — тот же механизм, что у статусов получателя и шаблона
+// приёма §83: журнал отказов §94 и nexus_ingress_rejected_total его не видят,
+// а nexus_requests_total{status="405"} видит.
+//
+// Allow обязателен в 405 (RFC 9110 §15.5.6) и ставится даже пустым — узел,
+// принимающий только GET, другого метода не предлагает. c.Header с пустым
+// значением заголовок удалил бы, поэтому запись идёт напрямую.
+func (h *Handler) replyStreamDeclined(c *gin.Context, declined *domain.StreamDeclinedError, nodePath string) {
+	h.logger.Debug("receiver.sync: sse subscription declined by node setting",
+		h.logger.Str("node", nodeForLog(c, nodePath)),
+		h.logger.Str("team", c.GetString(metrics.TeamLabelKey)),
+		h.logger.Str("method", c.Request.Method),
+		h.logger.Str("allow", declined.Allow))
+	c.Writer.Header().Set("Allow", declined.Allow)
+	MarkProxiedResponse(c)
+	c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "event stream is not supported by this node"})
 }
 
 // handleCallback обрабатывает POST /v1/callback/{path} — приём входящего
@@ -572,8 +607,65 @@ func classifyDomainError(err error) (status int, message string, reason domain.R
 	}
 }
 
+// statusClientClosedRequest — код nginx 499 «Client Closed Request» (§109.4):
+// клиент закрыл соединение, не дождавшись ответа. В net/http константы нет.
+const statusClientClosedRequest = 499
+
+// replyClientGone отвечает 499, если запрос оборвал сам клиент: контекст
+// входящего запроса отменён, а ошибка маршрутизации — отмена (§109.4). Это не
+// сбой шины (раньше — 502 и ERROR в Sentry, NEXUS-S) и не отказ клиенту:
+// строка лога — Debug, журнал отказов §94 такой статус пропускает
+// (rejectReason). Отмена при живом контексте запроса сюда не попадает и
+// остаётся ошибкой. Тела у ответа нет: читать его некому.
+//
+// Путь узла — как в error-строке (nodeForErrorLog): клиент может уйти ещё во
+// время поиска узла, и тогда путь целиком задал он сам — у passthrough-адреса
+// за путём узла идут токены ботов, а debug-строке секреты запрещены (§51.9).
+func (h *Handler) replyClientGone(c *gin.Context, err error, nodePath, op string) bool {
+	if !clientgone.Is(c.Request.Context(), err) {
+		return false
+	}
+	h.logger.Debug("receiver request canceled by client",
+		h.logger.Str("node", nodeForErrorLog(c, nodePath)),
+		h.logger.Str("op", op),
+		h.logger.Str("method", c.Request.Method),
+		h.logger.Str("client_ip", c.ClientIP()),
+		h.logger.Err(err))
+	c.AbortWithStatus(statusClientClosedRequest)
+	return true
+}
+
+// senderRetryAfterSec — подсказка клиенту в Retry-After при недоступном
+// Sender'е (§109.3): рестарт Sender'а после §109.2 занимает секунды.
+const senderRetryAfterSec = "5"
+
+// replySenderUnavailable отвечает 503 + Retry-After, если вызов не удалось
+// отправить Sender'у: за ready_wait_ms не нашлось готового транспорта, либо
+// ожидание выключено и транспорта не было (§109.3, domain.ErrSenderUnavailable).
+// Вызов до Sender'а не дошёл — клиенту честно предложить повтор. Раньше это был 502
+// «internal routing error» и ERROR в Sentry на каждый запрос окна выката
+// (NEXUS-T/S); теперь WARN: сигнал о настоящем падении Sender'а — алерт на его
+// недоступность и счётчик nexus_sender_ready_wait_total{outcome="timeout"}. В
+// журнал отказов §94 не пишется: это сбой шины, а не отказ клиенту (503 без
+// причины rejectReason пропускает).
+func (h *Handler) replySenderUnavailable(c *gin.Context, err error, nodePath, op string) bool {
+	if !errors.Is(err, domain.ErrSenderUnavailable) {
+		return false
+	}
+	h.logger.Warn("receiver: sender unavailable",
+		h.logger.Str("node", nodeForErrorLog(c, nodePath)),
+		h.logger.Str("op", op),
+		h.logger.Err(err))
+	c.Header("Retry-After", senderRetryAfterSec)
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "sender unavailable"})
+	return true
+}
+
 // replyDomainError — sync-ответ об ошибке: {"error": <msg>}.
 func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op string) {
+	if h.replyClientGone(c, err, nodePath, op) || h.replySenderUnavailable(c, err, nodePath, op) {
+		return
+	}
 	status, msg, reason, internal := classifyDomainError(err)
 	errNode := nodeForErrorLog(c, nodePath)
 	nodePath = nodeForLog(c, nodePath)
@@ -613,12 +705,14 @@ func nodeLabelSetter(c *gin.Context) func(teamSlug, nodePath string) {
 // nodeForLog — путь узла для строк лога: путь найденного узла, если резолв уже
 // состоялся, иначе путь из адреса. Ошибки после резолва уходят и в Sentry, а
 // хвост passthrough-адреса несёт секреты; путь из адреса остаётся только у
-// отказов до резолва — там он и нужен («почему 404»).
+// отказов до резолва — там он и нужен («почему 404»). Токен бота в нём
+// маскируется (§109.6): debug-строке секреты запрещены (§51.9), а форма пути
+// для диагностики остаётся.
 func nodeForLog(c *gin.Context, fromURL string) string {
 	if v := resolvedNodeLabel(c); v != "" {
 		return v
 	}
-	return fromURL
+	return sensitive.MaskBotTokens(fromURL)
 }
 
 // nodeForErrorLog — путь узла для error-строки лога (§101.13). Она уходит и в
@@ -685,6 +779,9 @@ func (h *Handler) onLoopDetected(c *gin.Context, mode, nodePath string) {
 // "message": <причина>}. Тело отличается от sync-варианта, чтобы async-клиент
 // единообразно читал result/message и в успехе, и в ошибке.
 func (h *Handler) replyAsyncError(c *gin.Context, err error, nodePath, op string) {
+	if h.replyClientGone(c, err, nodePath, op) {
+		return
+	}
 	status, msg, reason, internal := classifyDomainError(err)
 	errNode := nodeForErrorLog(c, nodePath)
 	nodePath = nodeForLog(c, nodePath)

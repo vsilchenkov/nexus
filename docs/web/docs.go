@@ -588,6 +588,120 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/audit/revert/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Строка node.update/node.revert против текущего узла: статус каждого поля, состояние строки и пробный прогон отмены выбора по умолчанию. node = null — узел удалён. Недоступно по API-токену.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "audit"
+                ],
+                "summary": "Предпросмотр отмены изменения узла из журнала (admin, §108).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id строки журнала",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.RevertPreviewResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "audit.revert.not_revertible",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "audit.revert.entry_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Возвращает выбранным полям значения «Было» и пишет в журнал строку node.revert. expected_updated_at — updated_at узла из предпросмотра без преобразований; узел изменился — 409.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "audit"
+                ],
+                "summary": "Отменить изменение узла из журнала (admin, §108).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "id строки журнала",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "поля и версия узла",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.RevertApplyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "not_revertible / field_invalid / not_held / валидация узла",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "entry_not_found / node_gone",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "conflict / путь занят",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/auth/login": {
             "post": {
                 "description": "При успехе ставит HttpOnly cookie nexus_session (§7.1 ТЗ).",
@@ -7542,6 +7656,10 @@ const docTemplate = `{
                         "basic_from_request"
                     ]
                 },
+                "breaker_ignore_timeouts": {
+                    "description": "§107.3: таймаут при установленном соединении не засчитывается breaker'у.",
+                    "type": "boolean"
+                },
                 "circuit_breaker_cooldown_sec": {
                     "type": "integer",
                     "maximum": 3600,
@@ -7723,6 +7841,10 @@ const docTemplate = `{
                         "requestAsync",
                         "RabbitMQAsync"
                     ]
+                },
+                "sse_decline": {
+                    "description": "§107.2: GET-подписка SSE получает 405 от Receiver'а, не доходя до\nполучателя. Только request — у остальных типов сбрасывается нормализацией.",
+                    "type": "boolean"
                 },
                 "status": {
                     "type": "string",
@@ -8463,6 +8585,9 @@ const docTemplate = `{
                 "auth_type": {
                     "type": "string"
                 },
+                "breaker_ignore_timeouts": {
+                    "type": "boolean"
+                },
                 "circuit_breaker_cooldown_sec": {
                     "type": "integer"
                 },
@@ -8597,6 +8722,9 @@ const docTemplate = `{
                 },
                 "root_method": {
                     "type": "string"
+                },
+                "sse_decline": {
+                    "type": "boolean"
                 },
                 "status": {
                     "type": "string"
@@ -8879,6 +9007,131 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.RevertApplyRequest": {
+            "type": "object",
+            "required": [
+                "expected_updated_at",
+                "fields"
+            ],
+            "properties": {
+                "expected_updated_at": {
+                    "description": "ExpectedUpdatedAt — node.updated_at из предпросмотра, строкой как пришла.",
+                    "type": "string"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_web_adapter_in_http.RevertDryRunDTO": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "field": {
+                    "type": "string"
+                },
+                "not_held": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "internal_web_adapter_in_http.RevertEntryDTO": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "example": "node.update"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "user_login": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.RevertFieldDTO": {
+            "type": "object",
+            "properties": {
+                "after": {},
+                "before": {},
+                "current": {},
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "overwritten"
+                },
+                "warning": {
+                    "type": "string",
+                    "example": "credentials"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.RevertNodeDTO": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "team_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.RevertPreviewResponse": {
+            "type": "object",
+            "properties": {
+                "dry_run": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.RevertDryRunDTO"
+                },
+                "entry": {
+                    "$ref": "#/definitions/internal_web_adapter_in_http.RevertEntryDTO"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.RevertFieldDTO"
+                    }
+                },
+                "moved": {
+                    "type": "boolean"
+                },
+                "node": {
+                    "description": "Node — текущий узел; null — узел удалён.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.RevertNodeDTO"
+                        }
+                    ]
+                },
+                "state": {
+                    "type": "string",
+                    "example": "stale"
+                }
+            }
+        },
         "internal_web_adapter_in_http.RotateTokenResponse": {
             "type": "object",
             "properties": {
@@ -8961,6 +9214,10 @@ const docTemplate = `{
                         "token_from_request",
                         "basic_from_request"
                     ]
+                },
+                "breaker_ignore_timeouts": {
+                    "description": "§107.3: таймаут при установленном соединении не засчитывается breaker'у.",
+                    "type": "boolean"
                 },
                 "circuit_breaker_cooldown_sec": {
                     "type": "integer",
@@ -9143,6 +9400,10 @@ const docTemplate = `{
                         "requestAsync",
                         "RabbitMQAsync"
                     ]
+                },
+                "sse_decline": {
+                    "description": "§107.2: GET-подписка SSE получает 405 от Receiver'а, не доходя до\nполучателя. Только request — у остальных типов сбрасывается нормализацией.",
+                    "type": "boolean"
                 },
                 "status": {
                     "type": "string",
@@ -9355,6 +9616,14 @@ const docTemplate = `{
                 },
                 "ip_address": {
                     "type": "string"
+                },
+                "revert": {
+                    "description": "Revert — разметка для отмены из журнала (§108.7): только у строк\nnode.update/node.revert и только в admin-сессии.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.revertMarkResponse"
+                        }
+                    ]
                 },
                 "target_id": {
                     "type": "string"
@@ -10915,6 +11184,22 @@ const docTemplate = `{
                 },
                 "usage_count": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.revertMarkResponse": {
+            "type": "object",
+            "properties": {
+                "overwritten": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "revertible": {
+                    "type": "boolean"
+                },
+                "state": {
+                    "type": "string",
+                    "example": "stale"
                 }
             }
         },

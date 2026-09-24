@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -240,4 +241,59 @@ func TestServer_Send_TeamSlugSplitsSameNamePaths(t *testing.T) {
 	assert.InDelta(t, 1, testutil.ToFloat64(m.RequestsTotal.WithLabelValues("request", "webhook", "telegram", "502")), 0)
 	assert.InDelta(t, 1, testutil.ToFloat64(m.RequestsTotal.WithLabelValues("request", "", "telegram", "502")), 0)
 	assert.InDelta(t, 2, testutil.ToFloat64(m.NodeLastRequestError.WithLabelValues("webhook", "telegram")), 0)
+}
+
+// countingBreaker считает учтённые исходы — хватает, чтобы увидеть, доехал ли
+// флаг узла из запроса до решения breaker'а. Send синхронен — мьютекс не нужен.
+type countingBreaker struct{ failures, successes int }
+
+func (*countingBreaker) Allow(context.Context, string) (bool, error) { return true, nil }
+func (b *countingBreaker) RecordSuccess(context.Context, string) error {
+	b.successes++
+	return nil
+}
+func (b *countingBreaker) RecordFailure(context.Context, string, domain.BreakerPolicy) error {
+	b.failures++
+	return nil
+}
+
+// TestServer_Send_BreakerIgnoreTimeoutsReachesUsecase (§107.3): sync-путь узел
+// из БД не читает — флаг приезжает полем 34 запроса. Потерянный маппинг сделал
+// бы настройку косметической ровно на том пути, ради которого она заведена.
+func TestServer_Send_BreakerIgnoreTimeoutsReachesUsecase(t *testing.T) {
+	t.Parallel()
+
+	responseTimeout := fmt.Errorf("%w: %w", port.ErrResponseTimeout, context.DeadlineExceeded)
+	cases := []struct {
+		name         string
+		flag         bool
+		wantFailures int
+	}{
+		{"флаг включён — таймаут ответа не засчитан", true, 0},
+		{"старый Receiver без поля — засчитан как прежде", false, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cb := &countingBreaker{}
+			uc := usecase.NewSendUsecase(&stubHTTPCaller{err: responseTimeout}, stubLogWriter{}, cb, logging.NewNoop(), 64<<20)
+			srv := NewServer(uc, metrics.New("sender"), &stubNodeStatus{}, logging.NewNoop())
+
+			resp, err := srv.Send(context.Background(), &senderv1.SendRequest{
+				Id:                    "req-1",
+				NodeId:                "f6693f87-0000-4000-8000-000000000001",
+				NodePath:              "mcp-1c-vika_dev5",
+				TeamSlug:              "mcp",
+				TargetUrl:             "http://192.0.2.10:8172/mcp",
+				Method:                "GET",
+				TimeoutMs:             1000,
+				BreakerIgnoreTimeouts: tc.flag,
+			})
+			require.NoError(t, err)
+			assert.True(t, resp.GetTimeout(), "504 клиенту от флага не зависит")
+			assert.Equal(t, tc.wantFailures, cb.failures)
+			assert.Zero(t, cb.successes)
+		})
+	}
 }

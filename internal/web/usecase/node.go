@@ -657,20 +657,8 @@ func (u *NodeUsecase) cacheInvalidate(ctx context.Context, teamID, path, op stri
 // вызовом обнуляет n.TeamID = existing.TeamID, плюс здесь явная проверка
 // n.TeamID == old.TeamID на случай прямого вызова.
 func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, teamID string) error {
-	n.SetDefaults()
-	cleared := n.NormalizeForRootMethod() // §27.6
-	if err := u.normalizeCHTable(ctx, n); err != nil {
-		return err
-	}
-	if err := n.Validate(); err != nil {
-		return err
-	}
-	// §70.6: имя таблицы не должно вести в БД другой ноды.
-	if err := u.assertTableNotForeign(ctx, n); err != nil {
-		return err
-	}
-	// §32.2: target_url не должен указывать на собственный ingress шины.
-	if err := u.checkSelfReference(n); err != nil {
+	cleared, err := u.prepareChanged(ctx, n)
+	if err != nil {
 		return err
 	}
 	old, err := u.repo.Get(ctx, n.ID)
@@ -683,57 +671,7 @@ func (u *NodeUsecase) Update(ctx context.Context, actor Actor, n *domain.Node, t
 	if n.TeamID != old.TeamID {
 		return domain.ErrPermissionDenied
 	}
-	// §23: снимок allowlist хостов управляется только каталогом (link/unlink) —
-	// сохраняем существующий, чтобы PUT узла его не затирал.
-	n.URLAllowedHosts = old.URLAllowedHosts
-	// §63: автор последнего изменения; created_by приходит из БД (scan old не
-	// используем — Update по SET не трогает created_by), поэтому переносим его с
-	// исходного узла, чтобы ответ содержал верного создателя.
-	n.CreatedBy = old.CreatedBy
-	n.UpdatedBy = actor.UserLogin
-	// §19.5: (пере)создаём таблицу при смене имени/шаблона либо при включении
-	// логирования на узле, у которого таблицы ещё не было.
-	if old.ClickHouseTable != n.ClickHouseTable ||
-		old.ClickHouseTemplateID != n.ClickHouseTemplateID ||
-		(n.LoggingEnabled && !old.LoggingEnabled) {
-		if err := u.provisionTable(ctx, n); err != nil {
-			return err
-		}
-	}
-	diff := diffNodes(old, n)
-	if len(cleared) > 0 {
-		diff["cleared_incompatible_fields"] = cleared
-	}
-	if u.uow != nil {
-		if err := u.uow.Execute(ctx, func(ctx context.Context, r port.Repos) error {
-			if err := r.Nodes.Update(ctx, n); err != nil {
-				return err
-			}
-			return r.Audit.Write(ctx, auditEntry(actor, domain.ActionNodeUpdate, "node", n.ID, diff))
-		}); err != nil {
-			return err
-		}
-	} else {
-		if err := u.repo.Update(ctx, n); err != nil {
-			return err
-		}
-		u.audit.Log(ctx, actor, domain.ActionNodeUpdate, "node", n.ID, diff)
-	}
-
-	if old.Path != n.Path {
-		// Команда при Update не меняется (проверка выше) — старый путь чистим
-		// в той же команде.
-		u.cacheInvalidate(ctx, old.TeamID, old.Path, "update (old path)")
-	}
-	u.cacheSet(ctx, n, "update")
-	// §57: гарантированная инвалидация в Receiver. При переименовании передаём и
-	// старый путь — иначе старый ключ ещё TTL указывал бы на переехавший узел.
-	oldPath := ""
-	if old.Path != n.Path {
-		oldPath = old.Path
-	}
-	u.publishInvalidate(ctx, n.TeamID, n.Path, oldPath)
-	return nil
+	return u.commitChanged(ctx, actor, old, n, cleared, nodeAudit{action: domain.ActionNodeUpdate, op: "update"})
 }
 
 // SetStatus меняет ТОЛЬКО статус узла (§35) — лёгкая альтернатива полному Update
@@ -754,28 +692,7 @@ func (u *NodeUsecase) SetStatus(ctx context.Context, actor Actor, id, teamID str
 	if old.Status == status {
 		return nil // no-op
 	}
-	updated := *old
-	updated.Status = status
-	updated.UpdatedBy = actor.UserLogin // §63
-	diff := map[string]any{"status": map[string]string{"before": string(old.Status), "after": string(status)}}
-	if u.uow != nil {
-		if err := u.uow.Execute(ctx, func(ctx context.Context, r port.Repos) error {
-			if err := r.Nodes.Update(ctx, &updated); err != nil {
-				return err
-			}
-			return r.Audit.Write(ctx, auditEntry(actor, domain.ActionNodeUpdate, "node", id, diff))
-		}); err != nil {
-			return err
-		}
-	} else {
-		if err := u.repo.Update(ctx, &updated); err != nil {
-			return err
-		}
-		u.audit.Log(ctx, actor, domain.ActionNodeUpdate, "node", id, diff)
-	}
-	u.cacheSet(ctx, &updated, "status change")
-	u.publishInvalidate(ctx, updated.TeamID, updated.Path, "")
-	return nil
+	return u.commitStatus(ctx, actor, old, status, nodeAudit{action: domain.ActionNodeUpdate, op: "status change"})
 }
 
 // Delete удаляет узел. teamID — scope multi-tenancy v2.
@@ -1068,56 +985,17 @@ func rebaseCHTable(full, newDB string) string {
 	return newDB + "." + full
 }
 
-// diffNodes — упрощённый diff основных полей. Полный diff с двумя
-// колонками «до/после» (для UI) — Phase 3.
+// diffNodes — diff полей узла для записи node.update: {поле: {before, after}}
+// по реестру nodeFieldRegistry, секреты — только факт изменения, шаблон ответа
+// приёма — сводкой. Тот же реестр задаёт, что можно отменить из журнала (§108).
 func diffNodes(old, n *domain.Node) map[string]any {
 	d := map[string]any{}
-	add := func(k string, before, after any) {
-		if before != after {
-			d[k] = map[string]any{"before": before, "after": after}
+	for _, f := range nodeFieldRegistry() {
+		if before, after := f.get(old), f.get(n); before != after {
+			d[f.name] = map[string]any{"before": before, "after": after}
 		}
 	}
-	add("path", old.Path, n.Path)
-	add("target_url", old.TargetURL, n.TargetURL)
-	add("url_mode", string(old.URLMode), string(n.URLMode))
-	add("auth_type", string(old.AuthType), string(n.AuthType))
-	add("incoming_auth_type", string(old.IncomingAuthType), string(n.IncomingAuthType))
-	add("status", string(old.Status), string(n.Status))
-	add("timeout_ms", old.TimeoutMs, n.TimeoutMs)
-	add("retry_count", old.RetryCount, n.RetryCount)
-	add("webhook_signature_header", old.WebhookSignatureHeader, n.WebhookSignatureHeader)
-	add("webhook_signature_prefix", old.WebhookSignaturePrefix, n.WebhookSignaturePrefix)
-	// §64: переключение внешней таблицы меняет, управляет ли Nexus схемой и
-	// retention этой таблицы, — такое решение должно быть видно в аудите.
-	add("external_table", old.ExternalTable, n.ExternalTable)
-	// §81.3: ослабление защиты узла (порог выше, пауза короче) должно быть видно
-	// в аудите — иначе «почему он опять долбит мёртвый приёмник» не разобрать.
-	add("circuit_breaker_threshold", old.CircuitBreakerThreshold, n.CircuitBreakerThreshold)
-	add("circuit_breaker_cooldown_sec", old.CircuitBreakerCooldownSec, n.CircuitBreakerCooldownSec)
-	if old.AuthCredentials != n.AuthCredentials {
-		d["auth_credentials"] = "changed"
-	}
-	if old.IncomingAuthCredentials != n.IncomingAuthCredentials {
-		d["incoming_auth_credentials"] = "changed"
-	}
-	// §27: RabbitMQAsync-поля (rmq_password маскируется, как остальные креды).
-	add("rmq_host", old.RMQHost, n.RMQHost)
-	add("rmq_port", old.RMQPort, n.RMQPort)
-	add("rmq_vhost", old.RMQVHost, n.RMQVHost)
-	add("rmq_user", old.RMQUser, n.RMQUser)
-	add("rmq_queue", old.RMQQueue, n.RMQQueue)
-	add("rmq_use_tls", old.RMQUseTLS, n.RMQUseTLS)
-	add("pull_interval_sec", old.PullIntervalSec, n.PullIntervalSec)
-	add("pull_batch_size", old.PullBatchSize, n.PullBatchSize)
-	add("pull_prefetch", old.PullPrefetch, n.PullPrefetch)
-	if old.RMQPassword != n.RMQPassword {
-		d["rmq_password"] = "changed"
-	}
-	// §83: шаблон ответа приёма меняет то, что видит КЛИЕНТ узла, — включение,
-	// выключение и правка шаблона обязаны быть в аудите. Секретом не является,
-	// поэтому пишем значение, а не «changed»; шаблон при этом обрезаем — в
-	// журнале нужен факт и узнаваемый фрагмент, а не 8 КиБ текста.
-	add("async_ack_spec", ackSpecAudit(old.AsyncAck), ackSpecAudit(n.AsyncAck))
+	diffSecretsAndAck(d, old, n)
 	return d
 }
 

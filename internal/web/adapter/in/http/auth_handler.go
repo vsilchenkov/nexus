@@ -118,7 +118,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		case errors.Is(err, domain.ErrUserInactive):
 			c.JSON(http.StatusForbidden, gin.H{"error": i18n.Translate(lang, "auth.user_inactive")})
 		default:
-			h.logger.ErrorWithOp("login failed", err, "auth.login")
+			logServerError(c, h.logger, "login failed", err, "auth.login")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": i18n.Translate(lang, "error.internal")})
 		}
 		return
@@ -264,7 +264,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	}
 	user, err := h.uc.Me(c.Request.Context(), s.UserID)
 	if err != nil {
-		h.logger.ErrorWithOp("load user", err, "auth.me")
+		logServerError(c, h.logger, "load user", err, "auth.me")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -338,7 +338,7 @@ func (h *AuthHandler) MyTeams(c *gin.Context) {
 	// больше не входит в членства (иначе пользователь застревал на чужой команде).
 	memberships, current, healed, err := h.uc.MyTeamsAndCurrent(c.Request.Context(), s)
 	if err != nil {
-		h.logger.ErrorWithOp("list user teams", err, "auth.my_teams")
+		logServerError(c, h.logger, "list user teams", err, "auth.my_teams")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -393,7 +393,7 @@ func (h *AuthHandler) SetFavoriteTeams(c *gin.Context) {
 		case errors.Is(err, domain.ErrFavoriteTeamsInvalid):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "favorite teams list invalid (duplicates or too many)"})
 		default:
-			h.logger.ErrorWithOp("set favorite teams", err, "auth.set_favorite_teams")
+			logServerError(c, h.logger, "set favorite teams", err, "auth.set_favorite_teams")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		}
 		return
@@ -440,7 +440,7 @@ func (h *AuthHandler) SwitchTeam(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "session expired"})
 			return
 		}
-		h.logger.ErrorWithOp("switch team", err, "auth.switch_team")
+		logServerError(c, h.logger, "switch team", err, "auth.switch_team")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -491,7 +491,7 @@ func (h *AuthHandler) RecordSearch(c *gin.Context) {
 		return
 	}
 	if err := h.uc.RecordSearch(c.Request.Context(), s.UserID, req.Q); err != nil {
-		h.logger.ErrorWithOp("record search", err, "auth.record_search")
+		logServerError(c, h.logger, "record search", err, "auth.record_search")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
@@ -513,7 +513,7 @@ func (h *AuthHandler) ClearSearchHistory(c *gin.Context) {
 		return
 	}
 	if err := h.uc.ClearSearchHistory(c.Request.Context(), s.UserID); err != nil {
-		h.logger.ErrorWithOp("clear search history", err, "auth.clear_search_history")
+		logServerError(c, h.logger, "clear search history", err, "auth.clear_search_history")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}

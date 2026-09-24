@@ -100,7 +100,7 @@ func (h *PasswordResetHandler) Request(c *gin.Context) {
 
 	ttl, err := h.uc.Request(c.Request.Context(), req.Login, ip)
 	if err != nil {
-		h.logger.ErrorWithOp("password reset request failed", err, "auth.password_reset_request")
+		logServerError(c, h.logger, "password reset request failed", err, "auth.password_reset_request")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
@@ -126,7 +126,7 @@ func (h *PasswordResetHandler) Validate(c *gin.Context) {
 	}
 	ok, err := h.uc.Validate(c.Request.Context(), token)
 	if err != nil {
-		h.logger.ErrorWithOp("password reset validate failed", err, "auth.password_reset_validate")
+		logServerError(c, h.logger, "password reset validate failed", err, "auth.password_reset_validate")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 		return
 	}
@@ -176,7 +176,7 @@ func (h *PasswordResetHandler) Confirm(c *gin.Context) {
 		// Всё остальное — внутренний сбой (БД, bcrypt). Наружу его текст
 		// отдавать нельзя: эндпоинт публичный, а в ошибке хранилища бывает и
 		// имя таблицы, и кусок запроса.
-		h.logger.ErrorWithOp("password reset confirm failed", err, "auth.password_reset_confirm")
+		logServerError(c, h.logger, "password reset confirm failed", err, "auth.password_reset_confirm")
 		localizedError(c, http.StatusInternalServerError, "error.internal")
 	}
 }

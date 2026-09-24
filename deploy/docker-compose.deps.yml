@@ -58,7 +58,12 @@ services:
     networks: [nexus_deps_net]
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24-alpine
+    # §109.7: та же закреплённая версия, что в deploy/docker-compose.yml и
+    # шаблонах standalone. Том, уже записанный 26.3, прежняя 24.x может не
+    # прочитать: вернуться на старый образ — только с `down -v`.
+    image: clickhouse/clickhouse-server:26.3.33.24-alpine
+    # Коррекция учёта памяти по jemalloc/cgroup: в 26.3 по умолчанию выключена.
+    command: ["--", "--memory_worker_correct_memory_tracker=1"]
     container_name: nexus_clickhouse
     restart: unless-stopped
     environment:

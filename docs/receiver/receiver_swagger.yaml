@@ -41,6 +41,21 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "405":
+          description: метод не принимается узлом; либо GET-подписка SSE у узла с
+            отказом от потока (§107, заголовок Allow)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: sender unavailable — Sender перезапускается и не поднялся за
+            sender_grpc.ready_wait_ms; вызов не отправлялся, повторить после Retry-After
+            (§109.3)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       summary: Запрос через узел без указания метода (§78.1).
       tags:
       - routing
@@ -94,6 +109,21 @@ paths:
             type: object
         "404":
           description: node not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "405":
+          description: метод не принимается узлом; либо GET-подписка SSE у узла с
+            отказом от потока (§107, заголовок Allow)
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: sender unavailable — Sender перезапускается и не поднялся за
+            sender_grpc.ready_wait_ms; вызов не отправлялся, повторить после Retry-After
+            (§109.3)
           schema:
             additionalProperties:
               type: string

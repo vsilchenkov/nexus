@@ -23,6 +23,7 @@ import (
 	"nexus/internal/platform/crypto"
 	"nexus/internal/platform/logging"
 	"nexus/internal/platform/safego"
+	"nexus/internal/platform/sensitive"
 	"nexus/internal/receiver/usecase/port"
 )
 
@@ -82,13 +83,15 @@ func (r *Reader) Get(ctx context.Context, teamSlug, path string) (*domain.Node, 
 	} else if !errors.Is(err, domain.ErrNodeNotFound) && !isRedisUnavailable(err) {
 		r.logger.Warn("redis read failed, falling back to postgres",
 			r.logger.Str("team", teamSlug),
-			r.logger.Str("path", path), r.logger.Err(err))
+			r.logger.Str("path", sensitive.MaskBotTokens(path)), r.logger.Err(err))
 	} else {
 		// §51.9: miss/decrypt-fail раньше молча превращались в поход в PG —
 		// главное слепое пятно кеша (в т.ч. «старый формат после ротации ключа»).
+		// path — кандидат резолва, то есть префикс адреса клиента: у
+		// passthrough-адреса в нём токен бота (§109.6).
 		r.logger.Debug("node cache: redis miss, reading postgres",
 			r.logger.Str("team", teamSlug),
-			r.logger.Str("path", path),
+			r.logger.Str("path", sensitive.MaskBotTokens(path)),
 			r.logger.Err(err))
 	}
 
@@ -178,6 +181,11 @@ func (r *Reader) setToRedis(ctx context.Context, teamSlug string, n *domain.Node
 // pgSelectNodeByTeamSlugAndPath — резолв через JOIN с teams. Phase 10.1
 // поставила UNIQUE(team_id, path); до этого было UNIQUE(path), теперь
 // без указания команды узел не найти однозначно.
+//
+// Выборка урезанная, и забытая колонка молча становится zero value — ровно на
+// промахе Redis, то есть после каждого сохранения узла (§57). Новую колонку
+// nodes, нужную маршрутизации, добавляй сюда и в Scan; сторож
+// tests/integration/receiver_node_cache_fields_test.go упадёт, если забыть.
 const pgSelectNodeByTeamSlugAndPath = `
 SELECT
 	n.id, n.path, n.root_method,
@@ -185,6 +193,7 @@ SELECT
 	n.auth_type, n.auth_credentials,
 	n.auth_dynamic_source, n.auth_dynamic_field, n.auth_dynamic_strip_prefix,
 	n.incoming_auth_type, n.incoming_auth_credentials,
+	n.incoming_auth_dynamic_source, n.incoming_auth_dynamic_field,
 	n.webhook_signature_header, n.webhook_signature_prefix,
 	n.forward_headers, n.timeout_ms, n.retry_count, n.retry_backoff_ms,
 	n.clickhouse_table, n.status, n.team_id,
@@ -194,7 +203,8 @@ SELECT
 	n.created_at, n.updated_at,
 	n.incoming_method, n.outgoing_method,
 	n.circuit_breaker_threshold, n.circuit_breaker_cooldown_sec,
-	n.async_ack_spec
+	n.async_ack_spec,
+	n.sse_decline, n.breaker_ignore_timeouts
 FROM nodes n
 JOIN teams t ON t.id = n.team_id
 WHERE t.slug = $1 AND n.path = $2`
@@ -203,7 +213,7 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 	row := r.pg.QueryRow(ctx, pgSelectNodeByTeamSlugAndPath, teamSlug, path)
 
 	var n domain.Node
-	var rootMethod, urlMode, authType, authDynSrc, incomingAuth, status string
+	var rootMethod, urlMode, authType, authDynSrc, incomingAuth, incomingAuthSrc, status string
 	var incomingMethod, outgoingMethod string
 	var encAuth, encInc string
 	var created, updated time.Time
@@ -218,6 +228,7 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 		&authType, &encAuth,
 		&authDynSrc, &n.AuthDynamicField, &n.AuthDynamicStripPrefix,
 		&incomingAuth, &encInc,
+		&incomingAuthSrc, &n.IncomingAuthDynamicField,
 		&n.WebhookSignatureHeader, &n.WebhookSignaturePrefix,
 		&n.ForwardHeaders, &n.TimeoutMs, &n.RetryCount, &n.RetryBackoffMs,
 		&n.ClickHouseTable, &status, &n.TeamID,
@@ -228,6 +239,7 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 		&incomingMethod, &outgoingMethod,
 		&cbThreshold, &cbCooldown,
 		&ackRaw,
+		&n.SSEDecline, &n.BreakerIgnoreTimeouts,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -269,6 +281,7 @@ func (r *Reader) getFromPg(ctx context.Context, teamSlug, path string) (*domain.
 	n.AuthType = domain.AuthType(authType)
 	n.AuthDynamicSource = domain.AuthDynSource(authDynSrc)
 	n.IncomingAuthType = domain.IncomingAuthType(incomingAuth)
+	n.IncomingAuthDynamicSource = domain.IncomingAuthSource(incomingAuthSrc)
 	n.Status = domain.NodeStatus(status)
 	n.CreatedAt = created
 	n.UpdatedAt = updated

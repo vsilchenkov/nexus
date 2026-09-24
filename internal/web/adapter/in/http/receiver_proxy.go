@@ -8,7 +8,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"nexus/internal/platform/clientgone"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/sensitive"
 )
 
 // RegisterReceiverProxy вешает на Web-роутер реверс-прокси боевых эндпоинтов
@@ -50,13 +52,24 @@ func RegisterReceiverProxy(r *gin.Engine, receiverURL string, logger logging.Log
 	// X-Forwarded-For добавляется стандартным Director'ом — Receiver увидит
 	// реальный IP клиента (важно для аудита/логов, §3.5).
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, perr error) {
+		if clientgone.Is(r.Context(), perr) {
+			// §109.4: клиент ушёл, не дождавшись ответа Receiver'а — это не
+			// сбой прокси. 499 (как у nginx) — для метрик и спана Sentry.
+			logger.Debug("receiver proxy: request canceled by client",
+				logger.Str("method", r.Method),
+				logger.Str("path", sensitive.MaskBotTokens(r.URL.Path)))
+			w.WriteHeader(statusClientClosedRequest)
+			return
+		}
 		// Метод и путь (без query — там могут быть токены) обязательны для
 		// триажа: голый "EOF" в Sentry не привязать к узлу/запросу
 		// (NEXUS-8: EOF'ы оказались таймаутами конкретного узла, вычислять
 		// пришлось по совпадению секунд с CH-логом).
+		// Путь passthrough-узла несёт токен бота (§109.6): Sentry маскирует его
+		// сам, а stdout-строку — только здесь.
 		logger.ErrorWithOp("receiver proxy upstream error", perr, "web.proxy",
 			logger.Str("method", r.Method),
-			logger.Str("path", r.URL.Path))
+			logger.Str("path", sensitive.MaskBotTokens(r.URL.Path)))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte(`{"error":"receiver unavailable"}`))

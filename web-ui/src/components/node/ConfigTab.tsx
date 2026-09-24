@@ -99,6 +99,14 @@ export function ConfigTab({ node }: { node: Node }) {
             <Chip>{node.incoming_method || "POST"}</Chip>
           </Row>
         )}
+        {/* §107: строки флагов — только когда флаг включён: выключенный флаг
+            означает прежнее поведение, и строка «нет» была бы шумом. SSE-флаг
+            действует лишь у sync-узла, принимающего GET (как на сервере). */}
+        {node.root_method === "request" &&
+          (node.incoming_method === "ANY" || node.incoming_method === "GET") &&
+          node.sse_decline && (
+          <Row label={t("node.fields.sse_decline")}>{t("node.fields.sse_decline_value")}</Row>
+        )}
         <Row label={t("node.form.outgoing_method")}>
           <Chip>{node.outgoing_method || "POST"}</Chip>
         </Row>
@@ -114,6 +122,11 @@ export function ConfigTab({ node }: { node: Node }) {
             })}
           </span>
         </Row>
+        {node.breaker_ignore_timeouts && (
+          <Row label={t("node.fields.breaker_ignore_timeouts")}>
+            {t("node.fields.breaker_ignore_timeouts_value")}
+          </Row>
+        )}
         <Row label={t("overview.table.status")}>{t(`node.status.${node.status}`)}</Row>
         <Row label={t("node.fields.url_mode")}>{node.url_mode}</Row>
         {node.url_mode === "static" && (

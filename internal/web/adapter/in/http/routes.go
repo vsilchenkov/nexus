@@ -15,6 +15,7 @@ type Handlers struct {
 	Token         *APITokenHandler
 	Team          *TeamHandler
 	Audit         *AuditHandler
+	AuditRevert   *AuditRevertHandler // §108: отмена изменения узла из журнала
 	DryRun        *DryRunHandler
 	Replay        *ReplayHandler
 	Logs          *LogsHandler
@@ -362,6 +363,13 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		// Перенос узла в другую команду (multi-tenancy v2, Phase 11.B). Admin-only.
 		authedAdmin.POST("/nodes/:id/move", h.Node.Move)
 		authedAdmin.GET("/nodes/:id/move-preview", h.Node.MovePreview)
+		// §108: отмена изменения узла из журнала аудита. Только UI-сессия:
+		// предпросмотр раскрывает текущие значения узлов любой команды, а
+		// API-токен закреплён за одной командой.
+		if h.AuditRevert != nil {
+			authedAdmin.GET("/audit/revert/:id", RequireSessionOnly(), h.AuditRevert.Preview)
+			authedAdmin.POST("/audit/revert/:id", RequireSessionOnly(), h.AuditRevert.Apply)
+		}
 
 		authedAdmin.GET("/users", h.User.List)
 		authedAdmin.GET("/users/:id", h.User.Get)

@@ -192,3 +192,54 @@ describe("ConfigTab — строка «Группа»", () => {
     expect(screen.queryByText("1С Обмен")).toBeNull();
   });
 });
+
+// §107: строки флагов потока SSE и таймаутов — только при включённом флаге.
+// Выключенный флаг означает прежнее поведение, строка «нет» была бы шумом.
+describe("ConfigTab — флаги §107", () => {
+  function renderFlags(patch: Partial<Node>) {
+    mockServer("");
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/nodes/node-1"]}>
+          <ConfigTab node={{ ...NODE, ...patch } as Node} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("sync-узел с обоими флагами показывает обе строки", async () => {
+    renderFlags({
+      root_method: "request",
+      incoming_method: "ANY",
+      sse_decline: true,
+      breaker_ignore_timeouts: true,
+    });
+    await waitFor(() => expect(screen.getByText("node.fields.sse_decline")).toBeInTheDocument());
+    expect(screen.getByText("node.fields.sse_decline_value")).toBeInTheDocument();
+    expect(screen.getByText("node.fields.breaker_ignore_timeouts_value")).toBeInTheDocument();
+  });
+
+  it("выключенные флаги строк не дают", async () => {
+    renderFlags({ root_method: "request", sse_decline: false, breaker_ignore_timeouts: false });
+    await waitFor(() => expect(screen.getByText("node.form.incoming_method")).toBeInTheDocument());
+    expect(screen.queryByText("node.fields.sse_decline")).toBeNull();
+    expect(screen.queryByText("node.fields.breaker_ignore_timeouts")).toBeNull();
+  });
+
+  it("у async-узла строки SSE нет даже при устаревшем флаге, строка таймаутов есть", async () => {
+    renderFlags({ root_method: "requestAsync", sse_decline: true, breaker_ignore_timeouts: true });
+    await waitFor(() =>
+      expect(screen.getByText("node.fields.breaker_ignore_timeouts")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("node.fields.sse_decline")).toBeNull();
+  });
+
+  // Узел без GET отвечает на подписку отказом метода — строка «отклоняется
+  // (405)» по устаревшему флагу обещала бы то, чего сервер не делает.
+  it("у узла с входящим POST строки SSE нет даже при устаревшем флаге", async () => {
+    renderFlags({ root_method: "request", incoming_method: "POST", sse_decline: true });
+    await waitFor(() => expect(screen.getByText("node.form.incoming_method")).toBeInTheDocument());
+    expect(screen.queryByText("node.fields.sse_decline")).toBeNull();
+  });
+});

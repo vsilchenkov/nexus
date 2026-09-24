@@ -93,6 +93,12 @@ func APITokenAuthMiddleware(
 	}
 }
 
+// viaAPIToken — запрос аутентифицирован API-токеном, а не UI-сессией.
+func viaAPIToken(c *gin.Context) bool {
+	_, ok := c.Get(ctxAPITokenKey)
+	return ok
+}
+
 // RequireSessionOnly — middleware, который отклоняет вызовы,
 // аутентифицированные API-токеном (Bearer db_...). Используется для
 // эндпоинтов типа SSE live-tail, доступных только UI-сессиям (§7.14).

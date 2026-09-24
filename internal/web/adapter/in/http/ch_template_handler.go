@@ -210,7 +210,7 @@ func (h *CHTemplateHandler) replyCode(c *gin.Context, status int, code string) {
 }
 
 func (h *CHTemplateHandler) replyServerError(c *gin.Context, err error, op string) {
-	h.logger.ErrorWithOp("ch_template handler error", err, op,
+	logServerError(c, h.logger, "ch_template handler error", err, op,
 		h.logger.Str("path", c.Request.URL.Path))
 	localizedError(c, http.StatusInternalServerError, "error.internal")
 }

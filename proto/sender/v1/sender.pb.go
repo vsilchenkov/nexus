@@ -127,9 +127,15 @@ type SendRequest struct {
 	// §101.4: слог команды узла. Путь уникален лишь внутри команды, поэтому метке
 	// team (§101.3) нужен слог, а sync-путь узел из БД не читает. Пусто у
 	// Receiver'а до §101 — старый Sender поле проигнорирует.
-	TeamSlug      string `protobuf:"bytes,33,opt,name=team_slug,json=teamSlug,proto3" json:"team_slug,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	TeamSlug string `protobuf:"bytes,33,opt,name=team_slug,json=teamSlug,proto3" json:"team_slug,omitempty"`
+	// §107.3: таймаут при установленном соединении (получатель принял запрос, но
+	// не ответил за timeout_ms) не засчитывается circuit breaker'у узла. Отказ
+	// соединения, DNS, TLS и таймаут соединения считаются как прежде. Порядок
+	// выката: Receiver → Sender → Web — старый Sender поле проигнорирует, и флаг
+	// не действует, пока Sender не обновлён.
+	BreakerIgnoreTimeouts bool `protobuf:"varint,34,opt,name=breaker_ignore_timeouts,json=breakerIgnoreTimeouts,proto3" json:"breaker_ignore_timeouts,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *SendRequest) Reset() {
@@ -330,6 +336,13 @@ func (x *SendRequest) GetTeamSlug() string {
 	return ""
 }
 
+func (x *SendRequest) GetBreakerIgnoreTimeouts() bool {
+	if x != nil {
+		return x.BreakerIgnoreTimeouts
+	}
+	return false
+}
+
 type SendResponse struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	StatusCode int32                  `protobuf:"varint,1,opt,name=status_code,json=statusCode,proto3" json:"status_code,omitempty"`
@@ -436,7 +449,7 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\x1cproto/sender/v1/sender.proto\x12\x0fnexus.sender.v1\"?\n" +
 	"\n" +
 	"AuthConfig\x121\n" +
-	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\xcf\a\n" +
+	"\x14authorization_header\x18\x01 \x01(\tR\x13authorizationHeader\"\x87\b\n" +
 	"\vSendRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tnode_path\x18\x02 \x01(\tR\bnodePath\x12\x1d\n" +
@@ -466,7 +479,8 @@ const file_proto_sender_v1_sender_proto_rawDesc = "" +
 	"\adry_run\x18\x1e \x01(\bR\x06dryRun\x12:\n" +
 	"\x19circuit_breaker_threshold\x18\x1f \x01(\x05R\x17circuitBreakerThreshold\x12?\n" +
 	"\x1ccircuit_breaker_cooldown_sec\x18  \x01(\x05R\x19circuitBreakerCooldownSec\x12\x1b\n" +
-	"\tteam_slug\x18! \x01(\tR\bteamSlug\x1a:\n" +
+	"\tteam_slug\x18! \x01(\tR\bteamSlug\x126\n" +
+	"\x17breaker_ignore_timeouts\x18\" \x01(\bR\x15breakerIgnoreTimeouts\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb2\x02\n" +

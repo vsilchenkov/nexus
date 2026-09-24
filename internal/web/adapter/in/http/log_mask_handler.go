@@ -209,7 +209,7 @@ func (h *LogMaskHandler) replyCode(c *gin.Context, status int, code string) {
 }
 
 func (h *LogMaskHandler) replyServerError(c *gin.Context, err error, op string) {
-	h.logger.ErrorWithOp("log mask handler error", err, op,
+	logServerError(c, h.logger, "log mask handler error", err, op,
 		h.logger.Str("path", c.Request.URL.Path))
 	localizedError(c, http.StatusInternalServerError, "error.internal")
 }

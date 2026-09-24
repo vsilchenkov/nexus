@@ -516,7 +516,7 @@ func (h *NodeHandler) replyDomainError(c *gin.Context, err error, op string) {
 }
 
 func (h *NodeHandler) replyServerError(c *gin.Context, err error, op string) {
-	h.logger.ErrorWithOp("web handler error", err, op,
+	logServerError(c, h.logger, "web handler error", err, op,
 		h.logger.Str("path", c.Request.URL.Path))
 	localizedError(c, http.StatusInternalServerError, "error.internal")
 }

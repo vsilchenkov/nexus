@@ -1,14 +1,18 @@
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
-import { Download } from "lucide-react";
+import { Download, RotateCcw } from "lucide-react";
 
 import { api } from "../api/client";
 import { scopeParams, teamScopeKey, useAllTeamsScope } from "../lib/teamScope";
 import { useCurrentTeamID, useMyTeams } from "../lib/teams";
 import { useInfiniteList } from "../lib/useInfiniteList";
 import { AuditDetailsCell } from "../components/AuditDetailsCell";
+import { RevertAuditDialog } from "../components/audit/RevertAuditDialog";
+import type { RevertMark } from "../components/audit/revert";
+import { cn } from "../lib/cn";
+import { useRoleAtLeast } from "../lib/useCurrentRole";
 import { buttonClasses, Card, Chip, ErrorAlert, Select } from "../components/ui";
 
 // PAGE_SIZE — размер страницы журнала. Меньше потолка накопления
@@ -29,6 +33,9 @@ type Entry = {
   // её нет вовсе.
   team_id?: string;
   created_at: string;
+  // §108.7: разметка для отмены — только у node.update/node.revert и только в
+  // admin-сессии.
+  revert?: RevertMark;
 };
 type Resp = { items: Entry[] };
 
@@ -43,6 +50,7 @@ function actionTone(action: string): "default" | "info" | "success" | "danger" |
   if (action.endsWith(".delete") || action.includes("failed") || action.includes("drop"))
     return "danger";
   if (action.endsWith(".update")) return "info";
+  if (action.endsWith(".revert")) return "warning"; // §108
   // §88.9: подтверждение означает состоявшуюся смену пароля. А вот запрос
   // восстановления красить «успехом» нельзя — он пишется и для
   // безрезультатных попыток, исход лежит в details.result; он остаётся
@@ -71,6 +79,9 @@ export default function AuditLog() {
   // teamId в ключе: /api/audit фильтруется по команде сессии — без него записи
   // разных команд алиасятся в один слот кеша (см. useCurrentTeamID в lib/teams).
   const teamId = useCurrentTeamID();
+  // §108: отмена изменения из журнала — только администратор.
+  const isAdmin = useRoleAtLeast("admin");
+  const [revertId, setRevertId] = useState<string | null>(null);
   // §86.7: сквозной режим — журнал всех команд пользователя. Скоуп обязан быть
   // в ключе, иначе выдачи режимов алиасятся в один слот кеша (правило §4.44).
   const allTeams = useAllTeamsScope();
@@ -148,6 +159,7 @@ export default function AuditLog() {
           <option value="">{t("audit.all_actions")}</option>
           <option value="node.create">node.create</option>
           <option value="node.update">node.update</option>
+          <option value="node.revert">node.revert</option>
           <option value="node.delete">node.delete</option>
           <option value="node.replay">node.replay</option>
           <option value="node.dry_run">node.dry_run</option>
@@ -203,11 +215,20 @@ export default function AuditLog() {
                 <th className="px-3 py-2 font-medium">{t("audit.columns.target")}</th>
                 <th className="px-3 py-2 font-medium">{t("audit.columns.ip")}</th>
                 <th className="px-3 py-2 font-medium">{t("audit.columns.details")}</th>
+                {isAdmin && <th className="w-px px-2 py-2" />}
               </tr>
             </thead>
             <tbody>
               {q.items.map((e) => (
-                <tr key={e.id} className="border-b border-line last:border-0 hover:bg-bg-muted">
+                <tr
+                  key={e.id}
+                  className={cn(
+                    "border-b border-line last:border-0 hover:bg-bg-muted",
+                    // §108: неактуальная строка — лёгкий фон, а не opacity всей
+                    // строки: иначе потускнела бы и кнопка отмены.
+                    isStale(e.revert) && "bg-warn/5",
+                  )}
+                >
                   <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
                     {new Date(e.created_at).toLocaleString()}
                   </td>
@@ -221,6 +242,7 @@ export default function AuditLog() {
                   <td className="px-3 py-2">{e.user_login}</td>
                   <td className="px-3 py-2">
                     <Chip tone={actionTone(e.action)}>{e.action}</Chip>
+                    <RevertStateChip mark={e.revert} />
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-fg-muted">
                     {e.target_type || "—"}
@@ -228,15 +250,39 @@ export default function AuditLog() {
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-fg-muted">{e.ip_address}</td>
                   <td className="max-w-lg px-3 py-2">
-                    <AuditDetailsCell action={e.action} details={e.details} />
+                    <AuditDetailsCell
+                      action={e.action}
+                      details={e.details}
+                      overwritten={e.revert?.overwritten}
+                      muted={isStale(e.revert)}
+                    />
                   </td>
+                  {isAdmin && (
+                    <td className="px-2 py-2 text-right">
+                      {e.revert?.revertible && e.revert.state !== "gone" && (
+                        <button
+                          type="button"
+                          onClick={() => setRevertId(e.id)}
+                          className="rounded p-1 text-fg-muted hover:bg-bg-3 hover:text-fg"
+                          title={t("audit.revert.button")}
+                          aria-label={t("audit.revert.button")}
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
               {q.items.length === 0 && (
                 <tr>
-                  {/* Колонок 6, а в сквозном режиме добавляется «Команда» (§86.7) —
-                      с фиксированным colSpan строка не растягивалась на всю ширину. */}
-                  <td colSpan={teamNames ? 7 : 6} className="px-3 py-6 text-center text-fg-muted">
+                  {/* Колонок 6, в сквозном режиме добавляется «Команда» (§86.7), у
+                      администратора — колонка отмены (§108): с фиксированным
+                      colSpan строка не растягивалась на всю ширину. */}
+                  <td
+                    colSpan={6 + (teamNames ? 1 : 0) + (isAdmin ? 1 : 0)}
+                    className="px-3 py-6 text-center text-fg-muted"
+                  >
                     {/* isPending, а не isLoading: при выключенном запросе (команда
                         сессии ещё не отрезолвлена) isLoading в react-query v5
                         равен false, и вместо загрузки показывалось «Нет записей». */}
@@ -266,6 +312,25 @@ export default function AuditLog() {
           )}
           </div>
       </Card>
+      {revertId && <RevertAuditDialog entryId={revertId} onClose={() => setRevertId(null)} />}
+    </div>
+  );
+}
+
+// isStale — строка неактуальна: поле перебито позже или узел удалён (§108.3).
+function isStale(mark?: RevertMark): boolean {
+  return mark?.state === "stale" || mark?.state === "gone";
+}
+
+// RevertStateChip — чип состояния под действием строки (§108.8).
+function RevertStateChip({ mark }: { mark?: RevertMark }) {
+  const { t } = useTranslation();
+  if (!isStale(mark)) return null;
+  return (
+    <div className="mt-1">
+      <Chip tone={mark?.state === "gone" ? "danger" : "warning"}>
+        {t(mark?.state === "gone" ? "audit.state.gone" : "audit.state.stale")}
+      </Chip>
     </div>
   );
 }
