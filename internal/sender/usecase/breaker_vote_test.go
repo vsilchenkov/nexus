@@ -197,30 +197,105 @@ func TestClassifyUpstream(t *testing.T) {
 	cancel()
 	live := context.Background()
 
+	// Таймаут при установленном соединении — так его помечает httpclient (§107.3).
+	responseTimeout := fmt.Errorf("%w: %w", port.ErrResponseTimeout, context.DeadlineExceeded)
+
 	tests := []struct {
-		name    string
-		ctx     context.Context
-		resp    *port.HTTPResponse
-		lastErr error
-		want    breakerVote
+		name           string
+		ctx            context.Context
+		resp           *port.HTTPResponse
+		lastErr        error
+		ignoreTimeouts bool
+		want           breakerVote
 	}{
-		{"2xx — узел жив", live, &port.HTTPResponse{StatusCode: 200}, nil, voteHealthy},
-		{"4xx — узел жив (§50.4)", live, &port.HTTPResponse{StatusCode: 422}, nil, voteHealthy},
-		{"oversize по факту 200 (§43)", live, &port.HTTPResponse{StatusCode: 200, TooLarge: true}, nil, voteHealthy},
-		{"5xx — нездоров", live, &port.HTTPResponse{StatusCode: 503}, nil, voteUnhealthy},
-		{"наш таймаут — нездоров", live, nil, context.DeadlineExceeded, voteUnhealthy},
-		{"отказ соединения — нездоров", live, nil, errors.New("connection refused"), voteUnhealthy},
-		{"клиент ушёл — воздержаться", dead, nil, context.Canceled, voteAbstain},
+		{"2xx — узел жив", live, &port.HTTPResponse{StatusCode: 200}, nil, false, voteHealthy},
+		{"4xx — узел жив (§50.4)", live, &port.HTTPResponse{StatusCode: 422}, nil, false, voteHealthy},
+		{"oversize по факту 200 (§43)", live, &port.HTTPResponse{StatusCode: 200, TooLarge: true}, nil, false, voteHealthy},
+		{"5xx — нездоров", live, &port.HTTPResponse{StatusCode: 503}, nil, false, voteUnhealthy},
+		{"наш таймаут — нездоров", live, nil, context.DeadlineExceeded, false, voteUnhealthy},
+		{"отказ соединения — нездоров", live, nil, errors.New("connection refused"), false, voteUnhealthy},
+		{"клиент ушёл — воздержаться", dead, nil, context.Canceled, false, voteAbstain},
 		// Порядок веток: живость родителя проверяется РАНЬШЕ признака дедлайна,
 		// иначе чужой дедлайн выше по стеку снова засчитается приёмнику.
-		{"чужой дедлайн выше по стеку — воздержаться", dead, nil, context.DeadlineExceeded, voteAbstain},
+		{"чужой дедлайн выше по стеку — воздержаться", dead, nil, context.DeadlineExceeded, false, voteAbstain},
+
+		// §107.3: флаг узла «не считать таймаут отказом защиты».
+		{"таймаут ответа без флага — нездоров", live, nil, responseTimeout, false, voteUnhealthy},
+		{"таймаут ответа с флагом — воздержаться", live, nil, responseTimeout, true, voteAbstain},
+		// Без метки — таймаут на подключении (DNS, dial, TLS): получателя, может
+		// быть, нет. Флаг его не прощает — ровно то, что §80.5 требует оставить.
+		{"таймаут подключения с флагом — нездоров", live, nil, context.DeadlineExceeded, true, voteUnhealthy},
+		{"отказ соединения с флагом — нездоров", live, nil, errors.New("connection refused"), true, voteUnhealthy},
+		{"5xx с флагом — нездоров", live, &port.HTTPResponse{StatusCode: 502}, nil, true, voteUnhealthy},
+		{"2xx с флагом — узел жив", live, &port.HTTPResponse{StatusCode: 200}, nil, true, voteHealthy},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, classifyUpstream(tt.ctx, tt.resp, tt.lastErr))
+			assert.Equal(t, tt.want, classifyUpstream(tt.ctx, tt.resp, tt.lastErr, tt.ignoreTimeouts))
 		})
 	}
+}
+
+// stubResponseTimeoutCaller — получатель принял запрос и не ответил за таймаут
+// узла: ошибка в том виде, в каком её отдаёт httpclient (§107.3).
+type stubResponseTimeoutCaller struct{}
+
+func (stubResponseTimeoutCaller) Do(context.Context, *port.HTTPRequest) (*port.HTTPResponse, error) {
+	return nil, fmt.Errorf("%w: %w", port.ErrResponseTimeout,
+		fmt.Errorf("Get %q: %w", "http://upstream/mcp", context.DeadlineExceeded))
+}
+
+// §107.3: с флагом узла таймаут ответа не трогает breaker вовсе — ни отказом,
+// ни успехом (успех обнулял бы счёт настоящих отказов соединения). Остальное —
+// как у любого таймаута: 504 клиенту, upstream_timeout в журнале, статус узла.
+func TestSend_ResponseTimeout_IgnoredByNodeFlag(t *testing.T) {
+	t.Parallel()
+
+	cb := &stubBreaker{allow: true}
+	logw := &stubLogWriter{}
+	uc := NewSendUsecase(stubResponseTimeoutCaller{}, logw, cb, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.TimeoutMs = 300000
+	in.BreakerIgnoreTimeouts = true
+	out := uc.Send(context.Background(), in)
+
+	assert.Zero(t, cb.failureCount, "таймаут ответа не засчитан отказом по настройке узла")
+	assert.Zero(t, cb.successCount, "и не засчитан успехом")
+	assert.True(t, out.Timeout, "клиент по-прежнему получает 504")
+	assert.False(t, out.ParentGone, "исход узла записывается: статус узла флаг не меняет")
+	require.Len(t, logw.written, 1)
+	assert.True(t, strings.HasPrefix(logw.written[0].rec.Reason, domain.ReasonUpstreamTimeout+":"),
+		"причина в журнале прежняя: %q", logw.written[0].rec.Reason)
+}
+
+// Без флага тот же таймаут ответа — отказ, как до §107.
+func TestSend_ResponseTimeout_CountsWithoutFlag(t *testing.T) {
+	t.Parallel()
+
+	cb := &stubBreaker{allow: true}
+	uc := NewSendUsecase(stubResponseTimeoutCaller{}, &stubLogWriter{}, cb, logging.NewNoop(), 64<<20)
+
+	uc.Send(context.Background(), baseInput())
+
+	assert.Equal(t, 1, cb.failureCount)
+}
+
+// С флагом отказ соединения по-прежнему открывает breaker: флаг прощает только
+// медленный ответ, а не мёртвый адрес.
+func TestSend_TransportError_CountsDespiteFlag(t *testing.T) {
+	t.Parallel()
+
+	cb := &stubBreaker{allow: true}
+	httpc := &stubHTTPCaller{errs: []error{errors.New("dial tcp 10.0.0.1:443: connect: connection refused")}}
+	uc := NewSendUsecase(httpc, &stubLogWriter{}, cb, logging.NewNoop(), 64<<20)
+
+	in := baseInput()
+	in.BreakerIgnoreTimeouts = true
+	uc.Send(context.Background(), in)
+
+	assert.Equal(t, 1, cb.failureCount)
 }
 
 // §81.3: политика узла обязана доехать до учёта отказа. Без этого настройка в

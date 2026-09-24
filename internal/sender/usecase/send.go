@@ -53,6 +53,8 @@ type SendInput struct {
 	// Sender'а). Async берёт её из БД вместе с узлом, sync получает по gRPC.
 	BreakerThreshold   int32
 	BreakerCooldownSec int32
+	// §107.3: таймаут при установленном соединении не засчитывается breaker'у.
+	BreakerIgnoreTimeouts bool
 
 	// §55: вызов тестовый (dry-run из UI). HTTP-запрос выполняется по-настоящему
 	// и тем же клиентом, но следов на узле не остаётся: ни лога в ClickHouse, ни

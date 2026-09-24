@@ -82,6 +82,13 @@ message SendRequest {
   // team (§101.3) нужен слог, а sync-путь узел из БД не читает. Пусто у
   // Receiver'а до §101 — старый Sender поле проигнорирует.
   string team_slug = 33;
+
+  // §107.3: таймаут при установленном соединении (получатель принял запрос, но
+  // не ответил за timeout_ms) не засчитывается circuit breaker'у узла. Отказ
+  // соединения, DNS, TLS и таймаут соединения считаются как прежде. Порядок
+  // выката: Receiver → Sender → Web — старый Sender поле проигнорирует, и флаг
+  // не действует, пока Sender не обновлён.
+  bool breaker_ignore_timeouts = 34;
 }
 
 message SendResponse {

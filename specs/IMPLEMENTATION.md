@@ -6642,3 +6642,110 @@ sessionStorage (§54) переживали выход и вход другого
 - **Закрытый порт на Windows даёт таймаут, а не быструю ошибку.** На Linux ICMP port unreachable
   приходит в подключённый UDP-сокет как `ECONNREFUSED`, на Windows-машине разработчика тест
   закрытого порта ждал весь таймаут. Тест проверяет только «ошибка, а не имя».
+
+### 4.92 §107 — потоковые подписки и медленные ответы: SSE на GET и таймауты вне breaker
+
+Раздел [107-node-streams-and-slow-timeouts.md](sections/107-node-streams-and-slow-timeouts.md).
+Ветка `feature/node-sse-breaker-timeout`. Статус ✅ — блоки 107.0–107.6, полный `make test`,
+golangci-lint, `make test-integration` (все 10 групп), `-race` в контейнере, ревизия diff'а и
+стенд пройдены при сдаче 23.09.2026; в `dev` не слита. Повод — разбор боевой команды `mcp`
+23.09.2026 (MCP-серверы за шиной: GET-канал SSE висел до таймаута и открывал брейкер).
+
+**Стенд (23.09.2026, поддельный MCP-апстрим).**
+
+- Без флага GET-подписка — 504 через 3,09 с (таймаут узла), поток дошёл до апстрима.
+- С флагом:
+  - 405 за 13 мс с `Allow`, на коротком адресе §78 тоже;
+  - POST, DELETE и GET без SSE-`Accept` проходят, до апстрима подписка не дошла;
+  - журнал отказов пуст;
+  - debug-строка без query.
+- Breaker при пороге 2:
+  - четыре таймаута ответа с флагом — защита закрыта, `failures: 0`, debug «response timeout not
+    counted by node setting»;
+  - без флага два таймаута открыли защиту, следующий запрос — 503 за 18 мс.
+- Форма и вкладка «Конфиг» совпадают с эскизами; у `requestAsync` и у входящего POST
+  SSE-переключатель скрыт.
+- Dry-run подписки даёт один шаг `stream.declined`.
+- Ошибок в консоли браузера 0.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §107 | ✅ Phase 107.0 | [sections/107-node-streams-and-slow-timeouts.md](sections/107-node-streams-and-slow-timeouts.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); §80.5 п. 2 и §81.6 помечены закрытыми §107 |
+| §107.6 кеш Receiver читает все поля узла | ✅ Phase 107.1 | [nodecache/reader.go](../internal/receiver/adapter/out/nodecache/reader.go) — `incoming_auth_dynamic_source/field` в SELECT и Scan; сторож [receiver_node_cache_fields_test.go](../tests/integration/receiver_node_cache_fields_test.go) |
+| §107.2/§107.3 модель: флаги `sse_decline`, `breaker_ignore_timeouts` | ✅ Phase 107.2 | миграция [0043](../migrations/0043_node_sse_breaker_timeout.up.sql); [domain/node.go](../internal/domain/node.go) (`SSEDecline` сбрасывается `NormalizeForRootMethod` не у `request`); Web [node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), [dto.go](../internal/web/adapter/in/http/dto.go), аудит `diffNodes`; колонки в кеше Receiver'а; тесты [node_sse_test.go](../internal/domain/node_sse_test.go), [node_sse_audit_test.go](../internal/web/usecase/node_sse_audit_test.go), integration [node_repo_stream_flags_test.go](../tests/integration/node_repo_stream_flags_test.go) |
+| §107.2 Receiver отвечает 405 на SSE-подписку | ✅ Phase 107.3 | [domain/node_stream.go](../internal/domain/node_stream.go) (`IsSSESubscribe`, `Node.DeclineStream`, `StreamDeclinedError{Allow}`); [route.go](../internal/receiver/usecase/route.go) `checkNodeAcceptsSync` — после `Disabled`, до `Paused`/метода/авторизации; [handler.go](../internal/receiver/adapter/in/http/handler.go) `replySyncRouteError` → `replyStreamDeclined` (405 + `Allow` + `MarkProxiedResponse`); dry-run шаг `stream.declined` ([dry_run.go](../internal/web/usecase/dry_run.go)); swagger Receiver — `405`; тесты [node_stream_test.go](../internal/domain/node_stream_test.go) (+ `FuzzIsSSESubscribe`), [route_sse_test.go](../internal/receiver/usecase/route_sse_test.go), [handler_sse_test.go](../internal/receiver/adapter/in/http/handler_sse_test.go), [dry_run_sse_test.go](../internal/web/usecase/dry_run_sse_test.go), integration [receiver_sse_decline_test.go](../tests/integration/receiver_sse_decline_test.go) |
+| §107.3 таймаут ответа не засчитывается breaker'у | ✅ Phase 107.4 | sentinel `port.ErrResponseTimeout` ([port/log_writer.go](../internal/sender/usecase/port/log_writer.go)); [httpclient/client.go](../internal/sender/adapter/out/httpclient/client.go) `withConnTrace` (`httptrace` `GetConn`/`GotConn`) + `markResponseTimeout` (ошибка `Do` и ошибка чтения тела); [breaker_vote.go](../internal/sender/usecase/breaker_vote.go) `classifyUpstream(…, ignoreTimeouts)` → `voteAbstain`, `logAbstain`; `SendInput.BreakerIgnoreTimeouts`; proto `breaker_ignore_timeouts = 34` ([sender.proto](../proto/sender/v1/sender.proto)); маппинг: Receiver `buildSendRequest`, gRPC-адаптер Sender'а, async `buildSendInput`, [nodepg](../internal/sender/adapter/out/nodepg/reader.go); тесты [client_timeout_test.go](../internal/sender/adapter/out/httpclient/client_timeout_test.go), `TestClassifyUpstream` и `TestSend_ResponseTimeout_*` ([breaker_vote_test.go](../internal/sender/usecase/breaker_vote_test.go)), маппинги (`TestServer_Send_BreakerIgnoreTimeoutsReachesUsecase`, `TestRoute_BreakerIgnoreTimeoutsForwarded`, `TestBuildSendInput_BreakerPolicyFromNode`), integration [circuitbreaker_ignore_timeouts_test.go](../tests/integration/circuitbreaker_ignore_timeouts_test.go) |
+| §107.4 интерфейс: два переключателя и строки вкладки «Настройки» | ✅ Phase 107.5 | [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) — SSE-переключатель в карточке «Маршрут» только у `request` (`buildPayload` шлёт `sse_decline=false` у остальных типов), переключатель таймаутов под сеткой breaker; [ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx) — строки только при включённом флаге; i18n `node.form.*`, `node.help.*`, `node.fields.*` в [en.json](../web-ui/src/locales/en.json)/[ru.json](../web-ui/src/locales/ru.json); тесты [NodeSettings.streamflags.test.tsx](../web-ui/src/pages/NodeSettings.streamflags.test.tsx), [ConfigTab.test.tsx](../web-ui/src/components/node/ConfigTab.test.tsx); встроенный бандл пересобран |
+| §107.2 SSE-флаг только у узла, принимающего GET | ✅ Phase 107.6 | `Node.sseDeclineApplies` ([node_stream.go](../internal/domain/node_stream.go)) — нормализация и `DeclineStream`; форма и вкладка «Конфиг» по тому же условию; тип `HTTPMethod` фронта знает `ANY`; тесты `TestNode_NormalizeForRootMethod_SSEDeclineNeedsGET`, строки `TestNode_DeclineStream`, integration `TestNodeRepoStreamFlags_E2E`, vitest формы и `ConfigTab` |
+
+**Неочевидности §107:**
+
+- **Кеш узла Receiver'а читает PostgreSQL урезанным SELECT'ом, и промах Redis — штатный путь, а не
+  редкость.** После каждого сохранения узла Receiver по событию §57 удаляет ключ, так что первое же
+  чтение идёт в PG. Забытая колонка тихо становится zero value — ровно после правки узла. Так
+  дважды терялись поля: колонки breaker'а (§81.9) и входящей авторизации §41
+  (`incoming_auth_dynamic_source/field`, до §107.1). Узел с токеном в `?api_key=` после любого
+  сохранения начинал искать его в заголовке `Authorization` и отвечал 401. Истечение TTL не
+  лечит: write-back кладёт в Redis уже урезанный узел. Unit-тест на текст SELECT такого не ловит
+  (он проверяет одну колонку). Поэтому стоит integration-сторож `TestNodeCache_ReceiverReadsAllFieldsFromPostgres`:
+  - эталон — узел, прочитанный Web-репозиторием;
+  - поля `domain.Node` сравниваются рефлексией, и при промахе, и после write-back в Redis;
+  - исключения перечислены **с причинами** в `receiverCacheSkippedFields()`;
+  - нулевое значение в фикстуре роняет тест. Новое поле узла без решения «читать» или «исключить»
+    не проходит, иначе забытая колонка и фикстура дали бы одинаковый ноль.
+
+  Имя начинается с `TestNodeCache`, чтобы попасть в группу `test-int-pg`: префикс `TestReceiver`
+  без подчёркивания не ловит ни один фильтр `make test-integration`.
+- **405 на SSE-подписку — не отказ шины, поэтому `MarkProxiedResponse`.** Статус задала настройка
+  узла, как статус получателя или шаблона приёма §83. Без пометки `RejectLogMiddleware` записал бы
+  каждую подписку MCP-клиента в журнал §94 как `method_not_allowed`, и бейдж «Логи → Отказы» горел
+  бы постоянно. Ровно из-за этого пользователь отверг вариант «входящий метод = POST».
+  В `nexus_requests_total{status="405"}` ответ попадает сам: пометка на счётчик запросов не влияет.
+  `TestHandleSync_SSEDecline` падает, если пометку убрать.
+- **Порядок в `checkNodeAcceptsSync`: `Disabled` → SSE → `Paused` → метод → авторизация.**
+  - До паузы: иначе подписка к узлу на паузе ушла бы в очередь (§3.6), и Sender висел бы на
+    бесконечном потоке уже в async-пути.
+  - До авторизации: 405 не зовёт получателя. Цена — клиент без токена получает 405, а не 401.
+  - После `Disabled`: выключенный узел по-прежнему отвечает «узла нет».
+- **Пустой `Allow` пишется через `c.Writer.Header().Set`, а не `c.Header`.** В gin `c.Header(k, "")`
+  удаляет заголовок. У узла, принимающего только GET, другого метода нет, но заголовок в 405
+  обязателен (RFC 9110 §15.5.6).
+- **POST с `Accept: text/event-stream` — не подписка.** Так MCP-клиент вызывает инструменты. Сервер
+  вправе ответить коротким SSE, у такого ответа есть конец, и шина отдаёт его целиком. Флаг
+  трогает только GET.
+- **SSE-флаг применим только к узлу, принимающему GET (входящий `ANY` или `GET`).** Правило
+  добавлено по замечанию со стенда (Phase 107.6): переключатель показывался у узла с входящим
+  POST, где смысла не имеет — такой узел и без флага отвечает на GET отказом §40. Условие
+  проверяется в трёх местах одинаково:
+  - `Node.sseDeclineApplies` в домене — нормализация сбрасывает флаг (с записью в `cleared`),
+    `DeclineStream` его не применяет;
+  - `sseDeclineApplies` в [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx) — скрывает
+    переключатель и шлёт `false`;
+  - условие строки в [ConfigTab.tsx](../web-ui/src/components/node/ConfigTab.tsx).
+
+  Если флаг скрыть только в форме, выставленный через API или оставшийся от прежнего метода флаг
+  продолжал бы молча действовать: 405 вне журнала отказов вместо штатного отказа метода.
+- **vitest не проверяет типы — ошибку типа ловит только `tsc` в `npm run build`.** Тип
+  `HTTPMethod` в [api/client.ts](../web-ui/src/api/client.ts) не знал `ANY` (§40), хотя сервер его
+  отдаёт. Тесты с `incoming_method: "ANY"` проходили, а `make build-ui` падал на TS2322/TS2367.
+  После правки фронта гонять именно `npm run build`, а не только vitest.
+- **«Таймаут ответа» отличается от «таймаута подключения» только через `httptrace.GotConn`.** Опыт
+  на net/http: `context deadline exceeded` одинаково дают получатель, который принял запрос и молчит,
+  заглохшее тело SSE (ошибка уже в `io.ReadAll`) и «чёрная дыра» при подключении (SYN без ответа,
+  зависшее TLS-рукопожатие). По тексту или типу ошибки их не различить, а третий случай §80.5
+  требует считать отказом: получателя, может быть, нет. `GotConn` срабатывает после TCP и TLS (у
+  HTTP/2 transport вызывает его сам), `GetConn` сбрасывает признак на каждом переходе редиректа.
+  Метка — обёртка `%w: %w`: цепочка `DeadlineExceeded` цела, и `failureReason`, `504` и
+  `out.Timeout` не меняются. `TestClient_Do_ResponseTimeoutMarking` гоняет все четыре случая на
+  настоящем транспорте.
+- **Флаг даёт воздержание, а не успех.** `RecordSuccess` обнулял бы счёт настоящих отказов:
+  чередование «отказ соединения / таймаут ответа» никогда не открыло бы защиту.
+- **Статус узла флаг не трогает.** `out.ParentGone` зависит только от `ctx.Err()` родителя
+  ([send.go](../internal/sender/usecase/send.go)), поэтому исход таймаута по-прежнему пишется в бейдж
+  §52 и gauge §41. Медленный узел остаётся виден медленным. `TestSend_ResponseTimeout_IgnoredByNodeFlag`
+  держит `ParentGone=false`.
+- **Sync-путь Sender'а узел из БД не читает — флаг едет полем 34 запроса.** Потерянный маппинг в
+  `buildSendRequest` или gRPC-адаптере сделал бы настройку косметической именно на sync-узлах
+  (MCP), поэтому оба конца покрыты тестом. Старый Sender поле игнорирует (proto3), и флаг не
+  действует, пока Sender не обновлён. Новый Sender читает колонку в `nodepg` и на схеме без 0043
+  падал бы на каждом async-сообщении, отсюда порядок выката Receiver → Sender → Web (DEPLOYMENT §9.1.5).

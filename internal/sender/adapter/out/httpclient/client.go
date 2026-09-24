@@ -15,12 +15,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
+	"sync/atomic"
 	"time"
 
 	"nexus/internal/platform/config"
@@ -89,6 +92,8 @@ func (c *Client) Do(ctx context.Context, req *port.HTTPRequest) (*port.HTTPRespo
 	// Enable=false — оба no-op без накладных расходов.
 	var spanFinish func(statusCode int, err error)
 	reqCtx, spanFinish = otelpf.StartHTTPClientSpan(reqCtx, req.Method, req.URL)
+	var connected atomic.Bool
+	reqCtx = withConnTrace(reqCtx, &connected)
 
 	hreq, err := http.NewRequestWithContext(reqCtx, req.Method, req.URL, bytes.NewReader(req.Body))
 	if err != nil {
@@ -118,7 +123,7 @@ func (c *Client) Do(ctx context.Context, req *port.HTTPRequest) (*port.HTTPRespo
 	hresp, err := hc.Do(hreq)
 	if err != nil {
 		spanFinish(0, err)
-		return nil, err
+		return nil, markResponseTimeout(err, connected.Load())
 	}
 	defer hresp.Body.Close()
 
@@ -132,7 +137,8 @@ func (c *Client) Do(ctx context.Context, req *port.HTTPRequest) (*port.HTTPRespo
 	body, err := io.ReadAll(reader)
 	if err != nil {
 		spanFinish(hresp.StatusCode, err)
-		return nil, fmt.Errorf("read response body: %w", err)
+		// Заголовки получены — соединение заведомо было.
+		return nil, markResponseTimeout(fmt.Errorf("read response body: %w", err), true)
 	}
 	spanFinish(hresp.StatusCode, nil)
 
@@ -157,6 +163,29 @@ func (c *Client) Do(ctx context.Context, req *port.HTTPRequest) (*port.HTTPRespo
 		Body:       body,
 		Redirects:  hops,
 	}, nil
+}
+
+// withConnTrace отмечает в connected, установлено ли соединение с получателем
+// (§107.3). GetConn сбрасывает признак на КАЖДОМ запросе цепочки: редирект на
+// мёртвый адрес снова означает «не подключились». GotConn ставит его, когда
+// соединение получено — после TCP и TLS, поэтому таймаут рукопожатия признака
+// не даёт. Хуки httptrace складываются с уже висящими на контексте (OTel).
+func withConnTrace(ctx context.Context, connected *atomic.Bool) context.Context {
+	return httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GetConn: func(string) { connected.Store(false) },
+		GotConn: func(httptrace.GotConnInfo) { connected.Store(true) },
+	})
+}
+
+// markResponseTimeout помечает port.ErrResponseTimeout дедлайн, истёкший при
+// установленном соединении (§107.3). Остальные ошибки — как есть: дедлайн без
+// соединения (DNS, dial, TLS, «чёрная дыра») остаётся признаком того, что
+// получателя, возможно, нет.
+func markResponseTimeout(err error, connected bool) error {
+	if !connected || !errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", port.ErrResponseTimeout, err)
 }
 
 // redirectHop строит запись о переходе 3xx (§50): via[len-1] — запрос, вызвавший

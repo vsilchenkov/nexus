@@ -168,17 +168,28 @@ func (u *RouteUsecase) NodeRootMethod(ctx context.Context, teamSlug, nodePath st
 	return node.RootMethod, nil
 }
 
-// checkNodeAcceptsSync — допуск запроса к узлу: статус, тип узла, входящий
-// метод и входящая авторизация. Отдельно от сборки запроса: здесь только
-// «пускать или нет», без единого побочного эффекта.
+// checkNodeAcceptsSync — допуск запроса к узлу: статус, отказ от SSE-подписки,
+// тип узла, входящий метод и входящая авторизация. Отдельно от сборки запроса:
+// здесь только «пускать или нет», без единого побочного эффекта.
 func checkNodeAcceptsSync(node *domain.Node, in RouteInput) error {
-	switch node.Status {
-	case domain.NodeStatusDisabled:
+	if node.Status == domain.NodeStatusDisabled {
 		// Клиенту отвечаем «узла нет» — факт существования выключенного узла
 		// наружу не раскрываем. Отдельная ошибка нужна журналу §94: там видно
 		// «узел выключен», иначе оператор ищет потерянный узел вместо того,
 		// чтобы его включить.
 		return domain.ErrNodeDisabled
+	}
+
+	// §107.2: подписка на поток событий у узла с отказом от SSE. Проверка стоит
+	// ДО паузы — подписка не превращается в сообщение очереди, на котором потом
+	// повис бы Sender, — и ДО метода и авторизации: 405 не зовёт получателя и
+	// раскрывает не больше, чем 401 включённого узла. Цена — клиент без токена
+	// получает 405, а не 401, и в журнал отказов не попадает (граница §107.2).
+	if err := node.DeclineStream(in.Method, in.Header); err != nil {
+		return err
+	}
+
+	switch node.Status {
 	case domain.NodeStatusPaused:
 		// §3.6: sync на paused-узел превращается в async — handler
 		// переключается на RouteAsync и отвечает 202 + queued:true.
@@ -275,6 +286,7 @@ func (u *RouteUsecase) buildSendRequest(
 		// Sync-путь узел из БД не читает — политику несёт запрос.
 		CircuitBreakerThreshold:   node.CircuitBreakerThreshold,
 		CircuitBreakerCooldownSec: node.CircuitBreakerCooldownSec,
+		BreakerIgnoreTimeouts:     node.BreakerIgnoreTimeouts,
 	}, nil
 }
 

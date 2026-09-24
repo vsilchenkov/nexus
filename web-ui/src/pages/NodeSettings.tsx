@@ -84,6 +84,8 @@ type Form = {
   url_mode: "static" | "from_request";
   target_url: string;
   path_passthrough: boolean;
+  // §107.2: отказ от SSE-подписки на GET (только request).
+  sse_decline: boolean;
   url_param_name: string;
   auth_type: string;
   auth_credentials: string;
@@ -116,6 +118,8 @@ type Form = {
   dlq_retry_delay_seconds: number;
   circuit_breaker_threshold: number;
   circuit_breaker_cooldown_sec: number;
+  // §107.3: таймаут при установленном соединении не открывает защиту.
+  breaker_ignore_timeouts: boolean;
   status: "enabled" | "disabled" | "paused";
   forward_headers: string[];
   log_request_body: boolean;
@@ -162,6 +166,7 @@ const emptyForm: Form = {
   url_mode: "static",
   target_url: "",
   path_passthrough: false,
+  sse_decline: false,
   url_param_name: "url_base",
   auth_type: "none",
   auth_credentials: "",
@@ -190,6 +195,7 @@ const emptyForm: Form = {
   // §81.3: 0 = «как в конфигурации» — узел не переопределяет политику.
   circuit_breaker_threshold: 0,
   circuit_breaker_cooldown_sec: 0,
+  breaker_ignore_timeouts: false,
   status: "enabled",
   forward_headers: [],
   log_request_body: false,
@@ -213,6 +219,13 @@ const emptyForm: Form = {
   // §83: по умолчанию шаблон выключен — узел отвечает как раньше.
   ...ackFormDefaults,
 };
+
+// §107.2: отказ от SSE-подписки осмыслен только у sync-узла, принимающего GET
+// (входящий GET или ANY) — зеркало domain.sseDeclineApplies. Узел с другим
+// методом и без флага отвечает на GET отказом «метод не принимается».
+function sseDeclineApplies(f: Pick<Form, "root_method" | "incoming_method">): boolean {
+  return f.root_method === "request" && (f.incoming_method === "GET" || f.incoming_method === "ANY");
+}
 
 export default function NodeSettings() {
   const { t } = useTranslation();
@@ -448,6 +461,10 @@ export default function NodeSettings() {
     delete p.ack_on_error;
     delete p.ack_body;
     p.async_ack_spec = ackSpecFromForm(form, form.root_method);
+    // §107.2: отказ от SSE-подписки есть только у sync-узла, принимающего GET.
+    // Сервер сбросил бы флаг и сам, но с записью «сброшено несовместимое поле»
+    // в аудите — а здесь переключатель просто скрыт вместе с типом или методом.
+    if (!sseDeclineApplies(form)) p.sse_decline = false;
     return p;
   }
 
@@ -806,6 +823,22 @@ export default function NodeSettings() {
                 </Select>
               </Field>
             )}
+            {/* §107.2: отказ от SSE-подписки — только у sync-узла, принимающего
+                GET: async-узел отвечает клиенту сам, у pull-узла входа нет, а узел
+                без GET и так отвечает на подписку отказом метода. */}
+            {sseDeclineApplies(form) && (
+              <div className="mt-3">
+                <div className="flex items-center gap-1">
+                  <Toggle
+                    checked={form.sse_decline}
+                    onChange={(v) => set("sse_decline", v)}
+                    label={t("node.form.sse_decline")}
+                  />
+                  <LabelHint content={t("node.help.sse_decline")} />
+                </div>
+                <p className="mt-1 text-xs text-fg-subtle">{t("node.form.sse_decline_hint")}</p>
+              </div>
+            )}
             <Field label={t("node.form.state")} help={t("node.help.status")} className="mt-3">
               <Toggle3
                 value={form.status}
@@ -984,6 +1017,18 @@ export default function NodeSettings() {
                 />
                 {fieldErr("circuit_breaker_cooldown_sec")}
               </Field>
+            </div>
+            {/* §107.3: у всех типов узлов — защита общая для sync, async и pull. */}
+            <div className="mt-3">
+              <div className="flex items-center gap-1">
+                <Toggle
+                  checked={form.breaker_ignore_timeouts}
+                  onChange={(v) => set("breaker_ignore_timeouts", v)}
+                  label={t("node.form.breaker_ignore_timeouts")}
+                />
+                <LabelHint content={t("node.help.breaker_ignore_timeouts")} />
+              </div>
+              <p className="mt-1 text-xs text-fg-subtle">{t("node.form.breaker_ignore_timeouts_hint")}</p>
             </div>
           </Card>
 

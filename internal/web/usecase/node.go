@@ -1094,6 +1094,10 @@ func diffNodes(old, n *domain.Node) map[string]any {
 	// в аудите — иначе «почему он опять долбит мёртвый приёмник» не разобрать.
 	add("circuit_breaker_threshold", old.CircuitBreakerThreshold, n.CircuitBreakerThreshold)
 	add("circuit_breaker_cooldown_sec", old.CircuitBreakerCooldownSec, n.CircuitBreakerCooldownSec)
+	// §107: оба флага меняют, что видят клиент узла (405 вместо подписки) и
+	// защита (таймаут перестаёт открывать breaker), — решение для аудита.
+	add("sse_decline", old.SSEDecline, n.SSEDecline)
+	add("breaker_ignore_timeouts", old.BreakerIgnoreTimeouts, n.BreakerIgnoreTimeouts)
 	if old.AuthCredentials != n.AuthCredentials {
 		d["auth_credentials"] = "changed"
 	}

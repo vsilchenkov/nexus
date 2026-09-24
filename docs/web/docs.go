@@ -7542,6 +7542,10 @@ const docTemplate = `{
                         "basic_from_request"
                     ]
                 },
+                "breaker_ignore_timeouts": {
+                    "description": "§107.3: таймаут при установленном соединении не засчитывается breaker'у.",
+                    "type": "boolean"
+                },
                 "circuit_breaker_cooldown_sec": {
                     "type": "integer",
                     "maximum": 3600,
@@ -7723,6 +7727,10 @@ const docTemplate = `{
                         "requestAsync",
                         "RabbitMQAsync"
                     ]
+                },
+                "sse_decline": {
+                    "description": "§107.2: GET-подписка SSE получает 405 от Receiver'а, не доходя до\nполучателя. Только request — у остальных типов сбрасывается нормализацией.",
+                    "type": "boolean"
                 },
                 "status": {
                     "type": "string",
@@ -8463,6 +8471,9 @@ const docTemplate = `{
                 "auth_type": {
                     "type": "string"
                 },
+                "breaker_ignore_timeouts": {
+                    "type": "boolean"
+                },
                 "circuit_breaker_cooldown_sec": {
                     "type": "integer"
                 },
@@ -8597,6 +8608,9 @@ const docTemplate = `{
                 },
                 "root_method": {
                     "type": "string"
+                },
+                "sse_decline": {
+                    "type": "boolean"
                 },
                 "status": {
                     "type": "string"
@@ -8962,6 +8976,10 @@ const docTemplate = `{
                         "basic_from_request"
                     ]
                 },
+                "breaker_ignore_timeouts": {
+                    "description": "§107.3: таймаут при установленном соединении не засчитывается breaker'у.",
+                    "type": "boolean"
+                },
                 "circuit_breaker_cooldown_sec": {
                     "type": "integer",
                     "maximum": 3600,
@@ -9143,6 +9161,10 @@ const docTemplate = `{
                         "requestAsync",
                         "RabbitMQAsync"
                     ]
+                },
+                "sse_decline": {
+                    "description": "§107.2: GET-подписка SSE получает 405 от Receiver'а, не доходя до\nполучателя. Только request — у остальных типов сбрасывается нормализацией.",
+                    "type": "boolean"
                 },
                 "status": {
                     "type": "string",

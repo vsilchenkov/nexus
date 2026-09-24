@@ -139,3 +139,24 @@ func TestReprocess_RebuiltURL_DeliversAfterNodeFix(t *testing.T) {
 		"запрос ушёл по адресу из свежего конфига, а не по снимку из конверта")
 	assert.Empty(t, h.dlq.produced, "republish в хвост DLQ не нужен")
 }
+
+// TestBuildSendInput_BreakerPolicyFromNode (§81.3, §107.3): async-путь и повтор
+// из DLQ берут политику breaker'а из узла, прочитанного на каждое сообщение, —
+// включая флаг «не считать таймаут отказом защиты».
+func TestBuildSendInput_BreakerPolicyFromNode(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID:                        "f6693f87-0000-4000-8000-000000000001",
+		URLMode:                   domain.URLModeStatic,
+		TargetURL:                 "https://api.example.com/hook",
+		CircuitBreakerThreshold:   7,
+		CircuitBreakerCooldownSec: 45,
+		BreakerIgnoreTimeouts:     true,
+	}
+
+	in := buildSendInput(node, Envelope{ID: "req-1", NodePath: "partner/echo", Method: "POST"})
+
+	assert.EqualValues(t, 7, in.BreakerThreshold)
+	assert.EqualValues(t, 45, in.BreakerCooldownSec)
+	assert.True(t, in.BreakerIgnoreTimeouts)
+}
