@@ -7,6 +7,11 @@ package config
 // (`grpc_max_message_bytes`).
 const defaultGRPCMaxMessageBytes = 64 * 1024 * 1024
 
+// defaultSenderReadyWaitMs — §109.3: сколько вызов ждёт готовности транспорта к
+// Sender'у (`sender_grpc.ready_wait_ms`). Больше рестарта Sender'а после §109.2
+// (секунды), меньше типичных таймаутов клиентов шины.
+const defaultSenderReadyWaitMs = 15000
+
 // defaultMaxAsyncBodyBytes — дефолтный потолок тела для async-приёма (10 МиБ).
 //
 // Согласован с kafka.topic.max_message_bytes 16 МиБ, который, в свою очередь,
@@ -192,6 +197,9 @@ func applyDefaults(c *Config) {
 	if c.Receiver.SenderGRPC.MaxMessageBytes == 0 {
 		c.Receiver.SenderGRPC.MaxMessageBytes = defaultGRPCMaxMessageBytes
 	}
+	if c.Receiver.SenderGRPC.ReadyWaitMs == 0 {
+		c.Receiver.SenderGRPC.ReadyWaitMs = defaultSenderReadyWaitMs // §109.3
+	}
 
 	if c.Receiver.L2Cache.Size == 0 {
 		c.Receiver.L2Cache.Size = 1000
@@ -317,6 +325,9 @@ func applyDefaults(c *Config) {
 	}
 	if c.Web.SenderGRPC.MaxMessageBytes == 0 {
 		c.Web.SenderGRPC.MaxMessageBytes = defaultGRPCMaxMessageBytes
+	}
+	if c.Web.SenderGRPC.ReadyWaitMs == 0 {
+		c.Web.SenderGRPC.ReadyWaitMs = defaultSenderReadyWaitMs // §109.3: dry-run §55
 	}
 	if c.Web.IdleTimeoutSec == 0 {
 		c.Web.IdleTimeoutSec = 120

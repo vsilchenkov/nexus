@@ -6802,7 +6802,7 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
 | §109.5 невалидный UTF-8 в пути → 404; журнал отказов не теряет пачку на мусоре | ✅ Phase 109.1 | обёртка `validUTF8Reader` + `errInvalidUTF8Path` в [receiver/usecase/resolver.go](../internal/receiver/usecase/resolver.go) (тест `TestResolveNode_InvalidUTF8`); санитизация образца `Collector.sanitize`/`clientIP` в [rejectlog/collector.go](../internal/receiver/adapter/out/rejectlog/collector.go), `truncateRunes` приводит к валидному UTF-8, `TruncateRequestID` в [domain/rejected.go](../internal/domain/rejected.go) (тест `TestCollectorSanitizesSample`, integration `TestRejectedFlush_GarbageSampleKeepsBatch_E2E`) |
 | §109.4 уход клиента: 499 Receiver, Debug Web | ✅ Phase 109.2 | предикат [platform/clientgone](../internal/platform/clientgone/clientgone.go); перевод gRPC `Canceled` — `translateError` в [grpcsender/client.go](../internal/platform/grpcsender/client.go); Receiver `replyClientGone` + `statusClientClosedRequest` в [handler.go](../internal/receiver/adapter/in/http/handler.go), пропуск 499 в `rejectReason` ([reject_middleware.go](../internal/receiver/adapter/in/http/reject_middleware.go)); Web `logServerError` в [server_error.go](../internal/web/adapter/in/http/server_error.go) (58 мест), 499 в [receiver_proxy.go](../internal/web/adapter/in/http/receiver_proxy.go), replay — тот же предикат; спан 499 → `cancelled` в [sentry/middleware.go](../internal/platform/sentry/middleware.go). Тесты: `TestIs`, `TestGRPCSender_CallerCancelIsContextCanceled`, `TestReplyClientGone`, `TestLogServerError`, `TestReceiverProxy_ClientGone` |
 | §109.2 быстрый старт Sender, фоновый backfill | ✅ Phase 109.3 | [sender/startup.go](../internal/sender/startup.go) (`startBodySizeBackfill`, `startupPhases`, строка `sender startup phases`), `ensureCHSchema` возвращает таблицы и больше не делает backfill ([sender/app.go](../internal/sender/app.go)); Web — `bodySizeBackfillDone` в [web/app.go](../internal/web/app.go); проверка `ctx.Err()` в цикле `BackfillBodySizes` ([ensure_schema.go](../internal/platform/clickhouse/ensure_schema.go)). Тесты `TestStartBodySizeBackfill_DoesNotBlockStart`, `TestStartupPhases` |
-| §109.3 переподключение, ожидание готовности, 503 | ⛔ | — |
+| §109.3 переподключение, ожидание готовности, 503 | ✅ Phase 109.4 | `connectParams`, `pick`, `boundWait`, `observeWait`, `translateError`, `WithReadyWaitObserver` в [grpcsender/client.go](../internal/platform/grpcsender/client.go), `callState` и stats-хендлер `sendTracker` в [sendtrack.go](../internal/platform/grpcsender/sendtrack.go); `domain.ErrSenderUnavailable` ([errors.go](../internal/domain/errors.go)); `replySenderUnavailable` (503 + `Retry-After: 5`, WARN) в [receiver handler.go](../internal/receiver/adapter/in/http/handler.go); ключ `sender_grpc.ready_wait_ms` ([config.go](../internal/platform/config/config.go), `defaultSenderReadyWaitMs` в defaults.go, три YAML); счётчик `nexus_sender_ready_wait_total{outcome}` ([metrics.go](../internal/platform/metrics/metrics.go)), wiring в receiver/app.go и web/app.go; Swagger `@Failure 503`; CHANGELOG `[Unreleased]`; DEPLOYMENT §9.1.6. Тесты [client_readywait_test.go](../internal/platform/grpcsender/client_readywait_test.go) (рестарт Sender'а как при выкате: `NOT_SERVING` → дренаж → `GracefulStop` — ровно один вызов; таймаут и выключенное ожидание → `ErrSenderUnavailable`; отмена во время ожидания; обрыв посреди вызова — НЕ `ErrSenderUnavailable`), [sendtrack_test.go](../internal/platform/grpcsender/sendtrack_test.go) (отправка и истечение взаимоисключающие, устаревший `READY` в счётчике, `translateError`), `TestReplySenderUnavailable` |
 | §109.6 scrubbing `bot<id>:<secret>` в Sentry | ⛔ | — |
 | §109.7 образ ClickHouse для integration, кандидат 26.3 | ⛔ | — |
 
@@ -6844,3 +6844,32 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
   (`MustPG`, `MustClickHouse`, `MustRedis`, `MustEnsureKafkaTopics`) идут раньше; при недоступной
   зависимости время уходит туда, и строка фаз этого не покажет — смотреть время между строками
   «starting service» и «sender grpc listening».
+- **§109.3: признак «вызов отправлен» — событие `OutHeader`, а не состояние соединения.**
+  `Unavailable` gRPC одинаков для «транспорта нет» (connection refused, `TRANSIENT_FAILURE`,
+  `NOT_SERVING` по health) и «транспорт оборвался посреди вызова». Первая версия различала их по
+  `GetState()` соединения на момент вызова — и врала: сразу после падения Sender'а соединение ещё
+  числится `READY` (состояние обновляется асинхронно), вызов падал мгновенно и не ждал
+  (`TestSend_SurvivesSenderRestart` краснел за 0.01 с). Теперь stats-хендлер `sendTracker`
+  ([sendtrack.go](../internal/platform/grpcsender/sendtrack.go)) отмечает в `callState` (лежит в
+  ctx вызова) событие `OutHeader{Client:true}`: gRPC эмитит его в `http2Client.NewStream` после
+  постановки заголовков в очередь живого транспорта, на контексте, производном от контекста
+  вызова. Не отправлен → `ErrSenderUnavailable` (503), отправлен → прежние 502 + ERROR (урок §82.1).
+- **§109.3: ожидание — `WaitForReady(true)` + таймер, а не `retryPolicy` и не своё ожидание по
+  состояниям.** `retryPolicy` повторяет и уже ушедший вызов (дубль у получателя). Голый
+  `WaitForReady` ждёт без предела, кроме контекста запроса, а у входящего HTTP-запроса Receiver'а
+  срока нет. Своё ожидание через `WaitForStateChange` (первая версия) не видит устаревший `READY`
+  и требует ручного `Connect()` из `IDLE`. Поэтому вызов идёт с `WaitForReady`, а
+  `time.AfterFunc(ready_wait)` отменяет его контекст, только если CAS `pending→expired` в
+  `callState` успел раньше `pending→sent` из `OutHeader`. Отправленный вызов таймер не трогает.
+  Узкое окно на самой границе `ready_wait_ms` (транспорт выбран, заголовки ещё не поставлены) —
+  в §109.8.
+- **§109.3: устаревший `READY` лечит сам gRPC.** Если транспорт уже закрыт, а соединение ещё
+  считается готовым, `NewStream` падает с `AllowTransparentRetry` (закрытие, GOAWAY) — gRPC
+  повторяет попытку прозрачно, и с `WaitForReady` она блокируется в выборе транспорта, пока Sender
+  не вернётся. Такой вызов виден по событию `DelayedPickComplete`: по нему он попадает в счётчик
+  ожиданий, хотя на старте соединение было `READY`. Жёсткое падение Sender'а (без GOAWAY) в первые
+  миллисекунды даёт 502: вызов успел уйти в мёртвый сокет, исход неотличим от обрыва.
+- **§109.3: тест рестарта моделирует выкат, а не `Stop()`.** Sender останавливается так:
+  health `NOT_SERVING` → дренаж → `GracefulStop` (GOAWAY) — `TestSend_SurvivesSenderRestart`
+  делает то же. Жёсткий `Stop()` прямо перед вызовом даёт честный 502 (вызов ушёл в мёртвый сокет) —
+  этот случай проверяет `TestSend_BreakMidCall_NotSenderUnavailable`, а не тест рестарта.

@@ -392,3 +392,30 @@ func TestReplyClientGone(t *testing.T) {
 		})
 	}
 }
+
+// TestReplySenderUnavailable — §109.3 (Sentry NEXUS-T/S): Sender не поднялся
+// за ready_wait_ms — клиент получает 503 + Retry-After (вызов не отправлялся,
+// повтор безопасен), строка лога WARN вместо ERROR, в журнал отказов §94 не
+// пишется. Раньше — 502 «internal routing error» и событие Sentry на каждый
+// запрос окна выката.
+func TestReplySenderUnavailable(t *testing.T) {
+	t.Parallel()
+
+	var logBuf bytes.Buffer
+	logger := logging.NewLogger(slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	h := &Handler{logger: logger}
+
+	err := fmt.Errorf("sender.Send: %w: rpc error: code = Unavailable desc = connection refused", domain.ErrSenderUnavailable)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/vika/telephony", nil)
+	sink, m, w := runReject(t, req, func(c *gin.Context) {
+		h.replyDomainError(c, err, "telephony", "receiver.sync")
+	})
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Equal(t, "5", w.Header().Get("Retry-After"))
+	assert.JSONEq(t, `{"error":"sender unavailable"}`, w.Body.String())
+	assert.Contains(t, logBuf.String(), `"level":"WARN"`)
+	assert.NotContains(t, logBuf.String(), `"level":"ERROR"`)
+	assert.Empty(t, sink.samples, "сбой шины — не отказ клиенту")
+	assert.Empty(t, m.calls)
+}

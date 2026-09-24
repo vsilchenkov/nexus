@@ -533,7 +533,8 @@ func (a *App) Start(ctx context.Context) error {
 	// из-за инструмента отладки; nil-клиент отчёт объяснит.
 	var senderClient webport.SenderClient
 	if addr := a.cfg.Web.SenderGRPC.Addr; addr != "" {
-		sc, err := grpcsender.New(&a.cfg.Web.SenderGRPC, a.logger)
+		sc, err := grpcsender.New(&a.cfg.Web.SenderGRPC, a.logger,
+			grpcsender.WithReadyWaitObserver(a.metrics)) // §109.3
 		if err != nil {
 			a.logger.Warn("§55 dry-run: sender client init failed, real mode disabled",
 				a.logger.Str("addr", addr), a.logger.Err(err))

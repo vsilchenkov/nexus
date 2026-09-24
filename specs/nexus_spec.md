@@ -7145,12 +7145,14 @@ Sender'а — 46–96 с полного отказа sync (до 441 запрос
 **Что делается.**
 - Sender и Web запускают `BackfillBodySizes` в фоне; `ADD COLUMN IF NOT EXISTS` остаются
   синхронными. Старт Sender'а пишет `sender startup phases` с длительностями фаз.
-- `platform/grpcsender`: `WithConnectParams` (100 мс…2 с), выбор готового соединения пула,
-  ожидание готовности не дольше `sender_grpc.ready_wait_ms` (дефолт 15000, `<0` — выкл) — RPC
-  не уходит до готовности транспорта, поэтому дублей нет. Счётчик
+- `platform/grpcsender`: `WithConnectParams` (100 мс…2 с), выбор готового соединения пула, вызов
+  с `WaitForReady`, который таймер `sender_grpc.ready_wait_ms` (дефолт 15000, `<0` — выкл)
+  отменяет, только пока вызов не отправлен (событие `OutHeader`) — поэтому дублей нет. Счётчик
   `nexus_sender_ready_wait_total{outcome}`.
-- `codes.Unavailable` → `domain.ErrSenderUnavailable` → **503** + `Retry-After: 5`, WARN, не в
-  журнал отказов (раньше 502 «internal routing error»).
+- Не отправленный за `ready_wait_ms` вызов и `codes.Unavailable` у неотправленного →
+  `domain.ErrSenderUnavailable` → **503** + `Retry-After: 5`, WARN, не в журнал отказов (раньше
+  502 «internal routing error»). Обрыв посреди отправленного вызова — прежний 502 и ERROR (исход
+  неизвестен, §82.1).
 - Уход клиента (`platform/clientgone`: контекст запроса отменён и ошибка — отмена; gRPC
   `Canceled` клиент Sender'а переводит в `context.Canceled`): Receiver — 499 + Debug, без журнала
   отказов и Sentry; Web — хелпер `logServerError` вместо `ErrorWithOp`, прокси `/api/v1/*` — 499;

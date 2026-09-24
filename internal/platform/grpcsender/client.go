@@ -39,7 +39,9 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
@@ -50,9 +52,11 @@ import (
 	// ротации, а конфиг выглядел бы правильным.
 	_ "google.golang.org/grpc/health"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/logging"
 	otelpf "nexus/internal/platform/otel"
+	"nexus/internal/platform/safego"
 	senderv1 "nexus/proto/sender/v1"
 )
 
@@ -62,6 +66,72 @@ type Client struct {
 	clients []senderv1.SenderServiceClient
 	next    atomic.Uint64
 	logger  logging.Logger
+
+	// readyWait — потолок ожидания готовности транспорта (§109.3); 0 —
+	// ожидание выключено.
+	readyWait time.Duration
+	observer  ReadyWaitObserver
+}
+
+// Исходы ожидания готовности (§109.3) — метка outcome у
+// nexus_sender_ready_wait_total. Множество замкнутое.
+const (
+	// ReadyWaitReady — транспорт стал готов, вызов ушёл.
+	ReadyWaitReady = "ready"
+	// ReadyWaitTimeout — за ready_wait_ms готовности не случилось, клиент
+	// получит 503.
+	ReadyWaitTimeout = "timeout"
+	// ReadyWaitCanceled — контекст вызова закончился раньше (клиент ушёл).
+	ReadyWaitCanceled = "canceled"
+)
+
+// ReadyWaitObserver — счётчик ожиданий готовности (§109.3). Объявлен здесь, на
+// стороне потребителя: клиенту не нужно знать про Prometheus.
+type ReadyWaitObserver interface {
+	IncSenderReadyWait(outcome string)
+}
+
+// Option — функциональная опция New.
+type Option func(*Client)
+
+// WithReadyWaitObserver подключает счётчик ожиданий готовности. nil
+// игнорируется — ожидание работает, но видно только в debug-логе.
+func WithReadyWaitObserver(o ReadyWaitObserver) Option {
+	return func(c *Client) {
+		if o != nil {
+			c.observer = o
+		}
+	}
+}
+
+// defaultReadyWait — потолок ожидания, если ready_wait_ms = 0 (§109.3).
+const defaultReadyWait = 15 * time.Second
+
+// readyWaitFromConfig: <0 — выключено, 0 — дефолт, >0 — как задано.
+func readyWaitFromConfig(ms int) time.Duration {
+	switch {
+	case ms < 0:
+		return 0
+	case ms == 0:
+		return defaultReadyWait
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+// connectParams — переподключение к Sender'у (§109.3). Дефолт gRPC растит паузу
+// между попытками до 120 с, и после возврата Sender'а соединения пула ещё
+// десятки секунд сидели в TRANSIENT_FAILURE. Линк внутрисетевой, попытка
+// дешёвая — пауза не больше 2 с.
+func connectParams() grpc.ConnectParams {
+	return grpc.ConnectParams{
+		Backoff: backoff.Config{
+			BaseDelay:  100 * time.Millisecond,
+			Multiplier: 1.6,
+			Jitter:     0.2,
+			MaxDelay:   2 * time.Second,
+		},
+		MinConnectTimeout: 5 * time.Second,
+	}
 }
 
 // defaultMaxMessageBytes — fallback лимита gRPC-сообщения, если в конфиге не
@@ -101,7 +171,9 @@ func resolverTarget(addr string) string {
 	return "dns:///" + addr
 }
 
-func New(cfg *config.ReceiverSenderGRPCConfig, logger logging.Logger) (*Client, error) {
+// New создаёт пул из cfg.PoolSize соединений. Соединения ленивые: подключение
+// начинается с первого вызова.
+func New(cfg *config.ReceiverSenderGRPCConfig, logger logging.Logger, opts ...Option) (*Client, error) {
 	if cfg.PoolSize <= 0 {
 		cfg.PoolSize = 1
 	}
@@ -118,6 +190,10 @@ func New(cfg *config.ReceiverSenderGRPCConfig, logger logging.Logger) (*Client, 
 			// §93.4: round_robin по всем адресам, что вернул резолвер, плюс
 			// исключение реплик, отвечающих NOT_SERVING. См. balancerServiceConfig.
 			grpc.WithDefaultServiceConfig(balancerServiceConfig),
+			grpc.WithConnectParams(connectParams()), // §109.3
+			// §109.3: момент отправки вызова — для честного 503 и таймера
+			// ожидания готовности. См. sendTracker.
+			grpc.WithStatsHandler(sendTracker{}),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:    time.Duration(cfg.KeepaliveTimeSec) * time.Second,
 				Timeout: time.Duration(cfg.KeepaliveTimeoutSec) * time.Second,
@@ -141,30 +217,134 @@ func New(cfg *config.ReceiverSenderGRPCConfig, logger logging.Logger) (*Client, 
 		conns = append(conns, cc)
 		clients = append(clients, senderv1.NewSenderServiceClient(cc))
 	}
-	return &Client{conns: conns, clients: clients, logger: logger}, nil
+	c := &Client{conns: conns, clients: clients, logger: logger, readyWait: readyWaitFromConfig(cfg.ReadyWaitMs)}
+	for _, o := range opts {
+		o(c)
+	}
+	return c, nil
 }
 
-// Send выбирает round-robin соединение и выполняет RPC.
+// Send выбирает соединение пула и выполняет RPC.
+//
+// §109.3: при включённом ожидании вызов идёт с WaitForReady — пока Sender
+// перезапускается, он ждёт готового транспорта, а не падает сразу. Ожидание
+// ограничено readyWait: таймер отменяет вызов, только пока тот не отправлен
+// (callState), и такой вызов получает domain.ErrSenderUnavailable. Ушедший
+// вызов таймер не трогает — его ограничивает лишь контекст вызывающего. До
+// отправки у Sender'а ничего нет, поэтому ожидание не создаёт дублей у
+// получателя — в отличие от retryPolicy gRPC, которая повторяет и уже ушедший
+// вызов.
 func (c *Client) Send(ctx context.Context, req *senderv1.SendRequest) (*senderv1.SendResponse, error) {
 	if len(c.clients) == 0 {
 		return nil, fmt.Errorf("grpcsender: no clients")
 	}
-	idx := c.next.Add(1) % uint64(len(c.clients))
-	resp, err := c.clients[idx].Send(ctx, req)
+	idx := c.pick()
+	wasReady := c.conns[idx].GetState() == connectivity.Ready
+	call := &callState{}
+	callCtx, opts, stop := c.boundWait(withCallState(ctx, call), call)
+	defer stop()
+	started := time.Now()
+	resp, err := c.clients[idx].Send(callCtx, req, opts...)
+	c.observeWait(ctx, call, wasReady, started)
 	if err != nil {
-		return nil, translateError(ctx, err)
+		return nil, translateError(ctx, err, call, c.readyWait)
 	}
 	return resp, nil
 }
 
+// pick — индекс соединения: первое готовое, начиная с очередного по
+// round-robin; готовых нет — очередное. Обход дешёвый: GetState читает
+// состояние без блокировки канала, соединений в пуле единицы.
+func (c *Client) pick() int {
+	n := uint64(len(c.conns))
+	start := c.next.Add(1)
+	for i := range n {
+		if j := (start + i) % n; c.conns[j].GetState() == connectivity.Ready {
+			return int(j)
+		}
+	}
+	return int(start % n)
+}
+
+// boundWait включает ограниченное ожидание готовности (§109.3):
+// WaitForReady плюс таймер readyWait, отменяющий вызов, пока тот не отправлен.
+// Ожидание выключено — вызов fail-fast, как до §109.3. Возвращённый stop
+// обязателен к вызову: он гасит таймер и контекст.
+func (c *Client) boundWait(ctx context.Context, call *callState) (context.Context, []grpc.CallOption, func()) {
+	if c.readyWait <= 0 {
+		return ctx, nil, func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	timer := time.AfterFunc(c.readyWait, func() {
+		defer safego.Recover(c.logger, "grpcsender.readyWaitExpire")
+		if call.expire() {
+			cancel()
+		}
+	})
+	return ctx, []grpc.CallOption{grpc.WaitForReady(true)}, func() {
+		timer.Stop()
+		cancel()
+	}
+}
+
+// observeWait учитывает ожидание готовности: счётчик исходов и debug-строка
+// (§51.9: иначе «почему вызов шёл 12 секунд» не объяснить). Вызов, ушедший
+// сразу, не учитывается.
+func (c *Client) observeWait(ctx context.Context, call *callState, wasReady bool, started time.Time) {
+	if c.readyWait <= 0 {
+		return
+	}
+	outcome := waitOutcome(ctx, call, wasReady)
+	if outcome == "" {
+		return
+	}
+	if c.observer != nil {
+		c.observer.IncSenderReadyWait(outcome)
+	}
+	c.logger.Debug("grpcsender: waited for sender connection",
+		c.logger.Str("outcome", outcome),
+		c.logger.Any("was_ready", wasReady),
+		c.logger.Int("waited_ms", int(call.waited(started).Milliseconds())))
+}
+
+// waitOutcome — исход ожидания готовности; "" — ожидания не было. Ждал вызов,
+// начатый на неготовом соединении, либо тот, чей выбор транспорта
+// блокировался: второе ловит соединение, которое после падения Sender'а ещё
+// числилось READY.
+func waitOutcome(ctx context.Context, call *callState, wasReady bool) string {
+	waited := !wasReady || call.pickDelayed()
+	switch {
+	case call.expired():
+		return ReadyWaitTimeout
+	case !waited:
+		return ""
+	case call.sent():
+		return ReadyWaitReady
+	case ctx.Err() != nil:
+		return ReadyWaitCanceled
+	}
+	return "" // не отправлен по иной причине — это не исход ожидания
+}
+
 // translateError переводит транспортные коды gRPC в ошибки, которые слои выше
-// понимают без импорта gRPC. Статус-ошибка gRPC не оборачивает причину, и
-// errors.Is(err, context.Canceled) для вызова, оборванного отменой контекста
-// вызывающего, ложен — поэтому уход клиента (§109.4) выглядел сбоем шины.
-// Исходная ошибка остаётся в цепочке: код и текст видны в логах как прежде.
-func translateError(ctx context.Context, err error) error {
-	if status.Code(err) == codes.Canceled && errors.Is(ctx.Err(), context.Canceled) {
+// понимают без импорта gRPC. Исходная ошибка остаётся в цепочке: код и текст
+// видны в логах как прежде.
+//
+//   - Canceled при отменённом контексте вызывающего → context.Canceled
+//     (§109.4): статус-ошибка gRPC причину не оборачивает, и уход клиента
+//     выглядел сбоем шины.
+//   - readyWait истёк до отправки, либо Unavailable у НЕотправленного вызова →
+//     domain.ErrSenderUnavailable (§109.3): до Sender'а вызов не дошёл.
+//     Unavailable у отправленного — обрыв посреди вызова (урок §82.1), исход у
+//     получателя неизвестен; он остаётся как есть — 502 и ERROR.
+func translateError(ctx context.Context, err error, call *callState, readyWait time.Duration) error {
+	switch code := status.Code(err); {
+	case code == codes.Canceled && errors.Is(ctx.Err(), context.Canceled):
 		return fmt.Errorf("%w: %w", context.Canceled, err)
+	case call.expired():
+		return fmt.Errorf("%w: not sent within ready_wait %s: %w", domain.ErrSenderUnavailable, readyWait, err)
+	case code == codes.Unavailable && !call.sent():
+		return fmt.Errorf("%w: %w", domain.ErrSenderUnavailable, err)
 	}
 	return err
 }

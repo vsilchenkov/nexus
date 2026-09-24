@@ -149,6 +149,7 @@ func (h *Handler) handleIngress(c *gin.Context) {
 // @Success  202  {object}  map[string]interface{}  "queued (paused node, §3.6)"
 // @Failure  404  {object}  map[string]string  "node not found (в т.ч. узел RabbitMQAsync — входящего HTTP у него нет)"
 // @Failure  405  {object}  map[string]string  "метод не принимается узлом; либо GET-подписка SSE у узла с отказом от потока (§107, заголовок Allow)"
+// @Failure  503  {object}  map[string]string  "sender unavailable — Sender перезапускается и не поднялся за sender_grpc.ready_wait_ms; вызов не отправлялся, повторить после Retry-After (§109.3)"
 // @Router   /api/v1/{path} [post]
 //
 // handleAuto — короткая форма адреса §78.1: /api/v1/<team_slug>/<node_path> без
@@ -214,6 +215,7 @@ func splitTeamSlugAndPath(raw string) (teamSlug, nodePath string) {
 // @Failure  403  {object}  map[string]string  "url not in allowlist"
 // @Failure  404  {object}  map[string]string  "node not found"
 // @Failure  405  {object}  map[string]string  "метод не принимается узлом; либо GET-подписка SSE у узла с отказом от потока (§107, заголовок Allow)"
+// @Failure  503  {object}  map[string]string  "sender unavailable — Sender перезапускается и не поднялся за sender_grpc.ready_wait_ms; вызов не отправлялся, повторить после Retry-After (§109.3)"
 // @Router   /api/v1/request/{path} [post]
 //
 // rest — путь после сегмента метода (или весь путь при короткой форме §78.1),
@@ -628,9 +630,34 @@ func (h *Handler) replyClientGone(c *gin.Context, err error, nodePath, op string
 	return true
 }
 
+// senderRetryAfterSec — подсказка клиенту в Retry-After при недоступном
+// Sender'е (§109.3): рестарт Sender'а после §109.2 занимает секунды.
+const senderRetryAfterSec = "5"
+
+// replySenderUnavailable отвечает 503 + Retry-After, если готового транспорта
+// к Sender'у не было и за ready_wait_ms он не появился (§109.3). Вызов не
+// отправлялся — клиенту честно предложить повтор. Раньше это был 502
+// «internal routing error» и ERROR в Sentry на каждый запрос окна выката
+// (NEXUS-T/S); теперь WARN: сигнал о настоящем падении Sender'а — алерт на его
+// недоступность и счётчик nexus_sender_ready_wait_total{outcome="timeout"}. В
+// журнал отказов §94 не пишется: это сбой шины, а не отказ клиенту (503 без
+// причины rejectReason пропускает).
+func (h *Handler) replySenderUnavailable(c *gin.Context, err error, nodePath, op string) bool {
+	if !errors.Is(err, domain.ErrSenderUnavailable) {
+		return false
+	}
+	h.logger.Warn("receiver: sender unavailable",
+		h.logger.Str("node", nodeForErrorLog(c, nodePath)),
+		h.logger.Str("op", op),
+		h.logger.Err(err))
+	c.Header("Retry-After", senderRetryAfterSec)
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": "sender unavailable"})
+	return true
+}
+
 // replyDomainError — sync-ответ об ошибке: {"error": <msg>}.
 func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op string) {
-	if h.replyClientGone(c, err, nodePath, op) {
+	if h.replyClientGone(c, err, nodePath, op) || h.replySenderUnavailable(c, err, nodePath, op) {
 		return
 	}
 	status, msg, reason, internal := classifyDomainError(err)

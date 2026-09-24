@@ -52,6 +52,11 @@ var (
 	ErrNodeDisabled                     = errors.New("domain: node disabled")
 	ErrNodePaused                       = errors.New("domain: node paused")
 	ErrNodeMethodNotAllowed             = errors.New("domain: http method not allowed for this node")
+	// ErrSenderUnavailable — §109.3: готового транспорта к Sender'у нет, и за
+	// время ожидания (`sender_grpc.ready_wait_ms`) он не появился — обычно это
+	// рестарт Sender'а. Вызов НЕ отправлялся, у получателя ничего не
+	// произошло: наружу 503 + Retry-After, а не 502 «internal routing error».
+	ErrSenderUnavailable = errors.New("domain: sender unavailable")
 	// ErrNodeNotAsyncIngress — во внешний async-эндпоинт (/api/v1/requestAsync/…)
 	// пришёл запрос к узлу, чей root_method не requestAsync (§82.3). Наружу
 	// отдаётся как ErrNodeNotFound: факт существования узла не раскрываем, как и

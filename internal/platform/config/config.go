@@ -359,6 +359,11 @@ type ReceiverSenderGRPCConfig struct {
 	// МБ → ResourceExhausted). Должен быть ≥ `receiver.max_body_bytes` и
 	// согласован с `sender.grpc_max_message_bytes`. 0 → дефолт 64 МиБ.
 	MaxMessageBytes int `yaml:"max_message_bytes"`
+	// ReadyWaitMs — §109.3: сколько вызов ждёт готовности транспорта к Sender'у,
+	// если готового соединения в пуле нет (Sender перезапускается). RPC до
+	// готовности не отправляется, поэтому дублей у получателя ожидание не
+	// создаёт. 0 → дефолт 15000; <0 — ожидание выключено (прежний fail-fast).
+	ReadyWaitMs int `yaml:"ready_wait_ms"`
 }
 
 type SenderSection struct {
