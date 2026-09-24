@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -321,4 +323,86 @@ func TestCollectorPeriodicFlush(t *testing.T) {
 
 	c.Add(sample("telephony", "10.0.0.1"))
 	require.Eventually(t, func() bool { return len(w.all()) == 1 }, 2*time.Second, 10*time.Millisecond)
+}
+
+// TestCollectorSanitizesSample — §109.5: поля образца, которые PostgreSQL не
+// принял бы (невалидный UTF-8 — 22021, длина сверх VARCHAR — 22001, не-адрес в
+// INET — 22P02), приводятся к допустимому виду до агрегации. Иначе одно такое
+// поле роняло транзакцию и терялись отказы всех групп за интервал сброса.
+func TestCollectorSanitizesSample(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		mutate func(*rejectlog.Sample)
+		check  func(t *testing.T, a domain.RejectedAggregate)
+	}{
+		{
+			name: "путь и заголовки в cp1251 → валидный UTF-8",
+			mutate: func(s *rejectlog.Sample) {
+				s.Key.NodePath = "vika_dev5/\xce\xf0"
+				s.RawPath = "/api/v1/vika_dev5/\xce\xf0"
+				s.UserAgent = "1C\xff"
+				s.RequestID = "id-\xce"
+				s.Headers = map[string]string{"Content-Type": "text/\xce\xf0"}
+			},
+			check: func(t *testing.T, a domain.RejectedAggregate) {
+				require.Len(t, a.Samples, 1)
+				smp := a.Samples[0]
+				for name, v := range map[string]string{
+					"node_path": a.Key.NodePath, "raw_path": smp.RawPath,
+					"user_agent": a.Clients[0].UserAgent, "request_id": smp.RequestID,
+					"header": smp.Headers["Content-Type"],
+				} {
+					assert.True(t, utf8.ValidString(v), "%s: %q", name, v)
+				}
+				// Подряд идущие невалидные байты схлопываются в один U+FFFD.
+				assert.Equal(t, "vika_dev5/"+string(utf8.RuneError), a.Key.NodePath)
+			},
+		},
+		{
+			name: "X-Request-Id длиннее колонки → обрезан до 64",
+			mutate: func(s *rejectlog.Sample) {
+				s.RequestID = strings.Repeat("r", 200)
+			},
+			check: func(t *testing.T, a domain.RejectedAggregate) {
+				assert.Len(t, a.Samples[0].RequestID, domain.RejectedRequestIDMaxLen)
+			},
+		},
+		{
+			name: "подделанный X-Forwarded-For → unspecified-адрес",
+			mutate: func(s *rejectlog.Sample) {
+				s.ClientIP = "<script>"
+			},
+			check: func(t *testing.T, a domain.RejectedAggregate) {
+				assert.Equal(t, "0.0.0.0", a.Samples[0].ClientIP)
+				require.Len(t, a.Clients, 1)
+				assert.Equal(t, "0.0.0.0", a.Clients[0].IP)
+			},
+		},
+		{
+			name: "IPv6 с зоной → без зоны (INET её не разбирает)",
+			mutate: func(s *rejectlog.Sample) {
+				s.ClientIP = "fe80::1%eth0"
+			},
+			check: func(t *testing.T, a domain.RejectedAggregate) {
+				assert.Equal(t, "fe80::1", a.Samples[0].ClientIP)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := &fakeWriter{}
+			c, stop := runCollector(t, w, rejectlog.Config{})
+			s := sample("telephony", "10.0.0.1")
+			tc.mutate(&s)
+			c.Add(s)
+			stop()
+
+			aggs := w.all()
+			require.Len(t, aggs, 1)
+			tc.check(t, aggs[0])
+		})
+	}
 }

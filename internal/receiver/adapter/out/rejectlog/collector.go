@@ -2,6 +2,7 @@ package rejectlog
 
 import (
 	"context"
+	"net/netip"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,14 @@ const (
 	// dropWriteFailed — сброс в PostgreSQL не удался.
 	dropWriteFailed = "write_failed"
 )
+
+// unknownClientIP — адрес клиента, который не разбирается как IP (§109.5).
+// Первый элемент X-Forwarded-For задаёт сам клиент (nginx дописывает к нему
+// свой, а не заменяет), и мусор в нём проваливал приведение к INET — вместе
+// со всей пачкой. Unspecified-адрес реальным клиентом быть не может, поэтому
+// в журнале он читается однозначно: «адрес был подделан». PTR для него не
+// резолвится (rdns пропускает unspecified).
+const unknownClientIP = "0.0.0.0"
 
 // flushTimeout — потолок одной записи пачки. Больше интервала сброса, чтобы
 // медленная база не рвала транзакцию на полпути, но конечен: зависший сброс
@@ -168,7 +177,7 @@ func (c *Collector) Add(s Sample) {
 	if c == nil || c.writer == nil || !c.enabled.Load() {
 		return
 	}
-	s.Key.Normalize()
+	c.sanitize(&s)
 	if s.At.IsZero() {
 		s.At = c.clock.Now()
 	}
@@ -179,6 +188,36 @@ func (c *Collector) Add(s Sample) {
 		// задержать ответ клиенту ради строки в журнале.
 		c.dropped(dropQueueFull, 1)
 	}
+}
+
+// sanitize приводит образец к виду, который гарантированно примут колонки
+// журнала (§109.5). Пачка пишется одной транзакцией, поэтому одно поле, которое
+// PostgreSQL не принял (невалидный UTF-8 — 22021, длина сверх VARCHAR — 22001,
+// не-адрес в INET — 22P02), теряло отказы ВСЕХ групп за интервал сброса.
+// Обрезка полей вызывающим (middleware) здесь повторяется: граница с
+// хранилищем — коллектор, а не каждый, кто однажды начнёт в него писать.
+func (c *Collector) sanitize(s *Sample) {
+	s.Key.Normalize()
+	s.UserAgent = domain.TruncateUserAgent(s.UserAgent)
+	s.RawPath = domain.TruncateRawPath(s.RawPath)
+	s.RequestID = domain.TruncateRequestID(s.RequestID)
+	for name, v := range s.Headers {
+		s.Headers[name] = domain.TruncateUserAgent(v)
+	}
+	s.ClientIP = c.clientIP(s.ClientIP)
+}
+
+// clientIP — адрес в форме, которую примет INET: без зоны IPv6 (fe80::1%eth0
+// PostgreSQL не разбирает), не-адрес — unknownClientIP.
+func (c *Collector) clientIP(raw string) string {
+	addr, err := netip.ParseAddr(raw)
+	if err != nil {
+		// §51.9: тихая подмена — видна только в debug.
+		c.logger.Debug("rejectlog: client ip is not an address, stored as unspecified",
+			c.logger.Str("client_ip", domain.TruncateRequestID(raw)))
+		return unknownClientIP
+	}
+	return addr.WithZone("").String()
 }
 
 // Run ведёт агрегацию и периодический сброс. Блокируется до ctx.Done;

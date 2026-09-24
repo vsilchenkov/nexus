@@ -2,7 +2,9 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -218,6 +220,74 @@ func TestAppendPathSuffix(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tt.want, AppendPathSuffix(tt.target, tt.remainder))
+		})
+	}
+}
+
+// pgLikeNodeReader — mapNodeReader, который, как PostgreSQL с базой в UTF8,
+// отвечает на невалидный UTF-8 в параметре инфра-ошибкой (SQLSTATE 22021), а
+// не «узла нет». Считает такие обращения.
+type pgLikeNodeReader struct {
+	mapNodeReader
+	invalid *int
+}
+
+var errPGInvalidByteSequence = errors.New(`invalid byte sequence for encoding "UTF8": 0xce 0xf0`)
+
+func (r pgLikeNodeReader) Get(ctx context.Context, teamSlug, path string) (*domain.Node, error) {
+	if !utf8.ValidString(teamSlug) || !utf8.ValidString(path) {
+		*r.invalid++
+		return nil, errPGInvalidByteSequence
+	}
+	return r.mapNodeReader.Get(ctx, teamSlug, path)
+}
+
+// TestResolveNode_InvalidUTF8 — §109.5 (NEXUS-12): адрес в cp1251 даёт 404, а
+// не инфра-ошибку (502 + Sentry), и не доходит до хранилища; passthrough-узел
+// с хвостом в чужой кодировке находится как прежде.
+func TestResolveNode_InvalidUTF8(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	passthrough := &domain.Node{Path: "files", PathPassthrough: true}
+	exact := &domain.Node{Path: "orders"}
+	nodes := map[string]*domain.Node{
+		"vika_dev5/files":  passthrough,
+		"vika_dev5/orders": exact,
+	}
+
+	cases := []struct {
+		name          string
+		team, path    string
+		wantNode      *domain.Node
+		wantRemainder string
+	}{
+		{name: "путь в cp1251 → 404", team: "vika_dev5", path: "\xce\xf0"},
+		{name: "слог в cp1251 → 404", team: "\xce\xf0", path: "orders"},
+		{name: "хвост в cp1251 за точным узлом без passthrough → 404", team: "vika_dev5", path: "orders/\xce\xf0"},
+		{
+			name: "passthrough: хвост в cp1251 уходит получателю как есть",
+			team: "vika_dev5", path: "files/\xce\xf0/1",
+			wantNode: passthrough, wantRemainder: "\xce\xf0/1",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			invalid := 0
+			reader := pgLikeNodeReader{mapNodeReader: mapNodeReader{nodes: nodes}, invalid: &invalid}
+
+			node, remainder, _, err := resolveNode(ctx, reader, tc.team, tc.path)
+
+			assert.Zero(t, invalid, "невалидный UTF-8 не должен доходить до хранилища")
+			if tc.wantNode == nil {
+				require.ErrorIs(t, err, domain.ErrNodeNotFound)
+				assert.ErrorIs(t, err, errInvalidUTF8Path, "debug-строка отказа должна назвать причину")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantNode, node)
+			assert.Equal(t, tc.wantRemainder, remainder)
 		})
 	}
 }

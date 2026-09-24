@@ -6799,7 +6799,7 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §109 + инструмент разбора Sentry | ✅ Phase 109.0 | [sections/109-sender-restart-resilience.md](sections/109-sender-restart-resilience.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); скилл [sentry-fix](../.claude/skills/sentry-fix/SKILL.md) + [sentry.ps1](../.claude/skills/sentry-fix/scripts/sentry.ps1) (список за 7 сут через орг-endpoint, разбор issue по видам ошибок, маска токенов ботов в выводе), ссылка из [nexus-sentry](../.claude/skills/nexus-sentry/SKILL.md) |
-| §109.5 невалидный UTF-8 в пути → 404 | ⛔ | — |
+| §109.5 невалидный UTF-8 в пути → 404; журнал отказов не теряет пачку на мусоре | ✅ Phase 109.1 | обёртка `validUTF8Reader` + `errInvalidUTF8Path` в [receiver/usecase/resolver.go](../internal/receiver/usecase/resolver.go) (тест `TestResolveNode_InvalidUTF8`); санитизация образца `Collector.sanitize`/`clientIP` в [rejectlog/collector.go](../internal/receiver/adapter/out/rejectlog/collector.go), `truncateRunes` приводит к валидному UTF-8, `TruncateRequestID` в [domain/rejected.go](../internal/domain/rejected.go) (тест `TestCollectorSanitizesSample`, integration `TestRejectedFlush_GarbageSampleKeepsBatch_E2E`) |
 | §109.4 уход клиента: 499 Receiver, Debug Web | ⛔ | — |
 | §109.2 быстрый старт Sender, фоновый backfill | ⛔ | — |
 | §109.3 переподключение, ожидание готовности, 503 | ⛔ | — |
@@ -6811,3 +6811,16 @@ golangci-lint, `make test-integration` (все 10 групп), `-race` в кон
 - Sentry группирует issue по стеку, а не по тексту: в NEXUS-S лежат и `Unavailable` выката, и
   `Canceled` ушедшего клиента. Виды ошибок видны только по событиям (`sentry.ps1 -Issue`), не по
   заголовку issue.
+- **§109.5: проверка UTF-8 стоит на каждом `Get`, а не одна на входе `resolveNode`.** Отказ на
+  входе сломал бы passthrough (§39): узел-префикс валиден, а хвост в cp1251 должен уйти получателю
+  как есть. До §109.5 такой запрос тоже падал 502 — первым идёт точный поиск по полному пути, и он
+  уходил в PostgreSQL с невалидной строкой.
+- **§109.5: одно «плохое» поле роняло ВСЮ пачку журнала отказов §94.** `Repo.Flush` пишет пачку
+  одной транзакцией, и PostgreSQL отвергал её целиком: невалидный UTF-8 (22021 — 404 на путь в
+  cp1251 сам попадает в журнал), `X-Request-Id` длиннее `VARCHAR(64)` (22001 — `requestid` берёт
+  заголовок клиента как есть), мусор в первом элементе `X-Forwarded-For` (22P02 на `::inet` — nginx
+  дописывает свой адрес через `$proxy_add_x_forwarded_for`, а не заменяет клиентский), IPv6 с
+  зоной `fe80::1%eth0` (INET зону не разбирает). Терялись отказы всех групп за интервал сброса, а
+  одним запросом раз в интервал журнал можно было ослепить. Санитизация — в `Collector.Add`
+  (граница с хранилищем), не только в middleware; не-адрес пишется как `0.0.0.0` (реальным клиентом
+  быть не может, PTR для него не резолвится). Integration-тест на старом коде давал 0 групп из 2.
