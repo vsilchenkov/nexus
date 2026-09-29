@@ -6976,6 +6976,7 @@ DEPLOYMENT §5.4.2.
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §110 + подготовительные рефакторинги | ✅ Phase 110.0 | [sections/110-config-backup.md](sections/110-config-backup.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md), отметка в [16-out-of-scope.md](sections/16-out-of-scope.md); предикат «чистой ноды» `pg.FreshInstanceSQL` ([platform/pg/fresh.go](../internal/platform/pg/fresh.go), им же пользуется `isFreshPG` в [bootstrap/instance.go](../internal/platform/bootstrap/instance.go)); `NodeRepoPg.InsertPreservingIdentity` + `insert(keepIdentity)`/`identityArgs` ([node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), тест [node_repo_identity_test.go](../internal/web/adapter/out/postgres/node_repo_identity_test.go)); таблица проверок настроек `fieldChecks`, `Prepare`, `PrepareImport`, `PublishSections` ([app_settings_checks.go](../internal/web/usecase/app_settings_checks.go), `Update` в [app_settings.go](../internal/web/usecase/app_settings.go) идёт через `Prepare`; тест [app_settings_import_test.go](../internal/web/usecase/app_settings_import_test.go)); `planTableProvision` ([node_provision_plan.go](../internal/web/usecase/node_provision_plan.go), `provisionTable` в [node.go](../internal/web/usecase/node.go) исполняет план; тест [node_provision_plan_test.go](../internal/web/usecase/node_provision_plan_test.go)); ключ `passphrase` в [sensitive.go](../internal/platform/sensitive/sensitive.go) |
+| §110.3 файл: конверт, шифрование паролем | ✅ Phase 110.1 | [platform/backupfile/backupfile.go](../internal/platform/backupfile/backupfile.go) — `Seal`/`Open`/`ReadHeader`/`ValidatePassphrase`, Argon2id (`DefaultKDF`: 64 МиБ, 3 прохода, 4 потока) → AES-256-GCM, gzip, AAD = байты `protected`; границы KDF (`checkKDF`), предел распаковки `MaxPayloadBytes` 64 МиБ; тесты [backupfile_test.go](../internal/platform/backupfile/backupfile_test.go) (round-trip, переформатированный файл, подмена заголовка и шифротекста, неверный пароль, версия, KDF, gzip-бомба, длина пароля в символах) и `FuzzOpen` |
 
 **Неочевидности §110 (пополняется по блокам):**
 
@@ -6988,3 +6989,9 @@ DEPLOYMENT §5.4.2.
 - **`NodeRepoPg.Create` по-прежнему игнорирует `n.ID`.** Вставка с id — отдельный метод вне
   `port.NodeRepo`: копирование узла §53 и хендлеры рассчитывают, что id выдаёт база, и общий
   флаг в `Create` сделал бы это молчаливым контрактом.
+- **`protected` в файле — base64-строка, а не вложенный объект.** Байты защищённого заголовка —
+  AAD шифрования, а у JSON нет канонической формы: вложенный объект, переформатированный
+  редактором (или пересобранный `json.Marshal`, который уплотняет `RawMessage`), дал бы другие
+  байты, и копия стала бы невосстановимой. Тест `TestOpen_SurvivesReformatting`.
+- **Неверный пароль и изменённый файл — одна ошибка `ErrDecrypt`.** GCM их не различает, и
+  различать нельзя: подсказка «файл цел, пароль не тот» помогала бы подбору.
