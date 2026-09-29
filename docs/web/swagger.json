@@ -988,6 +988,75 @@
                 }
             }
         },
+        "/api/backup/import/apply": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Пересобирает план и сверяет его с preview_digest (иначе 409), сверяет confirm_host с адресом сервера, создаёт базы и таблицы ClickHouse и одной транзакцией записывает PostgreSQL (под блокировкой teams/nodes с повторной проверкой чистоты). Выполняется до конца даже при закрытии вкладки. Admin-only, только session-cookie.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "backup"
+                ],
+                "summary": "Восстановить конфигурацию из файла (§110).",
+                "parameters": [
+                    {
+                        "description": "Файл, пароль, опции, дайджест, адрес",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.importApplyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.BackupImportResult"
+                        }
+                    },
+                    "400": {
+                        "description": "неверный пароль, адрес не совпал",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "не тот предпросмотр, экземпляр не чистый, блокирующие проблемы, импорт уже идёт",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "сбой ClickHouse или записи",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/backup/import/preview": {
             "post": {
                 "security": [
@@ -10231,6 +10300,34 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.importApplyRequest": {
+            "type": "object",
+            "required": [
+                "confirm_host",
+                "file",
+                "passphrase",
+                "preview_digest"
+            ],
+            "properties": {
+                "confirm_host": {
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "file": {
+                    "type": "string"
+                },
+                "options": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.BackupImportOptions"
+                },
+                "passphrase": {
+                    "type": "string",
+                    "maxLength": 1024
+                },
+                "preview_digest": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_web_adapter_in_http.importPreviewRequest": {
             "type": "object",
             "required": [
@@ -12396,6 +12493,27 @@
                     "items": {
                         "$ref": "#/definitions/nexus_internal_web_usecase.BackupIssue"
                     }
+                }
+            }
+        },
+        "nexus_internal_web_usecase.BackupImportResult": {
+            "type": "object",
+            "properties": {
+                "databases_claimed": {
+                    "description": "DatabasesClaimed — базы, созданные или занятые (без уже своих).",
+                    "type": "integer"
+                },
+                "duration_ms": {
+                    "type": "integer"
+                },
+                "preview": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.BackupImportPreview"
+                },
+                "tables_created": {
+                    "type": "integer"
+                },
+                "tables_updated": {
+                    "type": "integer"
                 }
             }
         },

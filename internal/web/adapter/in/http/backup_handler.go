@@ -22,6 +22,7 @@ type backupService interface {
 	Status(ctx context.Context) (*usecase.BackupStatus, error)
 	Export(ctx context.Context, actor usecase.Actor, passphrase string) (*usecase.BackupFile, error)
 	PreviewImport(ctx context.Context, actor usecase.Actor, req usecase.BackupImportRequest) (*usecase.BackupImportPreview, error)
+	ApplyImport(ctx context.Context, actor usecase.Actor, req usecase.BackupApplyRequest) (*usecase.BackupImportResult, error)
 }
 
 // backupImportMaxBody — потолок тела импорта. Файл конфигурации — сотни КиБ
@@ -158,6 +159,50 @@ func (h *BackupHandler) PreviewImport(c *gin.Context) {
 	c.JSON(http.StatusOK, p)
 }
 
+// importApplyRequest — тело POST /api/backup/import/apply: то же, что у
+// предпросмотра, плюс его дайджест и адрес сервера, введённый в диалоге.
+type importApplyRequest struct {
+	importPreviewRequest
+	PreviewDigest string `json:"preview_digest" binding:"required"`
+	ConfirmHost   string `json:"confirm_host" binding:"required,max=255"`
+}
+
+// ApplyImport godoc
+// @Summary  Восстановить конфигурацию из файла (§110).
+// @Description  Пересобирает план и сверяет его с preview_digest (иначе 409), сверяет confirm_host с адресом сервера, создаёт базы и таблицы ClickHouse и одной транзакцией записывает PostgreSQL (под блокировкой teams/nodes с повторной проверкой чистоты). Выполняется до конца даже при закрытии вкладки. Admin-only, только session-cookie.
+// @Tags     backup
+// @Accept   json
+// @Produce  json
+// @Param    body  body  importApplyRequest  true  "Файл, пароль, опции, дайджест, адрес"
+// @Success  200  {object}  usecase.BackupImportResult
+// @Failure  400  {object}  ErrorResponse  "неверный пароль, адрес не совпал"
+// @Failure  409  {object}  ErrorResponse  "не тот предпросмотр, экземпляр не чистый, блокирующие проблемы, импорт уже идёт"
+// @Failure  413  {object}  ErrorResponse
+// @Failure  422  {object}  ErrorResponse
+// @Failure  500  {object}  ErrorResponse  "сбой ClickHouse или записи"
+// @Security CookieAuth
+// @Router   /api/backup/import/apply [post]
+func (h *BackupHandler) ApplyImport(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, backupImportMaxBody)
+	var req importApplyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.replyBindError(c, err)
+		return
+	}
+	res, err := h.uc.ApplyImport(c.Request.Context(), actorFromCtx(c), usecase.BackupApplyRequest{
+		BackupImportRequest: usecase.BackupImportRequest{
+			File: []byte(req.File), Passphrase: req.Passphrase, Options: req.Options, SelfHost: c.Request.Host,
+		},
+		Digest:      req.PreviewDigest,
+		ConfirmHost: req.ConfirmHost,
+	})
+	if err != nil {
+		h.replyImportError(c, err, "backup.import_apply")
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
 func (h *BackupHandler) replyBindError(c *gin.Context, err error) {
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
@@ -183,6 +228,9 @@ var importErrorCodes = []struct {
 	{backupfile.ErrBadKDFParams, http.StatusBadRequest, "backup.not_backup_file"},
 	{backupfile.ErrUnsupportedVersion, http.StatusUnprocessableEntity, "backup.unsupported_version"},
 	{backupfile.ErrPayloadTooLarge, http.StatusRequestEntityTooLarge, "backup.file_too_large"},
+	{usecase.ErrBackupConfirmHost, http.StatusBadRequest, "backup.confirm_host_mismatch"},
+	{usecase.ErrBackupDigestMismatch, http.StatusConflict, "backup.digest_mismatch"},
+	{usecase.ErrBackupBlocked, http.StatusConflict, "backup.import_blocked"},
 }
 
 func (h *BackupHandler) replyImportError(c *gin.Context, err error, op string) {
@@ -191,6 +239,17 @@ func (h *BackupHandler) replyImportError(c *gin.Context, err error, op string) {
 			h.replyCode(c, e.status, e.code)
 			return
 		}
+	}
+	if errors.Is(err, usecase.ErrBackupCHProvision) {
+		// PostgreSQL не тронут; причина (DDL, недоступность) нужна
+		// администратору, чтобы исправить и повторить.
+		logServerError(c, h.logger, "backup handler: clickhouse provisioning failed", err, op)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  i18n.Translate(i18n.FromGin(c), "backup.clickhouse_failed"),
+			"code":   "backup.clickhouse_failed",
+			"detail": err.Error(),
+		})
+		return
 	}
 	if errors.Is(err, backup.ErrInvalidSnapshot) {
 		// Подробности (какие строки файла ссылаются в никуда) нужны

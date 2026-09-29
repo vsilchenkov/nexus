@@ -73,10 +73,43 @@ func (f *fakeCHInspector) TableExists(_ context.Context, table string) (bool, er
 	return f.tables[table], nil
 }
 
-// passSettings — PrepareImport без проверок: настройки файла как есть.
-type passSettings struct{}
+// passSettings — PrepareImport без проверок: настройки файла как есть;
+// публикации запоминаются.
+type passSettings struct{ published *[]string }
 
-func (passSettings) PrepareImport(_ context.Context, p *domain.AppSettings) (*domain.AppSettings, []string, []SettingsFieldSkip, error) {
+func (s passSettings) PublishSections(_ context.Context, _ string, sections []string) {
+	if s.published != nil {
+		*s.published = append(*s.published, sections...)
+	}
+}
+
+// fakeCHProvisioner — создание баз и таблиц: запоминает, падает по имени.
+type fakeCHProvisioner struct {
+	dbs, tables []string
+	failTable   string
+}
+
+func (p *fakeCHProvisioner) CreateDatabase(_ context.Context, name string) error {
+	p.dbs = append(p.dbs, name)
+	return nil
+}
+
+func (p *fakeCHProvisioner) CreateTable(_ context.Context, table, _ string) error {
+	if table == p.failTable {
+		return errors.New("code 57: table already exists with other structure")
+	}
+	p.tables = append(p.tables, table)
+	return nil
+}
+
+// fakeCHSchema — доводка схемы существующих таблиц.
+type fakeCHSchema struct{ ensured []string }
+
+func (s *fakeCHSchema) EnsureColumns(_ context.Context, tables []string) {
+	s.ensured = append(s.ensured, tables...)
+}
+
+func (s passSettings) PrepareImport(_ context.Context, p *domain.AppSettings) (*domain.AppSettings, []string, []SettingsFieldSkip, error) {
 	p.ClickHouse = domain.ClickHouseSettings{}
 	if p.Sentry.Environment == nil {
 		return p, nil, nil, nil
@@ -85,10 +118,13 @@ func (passSettings) PrepareImport(_ context.Context, p *domain.AppSettings) (*do
 }
 
 type importFixture struct {
-	uc       *BackupUsecase
-	restorer *fakeRestorer
-	ch       *fakeCHInspector
-	target   *stubTargetInspector
+	uc        *BackupUsecase
+	restorer  *fakeRestorer
+	ch        *fakeCHInspector
+	prov      *fakeCHProvisioner
+	schema    *fakeCHSchema
+	target    *stubTargetInspector
+	published []string
 }
 
 func newImportFixture(t *testing.T, tgt *backup.Snapshot, id domain.InstanceID) *importFixture {
@@ -97,13 +133,17 @@ func newImportFixture(t *testing.T, tgt *backup.Snapshot, id domain.InstanceID) 
 		restorer: &fakeRestorer{},
 		ch:       &fakeCHInspector{dbs: map[string]port.CHDatabaseState{}, tables: map[string]bool{}},
 		target:   &stubTargetInspector{state: port.BackupTargetState{Teams: 1, Fresh: true}},
+		prov:     &fakeCHProvisioner{},
+		schema:   &fakeCHSchema{},
 	}
 	f.uc = NewBackupUsecase(BackupDeps{
 		Snapshots:        &stubSnapshotReader{snap: tgt},
 		Target:           f.target,
 		Restorer:         f.restorer,
 		CHInspector:      f.ch,
-		Settings:         passSettings{},
+		CHProvisioner:    f.prov,
+		CHSchema:         f.schema,
+		Settings:         passSettings{published: &f.published},
 		Audit:            NewAuditUsecase(&stubAuditRepo{}, logging.NewNoop()),
 		Source:           BackupSource{NexusVersion: "v1.40.0", SchemaVersion: 43, InstanceID: id, CHAvailable: true},
 		SelfIngressHosts: []string{"nexus-new.example.ru"},

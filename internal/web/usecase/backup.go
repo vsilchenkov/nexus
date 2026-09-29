@@ -23,10 +23,11 @@ type BackupSource struct {
 	CHAvailable bool
 }
 
-// backupSettingsImporter — подготовка глобальных настроек из файла
-// (AppSettingsUsecase.PrepareImport, §110.7).
+// backupSettingsImporter — подготовка глобальных настроек из файла и
+// публикация их перезагрузки (AppSettingsUsecase, §110.7).
 type backupSettingsImporter interface {
 	PrepareImport(ctx context.Context, patch *domain.AppSettings) (*domain.AppSettings, []string, []SettingsFieldSkip, error)
+	PublishSections(ctx context.Context, actorID string, sections []string)
 }
 
 // BackupDeps — зависимости BackupUsecase.
@@ -36,10 +37,12 @@ type BackupDeps struct {
 	Restorer  port.BackupRestorer
 	// CHInspector — nil, если ClickHouse не подключён: восстановление тогда
 	// недоступно (Source.CHAvailable=false).
-	CHInspector port.CHDatabaseInspector
-	Settings    backupSettingsImporter
-	Audit       *AuditUsecase
-	Source      BackupSource
+	CHInspector   port.CHDatabaseInspector
+	CHProvisioner backupCHProvisioner
+	CHSchema      port.CHSchemaMaintainer
+	Settings      backupSettingsImporter
+	Audit         *AuditUsecase
+	Source        BackupSource
 	// SelfIngressHosts — свои authority (§32.2): узел, чей target_url ведёт на
 	// вход самой ноды, восстанавливается выключенным.
 	SelfIngressHosts []string
@@ -55,6 +58,8 @@ type BackupUsecase struct {
 	target           port.BackupTargetInspector
 	restorer         port.BackupRestorer
 	chInspector      port.CHDatabaseInspector
+	chProvisioner    backupCHProvisioner
+	chSchema         port.CHSchemaMaintainer
 	settings         backupSettingsImporter
 	audit            *AuditUsecase
 	source           BackupSource
@@ -90,6 +95,8 @@ func NewBackupUsecase(d BackupDeps, opts ...BackupOption) *BackupUsecase {
 		target:           d.Target,
 		restorer:         d.Restorer,
 		chInspector:      d.CHInspector,
+		chProvisioner:    d.CHProvisioner,
+		chSchema:         d.CHSchema,
 		settings:         d.Settings,
 		audit:            d.Audit,
 		source:           d.Source,

@@ -599,15 +599,25 @@ func (a *App) Start(ctx context.Context) error {
 	// признак ClickHouse — для карточки восстановления (без него импорт не
 	// создаст базы и таблицы команд).
 	backupRepo := pgrepo.NewBackupRepoPg(a.pg, a.cipher, a.logger)
-	var backupInspector webport.CHDatabaseInspector
-	if chGuard != nil {
+	// Без ClickHouse все три порта остаются nil-интерфейсами — восстановление
+	// отказывает с backup.clickhouse_unavailable, выгрузка работает.
+	var (
+		backupInspector   webport.CHDatabaseInspector
+		backupProvisioner webport.TeamProvisioner
+		backupCHSchema    webport.CHSchemaMaintainer
+	)
+	if chGuard != nil && teamProvisioner != nil {
 		backupInspector = chreader.NewBackupInspector(a.chMgr, chGuard, a.logger)
+		backupProvisioner = teamProvisioner
+		backupCHSchema = chreader.NewSchemaMaintainer(a.chMgr, a.logger)
 	}
 	backupHandler := httpadapter.NewBackupHandler(usecase.NewBackupUsecase(usecase.BackupDeps{
 		Snapshots:        backupRepo,
 		Target:           backupRepo,
 		Restorer:         backupRepo,
 		CHInspector:      backupInspector,
+		CHProvisioner:    backupProvisioner,
+		CHSchema:         backupCHSchema,
 		Settings:         appSettingsUC,
 		SelfIngressHosts: selfIngressHosts,
 		NodesHardLimit:   a.cfg.Web.NodesHardLimit,

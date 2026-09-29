@@ -206,6 +206,10 @@ var translations = map[Lang]map[string]string{
 		"backup.not_backup_file":        "this is not a Nexus configuration backup file",
 		"backup.unsupported_version":    "unsupported backup file format version",
 		"backup.file_invalid":           "the backup file contents did not pass the check",
+		"backup.confirm_host_mismatch":  "the entered address does not match this server",
+		"backup.digest_mismatch":        "the file or options differ from the preview — check the file again",
+		"backup.import_blocked":         "the restore plan has blocking problems — check the file again",
+		"backup.clickhouse_failed":      "failed to create ClickHouse databases or tables; PostgreSQL was not changed, the restore can be repeated",
 		// request fields catalog (§41)
 		"request_field.not_found":          "request field not found",
 		"request_field.already_exists":     "a request field with this name already exists",
@@ -383,6 +387,10 @@ var translations = map[Lang]map[string]string{
 		"backup.not_backup_file":        "это не файл резервной копии конфигурации Nexus",
 		"backup.unsupported_version":    "неподдерживаемая версия формата файла резервной копии",
 		"backup.file_invalid":           "содержимое файла резервной копии не прошло проверку",
+		"backup.confirm_host_mismatch":  "введённый адрес не совпадает с адресом этого сервера",
+		"backup.digest_mismatch":        "файл или параметры отличаются от предпросмотра — проверьте файл заново",
+		"backup.import_blocked":         "в плане восстановления есть блокирующие проблемы — проверьте файл заново",
+		"backup.clickhouse_failed":      "не удалось создать базы или таблицы ClickHouse; PostgreSQL не изменён, восстановление можно повторить",
 		// request fields catalog (§41)
 		"request_field.not_found":          "поле запроса не найдено",
 		"request_field.already_exists":     "поле запроса с таким именем уже существует",

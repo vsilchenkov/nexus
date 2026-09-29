@@ -32,6 +32,12 @@ func (noCHDatabases) InspectDatabase(context.Context, string) (port.CHDatabaseSt
 
 func (noCHDatabases) TableExists(context.Context, string) (bool, error) { return false, nil }
 
+// Предпросмотр ClickHouse не меняет: создание и доводка схемы здесь не
+// вызываются, но обязательны для восстановимости цели.
+func (noCHDatabases) CreateDatabase(context.Context, string) error      { return nil }
+func (noCHDatabases) CreateTable(context.Context, string, string) error { return nil }
+func (noCHDatabases) EnsureColumns(context.Context, []string)           {}
+
 func cheapKDF() backupfile.KDFParams {
 	k := backupfile.DefaultKDF()
 	k.Time, k.MemoryKiB, k.Threads = 1, 8*1024, 1
@@ -47,6 +53,7 @@ func newBackupUC(pool *pgxpool.Pool, cipher *crypto.Cipher, id domain.InstanceID
 		nil, false, 32<<20, 32<<20, logger)
 	uc := usecase.NewBackupUsecase(usecase.BackupDeps{
 		Snapshots: repo, Target: repo, Restorer: repo, CHInspector: noCHDatabases{}, Settings: settings,
+		CHProvisioner: noCHDatabases{}, CHSchema: noCHDatabases{},
 		Audit:  audit,
 		Source: usecase.BackupSource{NexusVersion: "test", SchemaVersion: 43, InstanceID: id, CHAvailable: true},
 		Logger: logger,

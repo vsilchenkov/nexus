@@ -219,7 +219,7 @@ func (u *BackupUsecase) checkRestorable(ctx context.Context) error {
 			u.logger.Int("nodes", st.Nodes), u.logger.Int("teams", st.Teams))
 		return port.ErrTargetNotClean
 	}
-	if u.chInspector == nil || !u.source.CHAvailable {
+	if u.chInspector == nil || u.chProvisioner == nil || u.chSchema == nil || !u.source.CHAvailable {
 		return ErrBackupCHUnavailable
 	}
 	return nil

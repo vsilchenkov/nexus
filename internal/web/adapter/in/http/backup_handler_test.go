@@ -29,6 +29,8 @@ type fakeBackupService struct {
 	passphrase string
 	preview    *usecase.BackupImportPreview
 	importReq  usecase.BackupImportRequest
+	result     *usecase.BackupImportResult
+	applyReq   usecase.BackupApplyRequest
 }
 
 func (f *fakeBackupService) Status(context.Context) (*usecase.BackupStatus, error) {
@@ -38,6 +40,11 @@ func (f *fakeBackupService) Status(context.Context) (*usecase.BackupStatus, erro
 func (f *fakeBackupService) Export(_ context.Context, _ usecase.Actor, passphrase string) (*usecase.BackupFile, error) {
 	f.passphrase = passphrase
 	return f.file, f.err
+}
+
+func (f *fakeBackupService) ApplyImport(_ context.Context, _ usecase.Actor, req usecase.BackupApplyRequest) (*usecase.BackupImportResult, error) {
+	f.applyReq = req
+	return f.result, f.err
 }
 
 func (f *fakeBackupService) PreviewImport(_ context.Context, _ usecase.Actor, req usecase.BackupImportRequest) (*usecase.BackupImportPreview, error) {
@@ -52,6 +59,7 @@ func backupEngine(svc backupService) *gin.Engine {
 	r.GET("/api/backup/status", h.Status)
 	r.POST("/api/backup/export", h.Export)
 	r.POST("/api/backup/import/preview", h.PreviewImport)
+	r.POST("/api/backup/import/apply", h.ApplyImport)
 	return r
 }
 
@@ -177,6 +185,58 @@ func TestBackupHandler_PreviewImportErrors(t *testing.T) {
 			var resp map[string]string
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 			assert.Equal(t, tt.wantKey, resp["code"])
+		})
+	}
+}
+
+func TestBackupHandler_ApplyImport(t *testing.T) {
+	t.Parallel()
+	svc := &fakeBackupService{result: &usecase.BackupImportResult{TablesCreated: 3}}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/import/apply", strings.NewReader(
+		`{"file":"x","passphrase":"correct horse battery","options":{"status_mode":"as_file"},`+
+			`"preview_digest":"abc","confirm_host":"nexus-new.example.ru"}`))
+	req.Host = "nexus-new.example.ru:8443"
+	backupEngine(svc).ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "abc", svc.applyReq.Digest)
+	assert.Equal(t, "nexus-new.example.ru", svc.applyReq.ConfirmHost)
+	assert.Equal(t, "nexus-new.example.ru:8443", svc.applyReq.SelfHost, "адрес сервера — из Host запроса, не из тела")
+	assert.Equal(t, usecase.BackupStatusAsFile, svc.applyReq.Options.StatusMode)
+	assert.Contains(t, w.Body.String(), `"tables_created":3`)
+}
+
+func TestBackupHandler_ApplyImportErrors(t *testing.T) {
+	t.Parallel()
+	body := `{"file":"x","passphrase":"correct horse battery","preview_digest":"abc","confirm_host":"h"}`
+	tests := []struct {
+		name       string
+		body       string
+		err        error
+		wantCode   int
+		wantKey    string
+		wantDetail bool
+	}{
+		{"нет дайджеста", `{"file":"x","passphrase":"correct horse battery","confirm_host":"h"}`, nil,
+			http.StatusBadRequest, "backup.import_request_invalid", false},
+		{"адрес не совпал", body, usecase.ErrBackupConfirmHost, http.StatusBadRequest, "backup.confirm_host_mismatch", false},
+		{"не тот предпросмотр", body, usecase.ErrBackupDigestMismatch, http.StatusConflict, "backup.digest_mismatch", false},
+		{"блокировки", body, fmt.Errorf("%w: ch_database_foreign", usecase.ErrBackupBlocked), http.StatusConflict, "backup.import_blocked", false},
+		{"сбой ClickHouse", body, fmt.Errorf("%w: table x: code 57", usecase.ErrBackupCHProvision),
+			http.StatusInternalServerError, "backup.clickhouse_failed", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			w := httptest.NewRecorder()
+			backupEngine(&fakeBackupService{err: tt.err}).ServeHTTP(w,
+				httptest.NewRequest(http.MethodPost, "/api/backup/import/apply", strings.NewReader(tt.body)))
+			require.Equal(t, tt.wantCode, w.Code)
+			var resp map[string]string
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tt.wantKey, resp["code"])
+			assert.Equal(t, tt.wantDetail, resp["detail"] != "")
 		})
 	}
 }

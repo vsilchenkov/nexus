@@ -1934,6 +1934,26 @@ definitions:
       usage_count:
         type: integer
     type: object
+  internal_web_adapter_in_http.importApplyRequest:
+    properties:
+      confirm_host:
+        maxLength: 255
+        type: string
+      file:
+        type: string
+      options:
+        $ref: '#/definitions/nexus_internal_web_usecase.BackupImportOptions'
+      passphrase:
+        maxLength: 1024
+        type: string
+      preview_digest:
+        type: string
+    required:
+    - confirm_host
+    - file
+    - passphrase
+    - preview_digest
+    type: object
   internal_web_adapter_in_http.importPreviewRequest:
     properties:
       file:
@@ -3482,6 +3502,20 @@ definitions:
           $ref: '#/definitions/nexus_internal_web_usecase.BackupIssue'
         type: array
     type: object
+  nexus_internal_web_usecase.BackupImportResult:
+    properties:
+      databases_claimed:
+        description: DatabasesClaimed — базы, созданные или занятые (без уже своих).
+        type: integer
+      duration_ms:
+        type: integer
+      preview:
+        $ref: '#/definitions/nexus_internal_web_usecase.BackupImportPreview'
+      tables_created:
+        type: integer
+      tables_updated:
+        type: integer
+    type: object
   nexus_internal_web_usecase.BackupIssue:
     properties:
       code:
@@ -4419,6 +4453,55 @@ paths:
       security:
       - CookieAuth: []
       summary: Выгрузить конфигурацию в файл (§110).
+      tags:
+      - backup
+  /api/backup/import/apply:
+    post:
+      consumes:
+      - application/json
+      description: Пересобирает план и сверяет его с preview_digest (иначе 409), сверяет
+        confirm_host с адресом сервера, создаёт базы и таблицы ClickHouse и одной
+        транзакцией записывает PostgreSQL (под блокировкой teams/nodes с повторной
+        проверкой чистоты). Выполняется до конца даже при закрытии вкладки. Admin-only,
+        только session-cookie.
+      parameters:
+      - description: Файл, пароль, опции, дайджест, адрес
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.importApplyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.BackupImportResult'
+        "400":
+          description: неверный пароль, адрес не совпал
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: не тот предпросмотр, экземпляр не чистый, блокирующие проблемы,
+            импорт уже идёт
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "500":
+          description: сбой ClickHouse или записи
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Восстановить конфигурацию из файла (§110).
       tags:
       - backup
   /api/backup/import/preview:
