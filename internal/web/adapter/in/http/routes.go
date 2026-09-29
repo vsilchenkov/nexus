@@ -467,6 +467,7 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 		if h.Backup != nil {
 			authedAdmin.GET("/backup/status", RequireSessionOnly(), h.Backup.Status)
 			authedAdmin.POST("/backup/export", RequireSessionOnly(), h.Backup.Export)
+			authedAdmin.POST("/backup/import/preview", RequireSessionOnly(), h.Backup.PreviewImport)
 		}
 
 		// Orphan-таблицы ClickHouse (§7.10 / Phase 6.7). Admin-only.

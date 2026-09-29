@@ -147,14 +147,18 @@ type SettingsFieldSkip struct {
 
 // PrepareImport — Prepare для восстановления конфигурации (§110.7): вместо
 // отказа поле, не прошедшее проверку на ЭТОЙ ноде, сбрасывается (остаётся
-// значение цели) и попадает в skipped. Секция clickhouse не переносится
-// никогда: импорт создаёт базы на текущем соединении, и адрес из файла увёл бы
-// сервисы туда, где этих баз нет. Патч изменяется на месте.
+// значение цели) и попадает в skipped. Не переносятся никогда и в skipped не
+// попадают: секция clickhouse (импорт создаёт базы на текущем соединении, и
+// адрес из файла увёл бы сервисы туда, где этих баз нет) и
+// general.version_override (подмена версии для проверки баннера §34.3 — даже
+// там, где она разрешена, восстановленная нода не должна врать о версии).
+// Патч изменяется на месте.
 func (u *AppSettingsUsecase) PrepareImport(ctx context.Context, patch *domain.AppSettings) (*domain.AppSettings, []string, []SettingsFieldSkip, error) {
 	if patch == nil {
 		return nil, nil, nil, fmt.Errorf("patch is nil")
 	}
 	patch.ClickHouse = domain.ClickHouseSettings{}
+	patch.General.VersionOverride = nil
 	var skipped []SettingsFieldSkip
 	for _, c := range u.fieldChecks() {
 		if err := c.check(patch); err != nil {

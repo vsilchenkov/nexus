@@ -14,13 +14,20 @@ import (
 	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
+	"nexus/internal/web/usecase/port"
 )
 
 // backupService — операции раздела «Резервная копия», нужные handler'у.
 type backupService interface {
 	Status(ctx context.Context) (*usecase.BackupStatus, error)
 	Export(ctx context.Context, actor usecase.Actor, passphrase string) (*usecase.BackupFile, error)
+	PreviewImport(ctx context.Context, actor usecase.Actor, req usecase.BackupImportRequest) (*usecase.BackupImportPreview, error)
 }
+
+// backupImportMaxBody — потолок тела импорта. Файл конфигурации — сотни КиБ
+// даже на сотнях узлов; распакованное содержимое отдельно ограничено
+// backupfile.MaxPayloadBytes.
+const backupImportMaxBody = 64 << 20
 
 // BackupHandler — резервная копия конфигурации (§110). Все маршруты
 // admin-only и только из браузерной сессии: файл несёт креды всех узлов и
@@ -109,6 +116,93 @@ func (h *BackupHandler) Export(c *gin.Context) {
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Header("Content-Length", strconv.Itoa(len(f.Data)))
 	c.Data(http.StatusOK, "application/octet-stream", f.Data)
+}
+
+// importPreviewRequest — тело POST /api/backup/import/preview. Файл — его
+// текст как есть (строкой): тот же текст приходит в apply, и дайджест
+// предпросмотра совпадает байт в байт.
+type importPreviewRequest struct {
+	File       string                      `json:"file" binding:"required"`
+	Passphrase string                      `json:"passphrase" binding:"required,max=1024"`
+	Options    usecase.BackupImportOptions `json:"options"`
+}
+
+// PreviewImport godoc
+// @Summary  Предпросмотр восстановления конфигурации (§110).
+// @Description  Только на чистом экземпляре (нет узлов и команд, кроме Default) — иначе 409 без расшифровки файла. Расшифровывает файл, сопоставляет его с тем, что есть на экземпляре, опрашивает ClickHouse (базы и таблицы команд) и выполняет всю запись в PostgreSQL с откатом. Ответ — план, предупреждения, блокирующие проблемы и digest для применения. Admin-only, только session-cookie.
+// @Tags     backup
+// @Accept   json
+// @Produce  json
+// @Param    body  body  importPreviewRequest  true  "Файл, пароль, опции"
+// @Success  200  {object}  usecase.BackupImportPreview
+// @Failure  400  {object}  ErrorResponse  "неверный пароль, не файл резервной копии, неверные опции"
+// @Failure  409  {object}  ErrorResponse  "экземпляр не чистый, ClickHouse не подключён, импорт уже идёт"
+// @Failure  413  {object}  ErrorResponse  "файл слишком большой"
+// @Failure  422  {object}  ErrorResponse  "файл новее этой версии или не проходит проверку"
+// @Security CookieAuth
+// @Router   /api/backup/import/preview [post]
+func (h *BackupHandler) PreviewImport(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, backupImportMaxBody)
+	var req importPreviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.replyBindError(c, err)
+		return
+	}
+	p, err := h.uc.PreviewImport(c.Request.Context(), actorFromCtx(c), usecase.BackupImportRequest{
+		File: []byte(req.File), Passphrase: req.Passphrase, Options: req.Options, SelfHost: c.Request.Host,
+	})
+	if err != nil {
+		h.replyImportError(c, err, "backup.import_preview")
+		return
+	}
+	c.JSON(http.StatusOK, p)
+}
+
+func (h *BackupHandler) replyBindError(c *gin.Context, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		h.replyCode(c, http.StatusRequestEntityTooLarge, "backup.file_too_large")
+		return
+	}
+	h.replyCode(c, http.StatusBadRequest, "backup.import_request_invalid")
+}
+
+// importErrorCodes — отказы восстановления: статус и ключ перевода.
+var importErrorCodes = []struct {
+	err    error
+	status int
+	code   string
+}{
+	{port.ErrTargetNotClean, http.StatusConflict, "backup.target_not_clean"},
+	{port.ErrRestoreInProgress, http.StatusConflict, "backup.restore_in_progress"},
+	{usecase.ErrBackupCHUnavailable, http.StatusConflict, "backup.clickhouse_unavailable"},
+	{usecase.ErrBackupOptionsInvalid, http.StatusBadRequest, "backup.options_invalid"},
+	{usecase.ErrBackupSchemaNewer, http.StatusUnprocessableEntity, "backup.schema_newer"},
+	{backupfile.ErrDecrypt, http.StatusBadRequest, "backup.decrypt_failed"},
+	{backupfile.ErrNotBackupFile, http.StatusBadRequest, "backup.not_backup_file"},
+	{backupfile.ErrBadKDFParams, http.StatusBadRequest, "backup.not_backup_file"},
+	{backupfile.ErrUnsupportedVersion, http.StatusUnprocessableEntity, "backup.unsupported_version"},
+	{backupfile.ErrPayloadTooLarge, http.StatusRequestEntityTooLarge, "backup.file_too_large"},
+}
+
+func (h *BackupHandler) replyImportError(c *gin.Context, err error, op string) {
+	for _, e := range importErrorCodes {
+		if errors.Is(err, e.err) {
+			h.replyCode(c, e.status, e.code)
+			return
+		}
+	}
+	if errors.Is(err, backup.ErrInvalidSnapshot) {
+		// Подробности (какие строки файла ссылаются в никуда) нужны
+		// администратору здесь же: файл чужой, журнала его сервиса может не быть.
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":  i18n.Translate(i18n.FromGin(c), "backup.file_invalid"),
+			"code":   "backup.file_invalid",
+			"detail": err.Error(),
+		})
+		return
+	}
+	h.replyError(c, err, op)
 }
 
 func (h *BackupHandler) replyError(c *gin.Context, err error, op string) {

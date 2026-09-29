@@ -599,10 +599,19 @@ func (a *App) Start(ctx context.Context) error {
 	// признак ClickHouse — для карточки восстановления (без него импорт не
 	// создаст базы и таблицы команд).
 	backupRepo := pgrepo.NewBackupRepoPg(a.pg, a.cipher, a.logger)
+	var backupInspector webport.CHDatabaseInspector
+	if chGuard != nil {
+		backupInspector = chreader.NewBackupInspector(a.chMgr, chGuard, a.logger)
+	}
 	backupHandler := httpadapter.NewBackupHandler(usecase.NewBackupUsecase(usecase.BackupDeps{
-		Snapshots: backupRepo,
-		Target:    backupRepo,
-		Audit:     auditUC,
+		Snapshots:        backupRepo,
+		Target:           backupRepo,
+		Restorer:         backupRepo,
+		CHInspector:      backupInspector,
+		Settings:         appSettingsUC,
+		SelfIngressHosts: selfIngressHosts,
+		NodesHardLimit:   a.cfg.Web.NodesHardLimit,
+		Audit:            auditUC,
 		Source: usecase.BackupSource{
 			NexusVersion:  a.cfg.Build.Version,
 			SchemaVersion: a.schema.Version,

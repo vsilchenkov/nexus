@@ -991,6 +991,69 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/backup/import/preview": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Только на чистом экземпляре (нет узлов и команд, кроме Default) — иначе 409 без расшифровки файла. Расшифровывает файл, сопоставляет его с тем, что есть на экземпляре, опрашивает ClickHouse (базы и таблицы команд) и выполняет всю запись в PostgreSQL с откатом. Ответ — план, предупреждения, блокирующие проблемы и digest для применения. Admin-only, только session-cookie.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "backup"
+                ],
+                "summary": "Предпросмотр восстановления конфигурации (§110).",
+                "parameters": [
+                    {
+                        "description": "Файл, пароль, опции",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.importPreviewRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nexus_internal_web_usecase.BackupImportPreview"
+                        }
+                    },
+                    "400": {
+                        "description": "неверный пароль, не файл резервной копии, неверные опции",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "экземпляр не чистый, ClickHouse не подключён, импорт уже идёт",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "файл слишком большой",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "файл новее этой версии или не проходит проверку",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/backup/status": {
             "get": {
                 "security": [
@@ -10171,6 +10234,25 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.importPreviewRequest": {
+            "type": "object",
+            "required": [
+                "file",
+                "passphrase"
+            ],
+            "properties": {
+                "file": {
+                    "type": "string"
+                },
+                "options": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.BackupImportOptions"
+                },
+                "passphrase": {
+                    "type": "string",
+                    "maxLength": 1024
+                }
+            }
+        },
         "internal_web_adapter_in_http.kafkaBrokerHealthDTO": {
             "type": "object",
             "properties": {
@@ -12140,6 +12222,29 @@ const docTemplate = `{
                 }
             }
         },
+        "nexus_internal_platform_backupfile.Header": {
+            "type": "object",
+            "properties": {
+                "counts": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "exported_at": {
+                    "type": "string"
+                },
+                "nexus_version": {
+                    "type": "string"
+                },
+                "schema_version": {
+                    "type": "integer"
+                },
+                "source_instance_id": {
+                    "type": "string"
+                }
+            }
+        },
         "nexus_internal_web_usecase.AckPreviewReport": {
             "type": "object",
             "properties": {
@@ -12167,6 +12272,176 @@ const docTemplate = `{
                     "type": "integer"
                 }
             }
+        },
+        "nexus_internal_web_usecase.BackupCHDatabasePlan": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "ownership": {
+                    "type": "string"
+                },
+                "tables": {
+                    "type": "integer"
+                },
+                "team": {
+                    "type": "string"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.BackupCHTablesPlan": {
+            "type": "object",
+            "properties": {
+                "create": {
+                    "type": "integer"
+                },
+                "existing": {
+                    "type": "integer"
+                },
+                "external": {
+                    "description": "External — внешние таблицы §64 (Nexus их не создаёт); ExternalMissing —\nиз них не найденные на сервере.",
+                    "type": "integer"
+                },
+                "external_missing": {
+                    "type": "integer"
+                },
+                "unmanaged": {
+                    "description": "Unmanaged — таблицы вне баз команд: не создаются, остаются как есть.",
+                    "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.BackupEntityPlan": {
+            "type": "object",
+            "properties": {
+                "create": {
+                    "type": "integer"
+                },
+                "existing": {
+                    "type": "integer"
+                },
+                "replace": {
+                    "description": "Replace — строки цели, которые заменяются (маски логов).",
+                    "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.BackupImportOptions": {
+            "type": "object",
+            "properties": {
+                "adopt_unclaimed": {
+                    "description": "AdoptUnclaimed — занять существующие непустые базы без маркера владения.",
+                    "type": "boolean"
+                },
+                "status_mode": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.BackupStatusMode"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.BackupImportPreview": {
+            "type": "object",
+            "properties": {
+                "blockers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_web_usecase.BackupIssue"
+                    }
+                },
+                "databases": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_web_usecase.BackupCHDatabasePlan"
+                    }
+                },
+                "digest": {
+                    "description": "Digest — sha256 файла и опций: применение сверяет его, чтобы записать\nровно показанный план.",
+                    "type": "string"
+                },
+                "entities": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/nexus_internal_web_usecase.BackupEntityPlan"
+                    }
+                },
+                "exported_by": {
+                    "type": "string"
+                },
+                "header": {
+                    "$ref": "#/definitions/nexus_internal_platform_backupfile.Header"
+                },
+                "node_statuses": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.BackupNodeStatusPlan"
+                },
+                "settings_sections": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "skipped": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_web_usecase.BackupIssue"
+                    }
+                },
+                "source_public_url": {
+                    "type": "string"
+                },
+                "tables": {
+                    "$ref": "#/definitions/nexus_internal_web_usecase.BackupCHTablesPlan"
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/nexus_internal_web_usecase.BackupIssue"
+                    }
+                }
+            }
+        },
+        "nexus_internal_web_usecase.BackupIssue": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "detail": {
+                    "type": "string"
+                },
+                "subject": {
+                    "type": "string"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.BackupNodeStatusPlan": {
+            "type": "object",
+            "properties": {
+                "disabled": {
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "integer"
+                },
+                "paused": {
+                    "type": "integer"
+                }
+            }
+        },
+        "nexus_internal_web_usecase.BackupStatusMode": {
+            "type": "string",
+            "enum": [
+                "pause_pull",
+                "as_file",
+                "pause_all"
+            ],
+            "x-enum-varnames": [
+                "BackupStatusPausePull",
+                "BackupStatusAsFile",
+                "BackupStatusPauseAll"
+            ]
         },
         "nexus_internal_web_usecase.CHTableVerifyResult": {
             "type": "object",

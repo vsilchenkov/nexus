@@ -27,6 +27,8 @@ type fakeBackupService struct {
 	file       *usecase.BackupFile
 	err        error
 	passphrase string
+	preview    *usecase.BackupImportPreview
+	importReq  usecase.BackupImportRequest
 }
 
 func (f *fakeBackupService) Status(context.Context) (*usecase.BackupStatus, error) {
@@ -38,12 +40,18 @@ func (f *fakeBackupService) Export(_ context.Context, _ usecase.Actor, passphras
 	return f.file, f.err
 }
 
+func (f *fakeBackupService) PreviewImport(_ context.Context, _ usecase.Actor, req usecase.BackupImportRequest) (*usecase.BackupImportPreview, error) {
+	f.importReq = req
+	return f.preview, f.err
+}
+
 func backupEngine(svc backupService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	h := NewBackupHandler(svc, logging.NewNoop())
 	r.GET("/api/backup/status", h.Status)
 	r.POST("/api/backup/export", h.Export)
+	r.POST("/api/backup/import/preview", h.PreviewImport)
 	return r
 }
 
@@ -118,4 +126,57 @@ func TestBackupHandler_Status(t *testing.T) {
 		InstanceID: "kz", NexusVersion: "v1.39.0", SchemaVersion: 43,
 		MinPassphraseLen: backupfile.MinPassphraseLen,
 	}, resp)
+}
+
+func TestBackupHandler_PreviewImport(t *testing.T) {
+	t.Parallel()
+	svc := &fakeBackupService{preview: &usecase.BackupImportPreview{Digest: "abc"}}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/import/preview", strings.NewReader(
+		`{"file":"{\"format\":\"nexus-config-backup\"}","passphrase":"correct horse battery",`+
+			`"options":{"status_mode":"pause_all","adopt_unclaimed":true}}`))
+	req.Host = "nexus-new.example.ru"
+	backupEngine(svc).ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.JSONEq(t, `{"format":"nexus-config-backup"}`, string(svc.importReq.File), "файл передаётся текстом как есть")
+	assert.Equal(t, usecase.BackupImportOptions{StatusMode: usecase.BackupStatusPauseAll, AdoptUnclaimed: true},
+		svc.importReq.Options)
+	assert.Equal(t, "nexus-new.example.ru", svc.importReq.SelfHost)
+	assert.Contains(t, w.Body.String(), `"digest":"abc"`)
+}
+
+func TestBackupHandler_PreviewImportErrors(t *testing.T) {
+	t.Parallel()
+	body := `{"file":"x","passphrase":"correct horse battery"}`
+	tests := []struct {
+		name     string
+		body     string
+		err      error
+		wantCode int
+		wantKey  string
+	}{
+		{"нет файла", `{"passphrase":"correct horse battery"}`, nil, http.StatusBadRequest, "backup.import_request_invalid"},
+		{"слишком большой", `{"file":"` + strings.Repeat("a", backupImportMaxBody) + `"}`, nil,
+			http.StatusRequestEntityTooLarge, "backup.file_too_large"},
+		{"нечистая цель", body, port.ErrTargetNotClean, http.StatusConflict, "backup.target_not_clean"},
+		{"импорт уже идёт", body, port.ErrRestoreInProgress, http.StatusConflict, "backup.restore_in_progress"},
+		{"нет ClickHouse", body, usecase.ErrBackupCHUnavailable, http.StatusConflict, "backup.clickhouse_unavailable"},
+		{"неверный пароль", body, fmt.Errorf("open: %w", backupfile.ErrDecrypt), http.StatusBadRequest, "backup.decrypt_failed"},
+		{"не файл копии", body, backupfile.ErrNotBackupFile, http.StatusBadRequest, "backup.not_backup_file"},
+		{"схема новее", body, usecase.ErrBackupSchemaNewer, http.StatusUnprocessableEntity, "backup.schema_newer"},
+		{"битый снимок", body, fmt.Errorf("%w: nodes.team_id", backup.ErrInvalidSnapshot), http.StatusUnprocessableEntity, "backup.file_invalid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			w := httptest.NewRecorder()
+			backupEngine(&fakeBackupService{err: tt.err}).ServeHTTP(w,
+				httptest.NewRequest(http.MethodPost, "/api/backup/import/preview", strings.NewReader(tt.body)))
+			require.Equal(t, tt.wantCode, w.Code)
+			var resp map[string]string
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, tt.wantKey, resp["code"])
+		})
+	}
 }

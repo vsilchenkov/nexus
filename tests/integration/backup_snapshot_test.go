@@ -4,7 +4,9 @@ package integration
 
 import (
 	"context"
+	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +47,48 @@ func TestBackupSnapshot_CoversEveryColumn(t *testing.T) {
 	for table := range schema {
 		assert.Contains(t, known, table,
 			"таблица %s не переносится и не исключена — решите, нужна ли она резервной копии (§110.2)", table)
+	}
+}
+
+// TestBackupSnapshot_NullableColumnsArePointers — снимок сканирует строки
+// прямо в поля DTO: NULL в колонке, которой соответствует string или int,
+// уронил бы выгрузку на реальных данных, хотя на сидах всё зелёное. nodes и
+// app_settings читаются репозиториями (COALESCE, JSONB) — их не проверяем.
+func TestBackupSnapshot_NullableColumnsArePointers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	nullable := map[string]bool{}
+	rows, err := pool.Query(ctx, `SELECT table_name || '.' || column_name FROM information_schema.columns
+WHERE table_schema = 'public' AND is_nullable = 'YES'`)
+	require.NoError(t, err)
+	for rows.Next() {
+		var col string
+		require.NoError(t, rows.Scan(&col))
+		nullable[col] = true
+	}
+	rows.Close()
+	require.NoError(t, rows.Err())
+
+	for _, tb := range backup.Tables() {
+		if tb.Row == nil || tb.Name == "nodes" {
+			continue
+		}
+		rt := reflect.TypeOf(tb.Row)
+		for f := range rt.Fields() {
+			col, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if !nullable[tb.Name+"."+col] {
+				continue
+			}
+			switch f.Type.Kind() {
+			case reflect.Pointer, reflect.Slice:
+			default:
+				t.Errorf("%s.%s допускает NULL, а поле %s.%s — %s: сканирование NULL упадёт",
+					tb.Name, col, rt.Name(), f.Name, f.Type)
+			}
+		}
 	}
 }
 

@@ -282,6 +282,7 @@ func TestAuditRevertRoutes_APITokenForbidden(t *testing.T) {
 var backupRoutes = []struct{ method, path string }{
 	{http.MethodGet, "/api/backup/status"},
 	{http.MethodPost, "/api/backup/export"},
+	{http.MethodPost, "/api/backup/import/preview"},
 }
 
 // TestBackupRoutes_AdminOnly: файл несёт креды всех узлов и хеши паролей —

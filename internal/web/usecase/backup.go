@@ -23,23 +23,44 @@ type BackupSource struct {
 	CHAvailable bool
 }
 
+// backupSettingsImporter — подготовка глобальных настроек из файла
+// (AppSettingsUsecase.PrepareImport, §110.7).
+type backupSettingsImporter interface {
+	PrepareImport(ctx context.Context, patch *domain.AppSettings) (*domain.AppSettings, []string, []SettingsFieldSkip, error)
+}
+
 // BackupDeps — зависимости BackupUsecase.
 type BackupDeps struct {
 	Snapshots port.BackupSnapshotReader
 	Target    port.BackupTargetInspector
-	Audit     *AuditUsecase
-	Source    BackupSource
-	Logger    logging.Logger
+	Restorer  port.BackupRestorer
+	// CHInspector — nil, если ClickHouse не подключён: восстановление тогда
+	// недоступно (Source.CHAvailable=false).
+	CHInspector port.CHDatabaseInspector
+	Settings    backupSettingsImporter
+	Audit       *AuditUsecase
+	Source      BackupSource
+	// SelfIngressHosts — свои authority (§32.2): узел, чей target_url ведёт на
+	// вход самой ноды, восстанавливается выключенным.
+	SelfIngressHosts []string
+	// NodesHardLimit — потолок узлов на команду (§3.3); 0 — без потолка.
+	NodesHardLimit int
+	Logger         logging.Logger
 }
 
 // BackupUsecase — резервная копия конфигурации (§110): выгрузка в файл,
 // зашифрованный паролем, и восстановление на чистом экземпляре.
 type BackupUsecase struct {
-	snapshots port.BackupSnapshotReader
-	target    port.BackupTargetInspector
-	audit     *AuditUsecase
-	source    BackupSource
-	logger    logging.Logger
+	snapshots        port.BackupSnapshotReader
+	target           port.BackupTargetInspector
+	restorer         port.BackupRestorer
+	chInspector      port.CHDatabaseInspector
+	settings         backupSettingsImporter
+	audit            *AuditUsecase
+	source           BackupSource
+	selfIngressHosts []string
+	nodesHardLimit   int
+	logger           logging.Logger
 
 	kdf   backupfile.KDFParams
 	clock clock.Clock
@@ -65,14 +86,19 @@ func WithBackupClock(c clock.Clock) BackupOption {
 
 func NewBackupUsecase(d BackupDeps, opts ...BackupOption) *BackupUsecase {
 	u := &BackupUsecase{
-		snapshots: d.Snapshots,
-		target:    d.Target,
-		audit:     d.Audit,
-		source:    d.Source,
-		logger:    d.Logger,
-		kdf:       backupfile.DefaultKDF(),
-		clock:     clock.System(),
-		heavy:     make(chan struct{}, 1),
+		snapshots:        d.Snapshots,
+		target:           d.Target,
+		restorer:         d.Restorer,
+		chInspector:      d.CHInspector,
+		settings:         d.Settings,
+		audit:            d.Audit,
+		source:           d.Source,
+		selfIngressHosts: d.SelfIngressHosts,
+		nodesHardLimit:   d.NodesHardLimit,
+		logger:           d.Logger,
+		kdf:              backupfile.DefaultKDF(),
+		clock:            clock.System(),
+		heavy:            make(chan struct{}, 1),
 	}
 	for _, o := range opts {
 		o(u)

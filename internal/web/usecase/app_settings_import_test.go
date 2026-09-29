@@ -19,10 +19,12 @@ func TestAppSettings_PrepareImport(t *testing.T) {
 
 	const bodyCap = 10 << 20
 	tests := []struct {
-		name        string
-		patch       func() *domain.AppSettings
-		wantSkipped []string
-		check       func(t *testing.T, merged *domain.AppSettings, sections []string)
+		name  string
+		patch func() *domain.AppSettings
+		// allowOverride — нода разрешает version_override (§34.3, стенд).
+		allowOverride bool
+		wantSkipped   []string
+		check         func(t *testing.T, merged *domain.AppSettings, sections []string)
 	}{
 		{
 			name: "всё валидно — переносится целиком, clickhouse отброшен",
@@ -54,11 +56,11 @@ func TestAppSettings_PrepareImport(t *testing.T) {
 			},
 		},
 		{
-			name: "version_override на боевой ноде — сброшен",
+			name: "version_override не переносится даже там, где разрешён",
 			patch: func() *domain.AppSettings {
 				return &domain.AppSettings{General: domain.GeneralSettings{VersionOverride: new("v9")}}
 			},
-			wantSkipped: []string{"general.version_override"},
+			allowOverride: true,
 			check: func(t *testing.T, merged *domain.AppSettings, sections []string) {
 				assert.Nil(t, merged.General.VersionOverride)
 				assert.Empty(t, sections)
@@ -82,7 +84,7 @@ func TestAppSettings_PrepareImport(t *testing.T) {
 			t.Parallel()
 			repo := &fakeAppSettingsRepo{current: &domain.AppSettings{}}
 			uc := NewAppSettingsUsecase(repo, NewAuditUsecase(&fakeAuditRepo{}, logging.NewNoop()),
-				nil, false, bodyCap, bodyCap, logging.NewNoop())
+				nil, tt.allowOverride, bodyCap, bodyCap, logging.NewNoop())
 
 			merged, sections, skipped, err := uc.PrepareImport(context.Background(), tt.patch())
 			require.NoError(t, err)
