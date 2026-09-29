@@ -31,6 +31,13 @@ export function isNotFound(error: unknown): boolean {
   return (error as { response?: { status?: number } })?.response?.status === 404;
 }
 
+// attachmentName — имя файла из Content-Disposition: attachment; filename="…".
+export function attachmentName(header: unknown): string | undefined {
+  if (typeof header !== "string") return undefined;
+  const m = /filename="?([^";]+)"?/i.exec(header);
+  return m?.[1];
+}
+
 export const api = {
   // opts.signal — настоящая отмена HTTP-запроса (§77.3): react-query передаёт
   // AbortSignal в queryFn, и без проброса в axios отмена оставалась бы чисто
@@ -49,13 +56,41 @@ export const api = {
   // теми же параметрами, что у соответствующего GET (§85: фильтр журнала
   // разбирает общий с ним logQueryFromContext), а в теле лежит только состояние
   // операции. opts.signal — настоящая отмена (кнопка «Остановить» цикла батчей).
+  // opts.timeout — свой потолок вместо общих 30 с: восстановление §110 создаёт
+  // сотни таблиц ClickHouse, и обрыв по таймауту клиента показал бы ошибку
+  // там, где сервер ещё работает.
   async post<T>(
     url: string,
     body?: unknown,
-    opts?: { params?: Record<string, unknown>; signal?: AbortSignal },
+    opts?: { params?: Record<string, unknown>; signal?: AbortSignal; timeout?: number },
   ): Promise<T> {
-    const r = await axiosInstance.post<T>(url, body, { params: opts?.params, signal: opts?.signal });
+    const r = await axiosInstance.post<T>(url, body, {
+      params: opts?.params,
+      signal: opts?.signal,
+      timeout: opts?.timeout,
+    });
     return r.data;
+  },
+  // postBlob — POST с файлом в ответе (§110: выгрузка резервной копии).
+  // Пароль уходит телом, поэтому обычная ссылка не годится. С responseType
+  // "blob" axios и ошибку отдаёт blob'ом — разбираем её обратно в JSON, чтобы
+  // вызывающий читал response.data.error/code как у остальных запросов.
+  async postBlob(url: string, body?: unknown): Promise<{ blob: Blob; filename?: string }> {
+    try {
+      const r = await axiosInstance.post<Blob>(url, body, { responseType: "blob" });
+      return { blob: r.data, filename: attachmentName(r.headers["content-disposition"]) };
+    } catch (e) {
+      const res = (e as { response?: { data?: unknown } }).response;
+      if (res?.data instanceof Blob) {
+        try {
+          res.data = JSON.parse(await res.data.text());
+        } catch {
+          // Не JSON (обрыв прокси, HTML-страница ошибки) — оставляем как есть,
+          // вызывающий покажет общую ошибку.
+        }
+      }
+      throw e;
+    }
   },
   async put<T>(url: string, body?: unknown): Promise<T> {
     const r = await axiosInstance.put<T>(url, body);
