@@ -191,6 +191,10 @@ var translations = map[Lang]map[string]string{
 		"instance.comment_length":     "comment must be at most 255 characters",
 		"instance.status_invalid":     "invalid instance status",
 		"instance.probe_rate_limited": "too many instance checks, try again in a minute",
+		// configuration backup (§110)
+		"backup.passphrase_required":  "enter the backup file password",
+		"backup.passphrase_too_short": "the backup file password must be at least %d characters long",
+		"backup.snapshot_invalid":     "the configuration did not pass the restore check, the file was not created — see the Web service log",
 		// request fields catalog (§41)
 		"request_field.not_found":          "request field not found",
 		"request_field.already_exists":     "a request field with this name already exists",
@@ -353,6 +357,10 @@ var translations = map[Lang]map[string]string{
 		"instance.comment_length":     "комментарий должен быть не длиннее 255 символов",
 		"instance.status_invalid":     "недопустимый статус инстанса",
 		"instance.probe_rate_limited": "слишком много проверок инстансов, повторите через минуту",
+		// резервная копия конфигурации (§110)
+		"backup.passphrase_required":  "укажите пароль файла резервной копии",
+		"backup.passphrase_too_short": "пароль файла резервной копии должен быть не короче %d символов",
+		"backup.snapshot_invalid":     "конфигурация не прошла проверку восстановления, файл не создан — подробности в журнале Web Service",
 		// request fields catalog (§41)
 		"request_field.not_found":          "поле запроса не найдено",
 		"request_field.already_exists":     "поле запроса с таким именем уже существует",

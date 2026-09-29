@@ -27,6 +27,35 @@ definitions:
       count:
         type: integer
     type: object
+  internal_web_adapter_in_http.BackupStatusResponse:
+    properties:
+      api_tokens:
+        type: integer
+      clean:
+        description: |-
+          Clean — чистый экземпляр (нет узлов, команд сверх сидированной):
+          единственное состояние, в котором доступно восстановление.
+        type: boolean
+      clickhouse_available:
+        type: boolean
+      instance_id:
+        type: string
+      min_passphrase_len:
+        description: |-
+          MinPassphraseLen — нижняя граница пароля файла, чтобы форма не держала
+          своё число.
+        type: integer
+      nexus_version:
+        type: string
+      nodes:
+        type: integer
+      schema_version:
+        type: integer
+      teams:
+        type: integer
+      users:
+        type: integer
+    type: object
   internal_web_adapter_in_http.CHTableVerifyRequest:
     properties:
       table:
@@ -1833,6 +1862,14 @@ definitions:
         type: integer
       until_ms:
         type: integer
+    type: object
+  internal_web_adapter_in_http.exportRequest:
+    properties:
+      passphrase:
+        maxLength: 1024
+        type: string
+    required:
+    - passphrase
     type: object
   internal_web_adapter_in_http.headerRequest:
     properties:
@@ -4201,6 +4238,62 @@ paths:
       summary: Проверить ссылку для смены пароля (§88.4.6).
       tags:
       - auth
+  /api/backup/export:
+    post:
+      consumes:
+      - application/json
+      description: Команды, узлы с кредами, пользователи, справочники, шаблоны ClickHouse,
+        маски и глобальные настройки — одним файлом, зашифрованным паролем (Argon2id
+        + AES-256-GCM). Логи обмена и журнал аудита не выгружаются. Admin-only, только
+        session-cookie.
+      parameters:
+      - description: Пароль файла
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.exportRequest'
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "400":
+          description: пароль короче допустимого
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Выгрузить конфигурацию в файл (§110).
+      tags:
+      - backup
+  /api/backup/status:
+    get:
+      description: 'Счётчики конфигурации для карточки выгрузки и признаки, от которых
+        зависит доступность восстановления: чистый экземпляр и подключённый ClickHouse.
+        Admin-only, только session-cookie.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.BackupStatusResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Состояние резервной копии (§110).
+      tags:
+      - backup
   /api/ch-tables/verify:
     post:
       consumes:

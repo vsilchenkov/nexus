@@ -23,10 +23,14 @@ type BackupSnapshotReader interface {
 	ReadSnapshot(ctx context.Context) (*backup.Snapshot, error)
 }
 
-// BackupTargetState — сводка экземпляра для гейта восстановления.
+// BackupTargetState — сводка экземпляра для гейта восстановления и карточки
+// выгрузки.
 type BackupTargetState struct {
 	Nodes int
 	Teams int
+	Users int
+	// APITokens — только не отозванные: отозванные в файл не попадают.
+	APITokens int
 	// Fresh — признак чистого экземпляра (pg.FreshInstanceSQL).
 	Fresh bool
 }

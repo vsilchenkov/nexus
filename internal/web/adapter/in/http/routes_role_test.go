@@ -70,6 +70,7 @@ func newRoleEngine(role domain.UserRole, viaToken bool) *gin.Engine {
 		Kafka:         &KafkaHandler{},
 		Team:          &TeamHandler{},
 		AuditRevert:   &AuditRevertHandler{},
+		Backup:        &BackupHandler{},
 	}
 	RegisterAPI(r, h, mw)
 	return r
@@ -272,6 +273,48 @@ func TestAuditRevertRoutes_APITokenForbidden(t *testing.T) {
 	r := newRoleEngine(domain.UserRoleAdmin, true)
 	for _, rt := range auditRevertRoutes {
 		t.Run(rt.method, func(t *testing.T) {
+			assert.Equal(t, http.StatusForbidden, roleStatus(r, rt.method, rt.path))
+		})
+	}
+}
+
+// backupRoutes — резервная копия конфигурации (§110).
+var backupRoutes = []struct{ method, path string }{
+	{http.MethodGet, "/api/backup/status"},
+	{http.MethodPost, "/api/backup/export"},
+}
+
+// TestBackupRoutes_AdminOnly: файл несёт креды всех узлов и хеши паролей —
+// ни одна роль ниже admin его не получает. ≠404 — маршрут зарегистрирован.
+func TestBackupRoutes_AdminOnly(t *testing.T) {
+	t.Parallel()
+	for _, role := range []domain.UserRole{
+		domain.UserRoleViewer, domain.UserRoleOperator, domain.UserRoleManager,
+	} {
+		r := roleEngine(role)
+		for _, rt := range backupRoutes {
+			t.Run(string(role)+" "+rt.path, func(t *testing.T) {
+				assert.Equal(t, http.StatusForbidden, roleStatus(r, rt.method, rt.path))
+			})
+		}
+	}
+	r := roleEngine(domain.UserRoleAdmin)
+	for _, rt := range backupRoutes {
+		t.Run("admin "+rt.path, func(t *testing.T) {
+			code := roleStatus(r, rt.method, rt.path)
+			assert.NotEqual(t, http.StatusForbidden, code)
+			assert.NotEqual(t, http.StatusNotFound, code, "маршрут %s %s не зарегистрирован", rt.method, rt.path)
+		})
+	}
+}
+
+// TestBackupRoutes_APITokenForbidden: даже токен администратора не выгружает
+// конфигурацию — только браузерная сессия.
+func TestBackupRoutes_APITokenForbidden(t *testing.T) {
+	t.Parallel()
+	r := newRoleEngine(domain.UserRoleAdmin, true)
+	for _, rt := range backupRoutes {
+		t.Run(rt.path, func(t *testing.T) {
 			assert.Equal(t, http.StatusForbidden, roleStatus(r, rt.method, rt.path))
 		})
 	}

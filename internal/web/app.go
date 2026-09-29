@@ -105,6 +105,9 @@ type App struct {
 	// identity — §70: идентификатор ноды и признаки первого запуска. Определяет
 	// имена БД ClickHouse новых команд и поведение гейта владения при старте.
 	identity bootstrap.Identity
+	// schema — §74.3: версия схемы после старта. Пишется в заголовок файла
+	// резервной копии (§110): восстановление на ноде со старой схемой отказывает.
+	schema bootstrap.SchemaState
 }
 
 func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdriver.Conn, cipher *crypto.Cipher, otelShutdown otelpf.ShutdownFunc, identity bootstrap.Identity, schema bootstrap.SchemaState, logger logging.Logger, logCtl *bootstrap.LogController) *App {
@@ -123,6 +126,7 @@ func New(cfg *config.Config, pg *pgxpool.Pool, redis *goredis.Client, ch chdrive
 		otelShutdown: otelShutdown,
 		logCtl:       logCtl,
 		identity:     identity,
+		schema:       schema,
 	}
 }
 
@@ -591,6 +595,23 @@ func (a *App) Start(ctx context.Context) error {
 			auditUC, a.logger),
 		rl, a.cfg.Web.InstanceProbeRateLimitPerMin, a.logger)
 
+	// §110: резервная копия конфигурации. Выгрузке нужен только PostgreSQL;
+	// признак ClickHouse — для карточки восстановления (без него импорт не
+	// создаст базы и таблицы команд).
+	backupRepo := pgrepo.NewBackupRepoPg(a.pg, a.cipher, a.logger)
+	backupHandler := httpadapter.NewBackupHandler(usecase.NewBackupUsecase(usecase.BackupDeps{
+		Snapshots: backupRepo,
+		Target:    backupRepo,
+		Audit:     auditUC,
+		Source: usecase.BackupSource{
+			NexusVersion:  a.cfg.Build.Version,
+			SchemaVersion: a.schema.Version,
+			InstanceID:    a.identity.ID,
+			CHAvailable:   a.ch != nil,
+		},
+		Logger: a.logger,
+	}), a.logger)
+
 	// Prometheus query-клиент для метрик панели (§21). Опционален: при пустом
 	// prometheus.url остаётся nil — MetricsUsecase деградирует
 	// (prometheus_available=false), не падает.
@@ -842,6 +863,7 @@ func (a *App) Start(ctx context.Context) error {
 		LogMask:       logMaskHandler,
 		RMQTest:       rmqTestHandler,
 		Instances:     peerInstanceHandler,
+		Backup:        backupHandler,
 		Breaker:       breakerHandler,
 		NodeRuntime:   nodeRuntimeHandler,
 		Kafka:         kafkaHandler,

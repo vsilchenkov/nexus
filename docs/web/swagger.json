@@ -937,6 +937,88 @@
                 }
             }
         },
+        "/api/backup/export": {
+            "post": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Команды, узлы с кредами, пользователи, справочники, шаблоны ClickHouse, маски и глобальные настройки — одним файлом, зашифрованным паролем (Argon2id + AES-256-GCM). Логи обмена и журнал аудита не выгружаются. Admin-only, только session-cookie.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "backup"
+                ],
+                "summary": "Выгрузить конфигурацию в файл (§110).",
+                "parameters": [
+                    {
+                        "description": "Пароль файла",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.exportRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "пароль короче допустимого",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/backup/status": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Счётчики конфигурации для карточки выгрузки и признаки, от которых зависит доступность восстановления: чистый экземпляр и подключённый ClickHouse. Admin-only, только session-cookie.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "backup"
+                ],
+                "summary": "Состояние резервной копии (§110).",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.BackupStatusResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/ch-tables/verify": {
             "post": {
                 "security": [
@@ -7514,6 +7596,43 @@
                 }
             }
         },
+        "internal_web_adapter_in_http.BackupStatusResponse": {
+            "type": "object",
+            "properties": {
+                "api_tokens": {
+                    "type": "integer"
+                },
+                "clean": {
+                    "description": "Clean — чистый экземпляр (нет узлов, команд сверх сидированной):\nединственное состояние, в котором доступно восстановление.",
+                    "type": "boolean"
+                },
+                "clickhouse_available": {
+                    "type": "boolean"
+                },
+                "instance_id": {
+                    "type": "string"
+                },
+                "min_passphrase_len": {
+                    "description": "MinPassphraseLen — нижняя граница пароля файла, чтобы форма не держала\nсвоё число.",
+                    "type": "integer"
+                },
+                "nexus_version": {
+                    "type": "string"
+                },
+                "nodes": {
+                    "type": "integer"
+                },
+                "schema_version": {
+                    "type": "integer"
+                },
+                "teams": {
+                    "type": "integer"
+                },
+                "users": {
+                    "type": "integer"
+                }
+            }
+        },
         "internal_web_adapter_in_http.CHTableVerifyRequest": {
             "type": "object",
             "required": [
@@ -9937,6 +10056,18 @@
                 },
                 "until_ms": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.exportRequest": {
+            "type": "object",
+            "required": [
+                "passphrase"
+            ],
+            "properties": {
+                "passphrase": {
+                    "type": "string",
+                    "maxLength": 1024
                 }
             }
         },
