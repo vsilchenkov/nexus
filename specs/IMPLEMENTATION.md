@@ -6967,3 +6967,24 @@ DEPLOYMENT §5.4.2.
   превращает всё неразбираемое, включая пустую строку, в unspecified; проверка `ClientIP == ""` в
   `absorbClient` стала мёртвой и удалена. Для образца это и нужно: `rejected_samples.client_ip` —
   `INET NOT NULL`, пустая строка уронила бы пачку.
+
+### 4.95 §110 — резервная копия конфигурации: экспорт и импорт
+
+Раздел [110-config-backup.md](sections/110-config-backup.md). Ветка `feature/config-backup`.
+Статус ◐ — в работе. Миграций нет, выкат только Web.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §110 + подготовительные рефакторинги | ✅ Phase 110.0 | [sections/110-config-backup.md](sections/110-config-backup.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md), отметка в [16-out-of-scope.md](sections/16-out-of-scope.md); предикат «чистой ноды» `pg.FreshInstanceSQL` ([platform/pg/fresh.go](../internal/platform/pg/fresh.go), им же пользуется `isFreshPG` в [bootstrap/instance.go](../internal/platform/bootstrap/instance.go)); `NodeRepoPg.InsertPreservingIdentity` + `insert(keepIdentity)`/`identityArgs` ([node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), тест [node_repo_identity_test.go](../internal/web/adapter/out/postgres/node_repo_identity_test.go)); таблица проверок настроек `fieldChecks`, `Prepare`, `PrepareImport`, `PublishSections` ([app_settings_checks.go](../internal/web/usecase/app_settings_checks.go), `Update` в [app_settings.go](../internal/web/usecase/app_settings.go) идёт через `Prepare`; тест [app_settings_import_test.go](../internal/web/usecase/app_settings_import_test.go)); `planTableProvision` ([node_provision_plan.go](../internal/web/usecase/node_provision_plan.go), `provisionTable` в [node.go](../internal/web/usecase/node.go) исполняет план; тест [node_provision_plan_test.go](../internal/web/usecase/node_provision_plan_test.go)); ключ `passphrase` в [sensitive.go](../internal/platform/sensitive/sensitive.go) |
+
+**Неочевидности §110 (пополняется по блокам):**
+
+- **Проверки глобальных настроек — таблицей, а не цепочкой `if`.** У них два потребителя с разной
+  реакцией: форма «Настройки» отклоняет весь патч на первой ошибке, восстановление §110.7
+  сбрасывает только поле с ошибкой и переносит остальное. Список один (`fieldChecks`), иначе
+  импорт записал бы значение, которое форма не даёт сохранить (лимит тела выше потолка конфига
+  цели, §97). Порядок проверок в `Update` сменился (сначала `general`), поэтому при нескольких
+  невалидных полях первой называется другая ошибка — поведение «патч отклонён» прежнее.
+- **`NodeRepoPg.Create` по-прежнему игнорирует `n.ID`.** Вставка с id — отдельный метод вне
+  `port.NodeRepo`: копирование узла §53 и хендлеры рассчитывают, что id выдаёт база, и общий
+  флаг в `Create` сделал бы это молчаливым контрактом.

@@ -347,6 +347,22 @@ func (r *NodeRepoPg) ExternalCHTables(ctx context.Context) (map[string]struct{},
 }
 
 func (r *NodeRepoPg) Create(ctx context.Context, n *domain.Node) error {
+	return r.insert(ctx, n, false)
+}
+
+// InsertPreservingIdentity вставляет узел с id и датами из n (§110,
+// восстановление конфигурации): строки логов в ClickHouse привязаны к узлу по
+// node_id (§61), и узел с новым id не увидел бы собственной истории. Пустые
+// id/даты — те же значения по умолчанию, что у Create. Метод не входит в
+// port.NodeRepo: создание узла из интерфейса обязано получать id от базы.
+func (r *NodeRepoPg) InsertPreservingIdentity(ctx context.Context, n *domain.Node) error {
+	return r.insert(ctx, n, true)
+}
+
+// insert — общая вставка узла. keepIdentity=false игнорирует n.ID и даты
+// (контракт Create: id и created_at/updated_at выдаёт база), true — берёт их
+// из n, подставляя значения по умолчанию только вместо пустых.
+func (r *NodeRepoPg) insert(ctx context.Context, n *domain.Node, keepIdentity bool) error {
 	encAuth, err := r.cipher.Encrypt(n.AuthCredentials)
 	if err != nil {
 		return fmt.Errorf("encrypt auth: %w", err)
@@ -386,7 +402,8 @@ INSERT INTO nodes (
 	created_by, updated_by, external_table,
 	circuit_breaker_threshold, circuit_breaker_cooldown_sec,
 	async_ack_spec, group_id,
-	sse_decline, breaker_ignore_timeouts
+	sse_decline, breaker_ignore_timeouts,
+	id, created_at, updated_at
 ) VALUES (
 	$1, $2,
 	$3, $4, $5, $6,
@@ -407,9 +424,12 @@ INSERT INTO nodes (
 	$49, $50, $51,
 	$52, $53,
 	$54::jsonb, $55,
-	$56, $57
+	$56, $57,
+	COALESCE($58::uuid, uuid_generate_v4()),
+	COALESCE($59::timestamptz, now()), COALESCE($60::timestamptz, now())
 ) RETURNING id, created_at, updated_at`
 
+	id, created, updated := identityArgs(n, keepIdentity)
 	err = r.db.QueryRow(ctx, q,
 		n.Path, string(n.RootMethod),
 		string(n.URLMode), n.TargetURL, n.URLParamName, nullSafe(n.URLAllowedHosts),
@@ -437,6 +457,8 @@ INSERT INTO nodes (
 		nullUUID(n.GroupID),
 		// §107: отказ от SSE-подписки и таймауты вне breaker'а.
 		n.SSEDecline, n.BreakerIgnoreTimeouts,
+		// §110: id и даты — только при восстановлении конфигурации.
+		id, created, updated,
 	).Scan(&n.ID, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
@@ -585,6 +607,25 @@ type rmqValues struct {
 // methodOrDefault страхует от пустого метода при прямой записи через репозиторий
 // (минуя usecase.SetDefaults): колонки incoming_method/outgoing_method —
 // NOT NULL с CHECK IN (...), пустая строка нарушила бы constraint. Пустое = POST.
+// identityArgs — аргументы id/created_at/updated_at вставки узла. nil —
+// «значение по умолчанию базы» (COALESCE в запросе): так ведёт себя Create,
+// и так же восстановление подставляет пустые поля.
+func identityArgs(n *domain.Node, keep bool) (id *string, created, updated *time.Time) {
+	if !keep {
+		return nil, nil, nil
+	}
+	if n.ID != "" {
+		id = &n.ID
+	}
+	if !n.CreatedAt.IsZero() {
+		created = &n.CreatedAt
+	}
+	if !n.UpdatedAt.IsZero() {
+		updated = &n.UpdatedAt
+	}
+	return id, created, updated
+}
+
 func methodOrDefault(m domain.HTTPMethod) string {
 	if m == "" {
 		return string(domain.HTTPMethodPOST)
