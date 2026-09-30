@@ -25,16 +25,18 @@ const pgUndefinedTable = "42P01"
 // маркеру владения его не вычислить: пустой instance.id одинаков у всех нод,
 // существовавших до §70, поэтому маркер `instance_id=”` соседа выглядит своим.
 // Каждого признака по отдельности тоже недостаточно — см. комментарии к полям.
+//
+// Тот же составной признак даёт право переименовать ch_database сидированной
+// команды под суффикс ноды (§111.3). Кто вставил строку instance_identity, в
+// идентичность не входит намеренно: этот факт одноразовый и достаётся первому
+// успевшему процессу (оборванный старт Web, Receiver, Sender, соседняя
+// реплика), а решение обязано давать один и тот же ответ на каждом старте.
 type Identity struct {
 	ID domain.InstanceID
 	// FreshPG — в PostgreSQL нет узлов и нет команд, кроме сидированной. Одного
 	// этого признака мало: у только что развёрнутой ноды узлов нет и на втором
 	// старте, и гейт владения бил бы по её собственной базе.
 	FreshPG bool
-	// Claimed — строку instance_identity создали мы (до нас идентификатор не
-	// заявлял никто). Вместе с FreshPG даёт право один раз переименовать
-	// ch_database сидированной команды под суффикс ноды (§70.5).
-	Claimed bool
 	// CHClaimed — нода уже успешно захватывала свои базы в ClickHouse (флаг
 	// instance_identity.ch_claimed). Одного этого признака тоже мало: при
 	// обновлении ДЕЙСТВУЮЩЕЙ ноды до §70 флага ещё нет, и она отказывалась бы
@@ -109,8 +111,10 @@ func MustInstanceIdentity(
 
 	fresh, err := isFreshPG(ctx, pool)
 	if err != nil {
-		// Не фатально: FreshPG используется только гейтом первого запуска, и
-		// консервативное false лишь снимает лишнюю строгость (§70.5).
+		// Не фатально. Для гейта первого запуска консервативное false лишь
+		// снимает лишнюю строгость (§70.5). Для сверки имён баз (§111.3) оно
+		// означает отказ на сидированном имени — но только на этом старте:
+		// признак перепроверяется на следующем, а причина остаётся в этой строке.
 		logger.Warn("detect fresh postgres failed; assuming an already used instance",
 			logger.Err(err))
 	}
@@ -121,10 +125,11 @@ func MustInstanceIdentity(
 		logger.Any("claimed", id.claimed),
 		logger.Any("fresh_pg", fresh))
 
-	return Identity{ID: want, FreshPG: fresh, Claimed: id.claimed, CHClaimed: id.chClaimed}
+	return Identity{ID: want, FreshPG: fresh, CHClaimed: id.chClaimed}
 }
 
-// claimResult — что лежало в instance_identity и создали ли строку мы.
+// claimResult — что лежало в instance_identity и создали ли строку мы. Признак
+// claimed — только для диагностики (debug-строка): решений на нём нет (§111).
 type claimResult struct {
 	stored    domain.InstanceID
 	claimed   bool

@@ -151,6 +151,33 @@ describe("BackupPanel", () => {
     expect(createURL).toHaveBeenCalled();
   });
 
+  // Кнопка выгрузки молча неактивна при коротком пароле — пользователь видел
+  // только серую приписку к подписи поля и не понимал, почему «не работает».
+  it("короткий пароль выгрузки объяснён строкой под полем", async () => {
+    mockStatus(cleanStatus);
+    render(<BackupPanel />, { wrapper });
+    await screen.findByText("settings.backup.restore.clean");
+
+    const download = screen.getByText("settings.backup.export.download").closest("button")!;
+    const [pass, repeat] = document.querySelectorAll('input[type="password"]');
+    // Пустое поле — не ошибка: строка не должна встречать пользователя красным.
+    expect(screen.queryByText("settings.backup.export.too_short")).not.toBeInTheDocument();
+
+    fireEvent.change(pass, { target: { value: "abc" } });
+    fireEvent.change(repeat, { target: { value: "abc" } });
+    expect(screen.getByText("settings.backup.export.too_short")).toBeInTheDocument();
+    expect(pass).toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("settings.backup.export.mismatch")).not.toBeInTheDocument();
+    expect(download).toBeDisabled();
+
+    // Ровно минимум (12) — строка уходит, кнопка включается.
+    fireEvent.change(pass, { target: { value: "twelve-chars" } });
+    fireEvent.change(repeat, { target: { value: "twelve-chars" } });
+    expect(screen.queryByText("settings.backup.export.too_short")).not.toBeInTheDocument();
+    expect(pass).toHaveAttribute("aria-invalid", "false");
+    expect(download).not.toBeDisabled();
+  });
+
   it("проверка → подтверждение адресом → применение с дайджестом предпросмотра", async () => {
     mockStatus(cleanStatus);
     apiPost.mockImplementation((url: string) =>

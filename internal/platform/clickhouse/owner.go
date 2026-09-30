@@ -475,9 +475,9 @@ func (g *Guard) ensureOne(ctx context.Context, conn driver.Conn, db string, opts
 		return err
 	}
 
-	// ПУСТАЯ БД без маркера — не признак соседа (см. claimIfEmpty).
-	if v == VerdictUnclaimed {
-		adopted, err := g.claimIfEmpty(ctx, conn, db)
+	// БД без данных — не признак соседа (см. claimIfEmpty).
+	if v == VerdictUnclaimed || g.markerBeingWritten(v) {
+		adopted, err := g.claimIfEmpty(ctx, conn, db, v)
 		if err != nil {
 			return err
 		}
@@ -550,26 +550,65 @@ func (g *Guard) firstRunGate(db string, v Verdict, opts EnsureOptions) error {
 //     в БД появляется сама таблица-маркер, поэтому для второй ноды БД уже НЕ
 //     пустая и гейт первого запуска срабатывает. Окно — только одновременный
 //     первый старт; закрывается требованием §70 задать уникальный instance.id.
-func (g *Guard) claimIfEmpty(ctx context.Context, conn driver.Conn, db string) (bool, error) {
-	var cnt uint64
-	if err := conn.QueryRow(ctx,
-		"SELECT count() FROM system.tables WHERE database = ?", db).Scan(&cnt); err != nil {
-		return false, fmt.Errorf("count tables in %s: %w", db, err)
+//
+// Нода С идентификатором (§111.4) считает пустой и БД, в которой есть только
+// таблица-маркер: её ставит соседняя реплика этой же ноды (§93), стартующая
+// одновременно. Между её CREATE DATABASE и INSERT строки маркера проходят
+// десятки миллисекунд, и вторая реплика, попав в это окно, получала отказ гейта
+// первого запуска на собственной базе (verdict=unknown либо unclaimed). Решает
+// в этом случае содержимое маркера — Claim дожидается строки: своя — БД наша,
+// чужая — ErrForeignDatabase; строки так и нет (сосед умер между CREATE и
+// INSERT) — маркер дописывается. У ноды без идентификатора правило прежнее:
+// там маркер соседа неотличим от своего, и расширять окно из пункта выше нельзя.
+func (g *Guard) claimIfEmpty(ctx context.Context, conn driver.Conn, db string, v Verdict) (bool, error) {
+	cnt, err := g.countDataTables(ctx, conn, db)
+	if err != nil {
+		return false, err
 	}
 	if cnt > 0 {
-		g.logger.Debug("unmarked clickhouse database is not empty; first-run gate decides",
+		g.logger.Debug("clickhouse database is not empty; first-run gate decides",
 			g.logger.Str("database", db),
+			g.logger.Str("verdict", v.String()),
 			g.logger.Int("tables", int(cnt)),
 			g.logger.Str("instance", g.instanceID.String()))
 		return false, nil
 	}
-	g.logger.Info("adopting empty unmarked clickhouse database",
-		g.logger.Str("database", db),
-		g.logger.Str("instance", g.instanceID.String()))
+	if v == VerdictUnclaimed {
+		g.logger.Info("adopting empty unmarked clickhouse database",
+			g.logger.Str("database", db),
+			g.logger.Str("instance", g.instanceID.String()))
+	} else {
+		g.logger.Debug("ownership marker is empty; waiting for the replica that is writing it",
+			g.logger.Str("database", db),
+			g.logger.Str("instance", g.instanceID.String()))
+	}
 	if err := g.Claim(ctx, db); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// markerBeingWritten — маркер существует, но строки в нём ещё нет, и нода имеет
+// идентификатор: так выглядит захват БД соседней репликой этой же ноды между
+// CREATE TABLE и INSERT (см. claimIfEmpty). Вердикт Unknown без ошибки — именно
+// пустой маркер: сбой запроса Check возвращает ошибкой.
+func (g *Guard) markerBeingWritten(v Verdict) bool {
+	return v == VerdictUnknown && !g.instanceID.IsZero()
+}
+
+// countDataTables — число таблиц, по которому claimIfEmpty решает, пуста ли БД.
+// Нода с идентификатором таблицу-маркер данными не считает.
+func (g *Guard) countDataTables(ctx context.Context, conn driver.Conn, db string) (uint64, error) {
+	query, args := "SELECT count() FROM system.tables WHERE database = ?", []any{db}
+	if !g.instanceID.IsZero() {
+		query += " AND name != ?"
+		args = append(args, MarkerTable)
+	}
+	var cnt uint64
+	if err := conn.QueryRow(ctx, query, args...).Scan(&cnt); err != nil {
+		return 0, fmt.Errorf("count tables in %s: %w", db, err)
+	}
+	return cnt, nil
 }
 
 // probe выполняет фактические запросы владения (без кеша).
