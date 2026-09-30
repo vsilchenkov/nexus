@@ -27,6 +27,35 @@ definitions:
       count:
         type: integer
     type: object
+  internal_web_adapter_in_http.BackupStatusResponse:
+    properties:
+      api_tokens:
+        type: integer
+      clean:
+        description: |-
+          Clean — чистый экземпляр (нет узлов, команд сверх сидированной):
+          единственное состояние, в котором доступно восстановление.
+        type: boolean
+      clickhouse_available:
+        type: boolean
+      instance_id:
+        type: string
+      min_passphrase_len:
+        description: |-
+          MinPassphraseLen — нижняя граница пароля файла, чтобы форма не держала
+          своё число.
+        type: integer
+      nexus_version:
+        type: string
+      nodes:
+        type: integer
+      schema_version:
+        type: integer
+      teams:
+        type: integer
+      users:
+        type: integer
+    type: object
   internal_web_adapter_in_http.CHTableVerifyRequest:
     properties:
       table:
@@ -1834,6 +1863,14 @@ definitions:
       until_ms:
         type: integer
     type: object
+  internal_web_adapter_in_http.exportRequest:
+    properties:
+      passphrase:
+        maxLength: 1024
+        type: string
+    required:
+    - passphrase
+    type: object
   internal_web_adapter_in_http.headerRequest:
     properties:
       description:
@@ -1896,6 +1933,39 @@ definitions:
         type: string
       usage_count:
         type: integer
+    type: object
+  internal_web_adapter_in_http.importApplyRequest:
+    properties:
+      confirm_host:
+        maxLength: 255
+        type: string
+      file:
+        type: string
+      options:
+        $ref: '#/definitions/nexus_internal_web_usecase.BackupImportOptions'
+      passphrase:
+        maxLength: 1024
+        type: string
+      preview_digest:
+        type: string
+    required:
+    - confirm_host
+    - file
+    - passphrase
+    - preview_digest
+    type: object
+  internal_web_adapter_in_http.importPreviewRequest:
+    properties:
+      file:
+        type: string
+      options:
+        $ref: '#/definitions/nexus_internal_web_usecase.BackupImportOptions'
+      passphrase:
+        maxLength: 1024
+        type: string
+    required:
+    - file
+    - passphrase
     type: object
   internal_web_adapter_in_http.kafkaBrokerHealthDTO:
     properties:
@@ -3306,6 +3376,21 @@ definitions:
       version:
         type: integer
     type: object
+  nexus_internal_platform_backupfile.Header:
+    properties:
+      counts:
+        additionalProperties:
+          type: integer
+        type: object
+      exported_at:
+        type: string
+      nexus_version:
+        type: string
+      schema_version:
+        type: integer
+      source_instance_id:
+        type: string
+    type: object
   nexus_internal_web_usecase.AckPreviewReport:
     properties:
       body:
@@ -3325,6 +3410,140 @@ definitions:
       status:
         type: integer
     type: object
+  nexus_internal_web_usecase.BackupCHDatabasePlan:
+    properties:
+      action:
+        type: string
+      name:
+        type: string
+      ownership:
+        type: string
+      tables:
+        type: integer
+      team:
+        type: string
+    type: object
+  nexus_internal_web_usecase.BackupCHTablesPlan:
+    properties:
+      create:
+        type: integer
+      existing:
+        type: integer
+      external:
+        description: |-
+          External — внешние таблицы §64 (Nexus их не создаёт); ExternalMissing —
+          из них не найденные на сервере.
+        type: integer
+      external_missing:
+        type: integer
+      unmanaged:
+        description: 'Unmanaged — таблицы вне баз команд: не создаются, остаются как
+          есть.'
+        type: integer
+    type: object
+  nexus_internal_web_usecase.BackupEntityPlan:
+    properties:
+      create:
+        type: integer
+      existing:
+        type: integer
+      replace:
+        description: Replace — строки цели, которые заменяются (маски логов).
+        type: integer
+    type: object
+  nexus_internal_web_usecase.BackupImportOptions:
+    properties:
+      adopt_unclaimed:
+        description: AdoptUnclaimed — занять существующие непустые базы без маркера
+          владения.
+        type: boolean
+      status_mode:
+        $ref: '#/definitions/nexus_internal_web_usecase.BackupStatusMode'
+    type: object
+  nexus_internal_web_usecase.BackupImportPreview:
+    properties:
+      blockers:
+        items:
+          $ref: '#/definitions/nexus_internal_web_usecase.BackupIssue'
+        type: array
+      databases:
+        items:
+          $ref: '#/definitions/nexus_internal_web_usecase.BackupCHDatabasePlan'
+        type: array
+      digest:
+        description: |-
+          Digest — sha256 файла и опций: применение сверяет его, чтобы записать
+          ровно показанный план.
+        type: string
+      entities:
+        additionalProperties:
+          $ref: '#/definitions/nexus_internal_web_usecase.BackupEntityPlan'
+        type: object
+      exported_by:
+        type: string
+      header:
+        $ref: '#/definitions/nexus_internal_platform_backupfile.Header'
+      node_statuses:
+        $ref: '#/definitions/nexus_internal_web_usecase.BackupNodeStatusPlan'
+      settings_sections:
+        items:
+          type: string
+        type: array
+      skipped:
+        items:
+          $ref: '#/definitions/nexus_internal_web_usecase.BackupIssue'
+        type: array
+      source_public_url:
+        type: string
+      tables:
+        $ref: '#/definitions/nexus_internal_web_usecase.BackupCHTablesPlan'
+      warnings:
+        items:
+          $ref: '#/definitions/nexus_internal_web_usecase.BackupIssue'
+        type: array
+    type: object
+  nexus_internal_web_usecase.BackupImportResult:
+    properties:
+      databases_claimed:
+        description: DatabasesClaimed — базы, созданные или занятые (без уже своих).
+        type: integer
+      duration_ms:
+        type: integer
+      preview:
+        $ref: '#/definitions/nexus_internal_web_usecase.BackupImportPreview'
+      tables_created:
+        type: integer
+      tables_updated:
+        type: integer
+    type: object
+  nexus_internal_web_usecase.BackupIssue:
+    properties:
+      code:
+        type: string
+      detail:
+        type: string
+      subject:
+        type: string
+    type: object
+  nexus_internal_web_usecase.BackupNodeStatusPlan:
+    properties:
+      disabled:
+        type: integer
+      enabled:
+        type: integer
+      paused:
+        type: integer
+    type: object
+  nexus_internal_web_usecase.BackupStatusMode:
+    enum:
+    - pause_pull
+    - as_file
+    - pause_all
+    type: string
+    x-enum-varnames:
+    - BackupStatusPausePull
+    - BackupStatusAsFile
+    - BackupStatusPauseAll
   nexus_internal_web_usecase.CHTableVerifyResult:
     properties:
       mismatched:
@@ -4201,6 +4420,155 @@ paths:
       summary: Проверить ссылку для смены пароля (§88.4.6).
       tags:
       - auth
+  /api/backup/export:
+    post:
+      consumes:
+      - application/json
+      description: Команды, узлы с кредами, пользователи, справочники, шаблоны ClickHouse,
+        маски и глобальные настройки — одним файлом, зашифрованным паролем (Argon2id
+        + AES-256-GCM). Логи обмена и журнал аудита не выгружаются. Admin-only, только
+        session-cookie.
+      parameters:
+      - description: Пароль файла
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.exportRequest'
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "400":
+          description: пароль короче допустимого
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Выгрузить конфигурацию в файл (§110).
+      tags:
+      - backup
+  /api/backup/import/apply:
+    post:
+      consumes:
+      - application/json
+      description: Пересобирает план и сверяет его с preview_digest (иначе 409), сверяет
+        confirm_host с адресом сервера, создаёт базы и таблицы ClickHouse и одной
+        транзакцией записывает PostgreSQL (под блокировкой teams/nodes с повторной
+        проверкой чистоты). Выполняется до конца даже при закрытии вкладки. Admin-only,
+        только session-cookie.
+      parameters:
+      - description: Файл, пароль, опции, дайджест, адрес
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.importApplyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.BackupImportResult'
+        "400":
+          description: неверный пароль, адрес не совпал
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: не тот предпросмотр, экземпляр не чистый, блокирующие проблемы,
+            импорт уже идёт
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "500":
+          description: сбой ClickHouse или записи
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Восстановить конфигурацию из файла (§110).
+      tags:
+      - backup
+  /api/backup/import/preview:
+    post:
+      consumes:
+      - application/json
+      description: Только на чистом экземпляре (нет узлов и команд, кроме Default)
+        — иначе 409 без расшифровки файла. Расшифровывает файл, сопоставляет его с
+        тем, что есть на экземпляре, опрашивает ClickHouse (базы и таблицы команд)
+        и выполняет всю запись в PostgreSQL с откатом. Ответ — план, предупреждения,
+        блокирующие проблемы и digest для применения. Admin-only, только session-cookie.
+      parameters:
+      - description: Файл, пароль, опции
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_web_adapter_in_http.importPreviewRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/nexus_internal_web_usecase.BackupImportPreview'
+        "400":
+          description: неверный пароль, не файл резервной копии, неверные опции
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "409":
+          description: экземпляр не чистый, ClickHouse не подключён, импорт уже идёт
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "413":
+          description: файл слишком большой
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "422":
+          description: файл новее этой версии или не проходит проверку
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Предпросмотр восстановления конфигурации (§110).
+      tags:
+      - backup
+  /api/backup/status:
+    get:
+      description: 'Счётчики конфигурации для карточки выгрузки и признаки, от которых
+        зависит доступность восстановления: чистый экземпляр и подключённый ClickHouse.
+        Admin-only, только session-cookie.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.BackupStatusResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Состояние резервной копии (§110).
+      tags:
+      - backup
   /api/ch-tables/verify:
     post:
       consumes:

@@ -132,10 +132,16 @@ var errInvalidTableName = errors.New("clickhouse: invalid table name (expected d
 
 // TableExists — есть ли таблица "<db>.<table>" в ClickHouse (system.tables).
 func (p *TeamProvisionerCH) TableExists(ctx context.Context, table string) (bool, error) {
+	return tableExists(ctx, p.conn, table)
+}
+
+// tableExists — общая проверка для провижинера и инспектора восстановления
+// (§110.6).
+func tableExists(ctx context.Context, cp ConnProvider, table string) (bool, error) {
 	if !fullTableNamePattern.MatchString(table) {
 		return false, errInvalidTableName
 	}
-	conn := p.conn.Conn()
+	conn := cp.Conn()
 	if conn == nil {
 		return false, errors.New("clickhouse conn is nil")
 	}

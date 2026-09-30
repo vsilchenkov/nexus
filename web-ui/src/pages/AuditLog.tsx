@@ -170,6 +170,8 @@ export default function AuditLog() {
           <option value="user.password_reset.confirm">user.password_reset.confirm</option>
           <option value="api_token.create">api_token.create</option>
           <option value="api_token.revoke">api_token.revoke</option>
+          <option value="config.export">config.export</option>
+          <option value="config.import">config.import</option>
         </Select>
         {/* Ссылка со стилями кнопки: <Button> внутри <a> — невалидный HTML,
             и вложенная кнопка перехватывает клик у ссылки. */}

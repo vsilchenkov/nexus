@@ -18,6 +18,7 @@ import { HeadersPanel } from "./settings/Headers";
 import { NodeGroupsPanel } from "./settings/NodeGroups";
 import { LogMasksPanel } from "./settings/LogMasks";
 import { InstancesPanel } from "./settings/Instances";
+import { BackupPanel } from "./settings/Backup";
 import { PasswordPanel } from "./settings/Password";
 import { roleAtLeast, type Role } from "../lib/roles";
 
@@ -38,6 +39,8 @@ const tabs: Tab[] = [
   { to: "log-masks", labelKey: "settings.log_masks.title", minRole: "admin" },
   // §73: реестр соседних инстансов Nexus (не «узлов» — это маршруты шины).
   { to: "instances", labelKey: "settings.instances.title", minRole: "admin" },
+  // §110: выгрузка всей конфигурации и восстановление на чистом экземпляре.
+  { to: "backup", labelKey: "settings.backup.title", minRole: "admin" },
   { to: "password", labelKey: "settings.password.title" },
   { to: "language", labelKey: "settings.language.title" },
   { to: "sentry", labelKey: "settings.sentry.title", minRole: "admin" },
@@ -98,6 +101,7 @@ export default function Settings() {
           {isAdmin && <Route path="headers" element={<HeadersPanel />} />}
           {isAdmin && <Route path="log-masks" element={<LogMasksPanel />} />}
           {isAdmin && <Route path="instances" element={<InstancesPanel />} />}
+          {isAdmin && <Route path="backup" element={<BackupPanel />} />}
           <Route path="password" element={<PasswordPanel />} />
           <Route path="language" element={<LanguagePanel />} />
           {isAdmin && <Route path="sentry" element={<SentryPanel />} />}

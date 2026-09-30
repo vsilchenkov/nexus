@@ -24,6 +24,8 @@ func TestIsSensitive(t *testing.T) {
 		// §90.1: DSN Sentry содержит ключ проекта — секрет целиком.
 		{"dsn", "dsn", true},
 		{"sentry_dsn", "sentry_dsn", true},
+		// §110: пароль файла резервной копии — "password" его не накрывает.
+		{"passphrase", "passphrase", true},
 		{"plain node", "node", false},
 		{"plain status", "status", false},
 		{"plain url", "url", false},

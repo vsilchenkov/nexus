@@ -172,45 +172,18 @@ func NewNodeUsecase(
 	}
 }
 
-// provisionTable создаёт таблицу логов узла в ClickHouse (§19.5).
-//
-//   - Имя таблицы пустое — no-op.
-//   - Явно выбран template_id — строгая семантика: рендерим его DDL; при
-//     недоступном templates/provisioner возвращаем ErrCHUnavailable (узел
-//     нельзя создать «вслепую» с несуществующей таблицей).
-//   - template_id пуст, но логирование включено — создаём таблицу из
-//     дефолтного шаблона каталога (§19). Иначе чтение логов/метрик упадёт с
-//     CH code 60 «Unknown table» (узел в PG ссылается на несуществующую
-//     таблицу — баг тестового стенда). Деградация здесь мягкая: при
-//     недоступности CH/каталога узел всё равно создаётся, с предупреждением.
-//   - Логирование выключено и шаблон не выбран — no-op (legacy/ручная таблица).
-//   - external_table — no-op при любых остальных условиях (§64): таблицей
-//     владеет оператор или посторонний сервис-писатель, создавать её (и тем
-//     более по чужому шаблону) Nexus не вправе.
+// provisionTable создаёт таблицу логов узла в ClickHouse (§19.5). Что
+// создавать, решает planTableProvision (общая с восстановлением §110); здесь —
+// исполнение и деградация:
+//   - шаблон узла — строгая семантика: при недоступном templates/provisioner
+//     ErrCHUnavailable (узел нельзя создать «вслепую» с несуществующей таблицей);
+//   - шаблон по умолчанию — мягкая: иначе чтение логов/метрик упадёт с CH code
+//     60 «Unknown table», но при недоступности CH/каталога узел всё равно
+//     создаётся, с предупреждением.
 func (u *NodeUsecase) provisionTable(ctx context.Context, n *domain.Node) error {
-	if n.ClickHouseTable == "" {
-		return nil
-	}
-
-	// Невалидное имя возможно только у узла с выключенным логированием
-	// (Validate гейтит формат по LoggingEnabled — черновик «nexus_x.» из
-	// дефолта формы). Провижинить такое нельзя: CREATE упал бы и завалил
-	// сохранение узла, ради которого логи и выключали.
-	if !domain.IsValidCHTableName(n.ClickHouseTable) {
-		u.logger.Debug("provision skipped: invalid table name (logging disabled draft)",
-			u.logger.Str("path", n.Path), u.logger.Str("table", n.ClickHouseTable))
-		return nil
-	}
-
-	if n.ExternalTable {
-		// §51.9: тихий пропуск управления таблицей должен быть виден на debug —
-		// иначе «почему не создалась таблица» выясняется только чтением кода.
-		u.logger.Debug("provision skipped: external table",
-			u.logger.Str("path", n.Path), u.logger.Str("table", n.ClickHouseTable))
-		return nil
-	}
-
-	if n.ClickHouseTemplateID != "" {
+	plan := planTableProvision(n)
+	switch plan.mode {
+	case tableProvisionTemplate:
 		if u.templates == nil || u.provisioner == nil {
 			return ErrCHUnavailable
 		}
@@ -219,28 +192,38 @@ func (u *NodeUsecase) provisionTable(ctx context.Context, n *domain.Node) error 
 			return err
 		}
 		return u.createTableFromTemplate(ctx, n, tmpl)
-	}
-
-	if !n.LoggingEnabled {
+	case tableProvisionDefault:
+		u.provisionDefaultTable(ctx, n)
+		return nil
+	default:
+		// §51.9: тихий пропуск управления таблицей должен быть виден на debug —
+		// иначе «почему не создалась таблица» выясняется только чтением кода.
+		if plan.skipReason != "" {
+			u.logger.Debug("provision skipped: "+plan.skipReason,
+				u.logger.Str("path", n.Path), u.logger.Str("table", n.ClickHouseTable))
+		}
 		return nil
 	}
+}
+
+// provisionDefaultTable — таблица по шаблону по умолчанию с мягкой
+// деградацией: любой сбой — предупреждение, узел сохраняется без таблицы.
+func (u *NodeUsecase) provisionDefaultTable(ctx context.Context, n *domain.Node) {
 	if u.templates == nil || u.provisioner == nil {
 		u.logger.Warn("logging enabled but CH provisioner unavailable; node table not created",
 			u.logger.Str("path", n.Path), u.logger.Str("table", n.ClickHouseTable))
-		return nil
+		return
 	}
 	tmpl, err := u.templates.GetDefault(ctx)
 	if err != nil {
 		u.logger.Warn("no default CH template; node table not provisioned",
 			u.logger.Str("path", n.Path), u.logger.Str("table", n.ClickHouseTable), u.logger.Err(err))
-		return nil
+		return
 	}
 	if err := u.createTableFromTemplate(ctx, n, tmpl); err != nil {
 		u.logger.Warn("default CH table provisioning failed; node created without table",
 			u.logger.Str("path", n.Path), u.logger.Str("table", n.ClickHouseTable), u.logger.Err(err))
-		return nil
 	}
-	return nil
 }
 
 // createTableFromTemplate рендерит DDL шаблона для таблицы узла и создаёт её

@@ -12,6 +12,7 @@ import (
 	"nexus/internal/domain"
 	"nexus/internal/platform/config"
 	"nexus/internal/platform/logging"
+	pgpf "nexus/internal/platform/pg"
 )
 
 // pgUndefinedTable — SQLSTATE 42P01. Возникает, если сервис стартовал раньше,
@@ -169,12 +170,11 @@ WHERE id = 1`, want.String(), claimedBy(service)); err != nil {
 
 // isFreshPG — в базе нет узлов и нет команд, кроме сидированной миграцией 0008.
 // Это признак «ноду только что подняли»: любая рабочая нода имеет либо узлы,
-// либо созданные оператором команды.
+// либо созданные оператором команды. Тот же предикат (pg.FreshInstanceSQL)
+// гейтит импорт конфигурации §110.
 func isFreshPG(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 	var fresh bool
-	if err := pool.QueryRow(ctx, `
-SELECT (SELECT count(*) FROM nodes) = 0
-   AND (SELECT count(*) FROM teams) <= 1`).Scan(&fresh); err != nil {
+	if err := pool.QueryRow(ctx, pgpf.FreshInstanceSQL).Scan(&fresh); err != nil {
 		return false, fmt.Errorf("count nodes and teams: %w", err)
 	}
 	return fresh, nil
