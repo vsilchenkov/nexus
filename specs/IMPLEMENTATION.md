@@ -7124,3 +7124,16 @@ DEPLOYMENT §5.4.2.
 - **Тексты проблем плана сами подставляют `{{subject}}`/`{{detail}}`**; `detail`, которого перевод
   не использовал (техническая причина), дописывается после тире. Так число таблиц читается внутри
   фразы, а текст ошибки ClickHouse не теряется.
+
+### 4.96 §111 — устойчивый первый старт ноды с `instance.id`
+
+Раздел [111-first-start-rebase.md](sections/111-first-start-rebase.md). Ветка
+`feature/first-start-rebase` (от `feature/config-backup`: правит `CheckCHOwnership` и процедуру
+DEPLOYMENT из §110). Статус ◐ — в работе. Миграций, ключей конфига и правок интерфейса нет, выкат
+только Web.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §111, правка §70.5 | ✅ Phase 111.0 | [sections/111-first-start-rebase.md](sections/111-first-start-rebase.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) (§111 и фраза про ребейз в §70.5), [sections/70-multi-instance-clickhouse.md](sections/70-multi-instance-clickhouse.md) (шаг 1 сверки и абзац «Ребейз сидированной команды») |
+| §111.3–§111.4 правило и сверка до ClickHouse | ⛔ | — |
+| §111.5 DEPLOYMENT без обхода | ⛔ | — |
