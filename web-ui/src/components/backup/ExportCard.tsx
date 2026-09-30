@@ -28,7 +28,12 @@ export function ExportCard({ status }: { status: BackupStatus }) {
   });
 
   const min = status.min_passphrase_len;
-  const tooShort = [...pass].length < min;
+  // Длина — в символах, а не в UTF-16-единицах: так её считает и сервер.
+  const len = [...pass].length;
+  const tooShort = len < min;
+  // Причины неактивной кнопки показываются под своим полем. Пустое поле —
+  // не ошибка: красная строка появляется только после начала ввода.
+  const shortShown = pass !== "" && tooShort;
   const mismatch = repeat !== "" && repeat !== pass;
   const canExport = !tooShort && repeat === pass && !exp.isPending;
 
@@ -55,7 +60,9 @@ export function ExportCard({ status }: { status: BackupStatus }) {
               setPass(e.target.value);
               setSaved(null);
             }}
+            aria-invalid={shortShown}
           />
+          {shortShown && <p className="text-xs text-err">{t("settings.backup.export.too_short", { min, len })}</p>}
         </Field>
         <Field label={t("settings.backup.export.passphrase_repeat")}>
           <Input
@@ -65,9 +72,9 @@ export function ExportCard({ status }: { status: BackupStatus }) {
             onChange={(e) => setRepeat(e.target.value)}
             aria-invalid={mismatch}
           />
+          {mismatch && <p className="text-xs text-err">{t("settings.backup.export.mismatch")}</p>}
         </Field>
       </div>
-      {mismatch && <p className="mt-1.5 text-xs text-err">{t("settings.backup.export.mismatch")}</p>}
 
       <Hint tone="warn" icon={<ShieldAlert className="h-3.5 w-3.5" />} className="mt-3 max-w-xl">
         {t("settings.backup.export.warning")}

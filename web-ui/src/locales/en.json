@@ -1472,6 +1472,7 @@
         "excludes": "Not saved: ClickHouse exchange logs, audit log, sessions, config.yml and .env.",
         "passphrase": "File password",
         "passphrase_hint": "at least {{min}} characters",
+        "too_short": "Password is shorter than {{min}} characters ({{len}} entered)",
         "passphrase_repeat": "Repeat password",
         "mismatch": "Passwords do not match",
         "warning": "The file cannot be restored without the password. It contains credentials of all nodes and user password hashes — keep it off the server and do not send it in the clear.",
