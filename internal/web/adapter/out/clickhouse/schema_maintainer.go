@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"fmt"
 
 	chpf "nexus/internal/platform/clickhouse"
 	"nexus/internal/platform/logging"
@@ -13,8 +14,9 @@ import (
 // §42.10, §67). Нужен восстановлению конфигурации (§110.6): уцелевшая таблица
 // старой версии иначе ломала бы чтение логов до рестарта сервисов.
 //
-// Backfill размеров тел (§109.2) здесь не запускается: он тяжёлый и выполнится
-// в фоне на следующем старте Web; SELECT от него не зависит.
+// Backfill размеров тел (§42.10) здесь не запускается: он тяжёлый и
+// выполнится в фоне на следующем старте Web (§109.2); SELECT от него не
+// зависит.
 type SchemaMaintainerCH struct {
 	conn   ConnProvider
 	logger logging.Logger
@@ -26,16 +28,12 @@ func NewSchemaMaintainer(conn ConnProvider, logger logging.Logger) *SchemaMainta
 	return &SchemaMaintainerCH{conn: conn, logger: logger}
 }
 
-// EnsureColumns — ошибки отдельных ALTER логируются внутри Ensure*: как и на
-// старте, недоведённая таблица — деградация чтения, а не отказ операции.
-func (m *SchemaMaintainerCH) EnsureColumns(ctx context.Context, tables []string) {
-	conn := m.conn.Conn()
-	if conn == nil {
-		m.logger.Warn("ensure ch columns skipped: clickhouse conn is nil", m.logger.Int("tables", len(tables)))
-		return
+// EnsureColumns — в отличие от старта, ошибка любой таблицы возвращается:
+// восстановление, доложившее «таблицы дополнены», не должно оставить узлы с
+// падающим чтением логов.
+func (m *SchemaMaintainerCH) EnsureColumns(ctx context.Context, tables []string) error {
+	if err := chpf.EnsureLogColumns(ctx, m.conn.Conn(), tables, m.logger); err != nil {
+		return fmt.Errorf("ensure log columns: %w", err)
 	}
-	chpf.EnsureNodeIDColumn(ctx, conn, tables, m.logger)
-	chpf.EnsureHTTPMethodColumn(ctx, conn, tables, m.logger)
-	chpf.EnsureClientHostColumn(ctx, conn, tables, m.logger)
-	chpf.EnsureBodySizeColumns(ctx, conn, tables, m.logger)
+	return nil
 }

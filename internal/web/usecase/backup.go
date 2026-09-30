@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"nexus/internal/domain"
@@ -35,6 +36,9 @@ type BackupDeps struct {
 	Snapshots port.BackupSnapshotReader
 	Target    port.BackupTargetInspector
 	Restorer  port.BackupRestorer
+	// Locker — замок восстановления на все реплики; nil — только слот
+	// процесса (тесты).
+	Locker port.BackupRestoreLocker
 	// CHInspector — nil, если ClickHouse не подключён: восстановление тогда
 	// недоступно (Source.CHAvailable=false).
 	CHInspector   port.CHDatabaseInspector
@@ -57,6 +61,7 @@ type BackupUsecase struct {
 	snapshots        port.BackupSnapshotReader
 	target           port.BackupTargetInspector
 	restorer         port.BackupRestorer
+	locker           port.BackupRestoreLocker
 	chInspector      port.CHDatabaseInspector
 	chProvisioner    backupCHProvisioner
 	chSchema         port.CHSchemaMaintainer
@@ -94,6 +99,7 @@ func NewBackupUsecase(d BackupDeps, opts ...BackupOption) *BackupUsecase {
 		snapshots:        d.Snapshots,
 		target:           d.Target,
 		restorer:         d.Restorer,
+		locker:           d.Locker,
 		chInspector:      d.CHInspector,
 		chProvisioner:    d.CHProvisioner,
 		chSchema:         d.CHSchema,
@@ -139,7 +145,7 @@ func (u *BackupUsecase) Status(ctx context.Context) (*BackupStatus, error) {
 }
 
 // acquire занимает слот тяжёлой операции; ждёт, пока освободится, или
-// отказывает по ctx. Возвращает функцию освобождения.
+// отказывает по ctx. Возвращает функцию освобождения. Для выгрузки.
 func (u *BackupUsecase) acquire(ctx context.Context) (func(), error) {
 	select {
 	case u.heavy <- struct{}{}:
@@ -147,4 +153,34 @@ func (u *BackupUsecase) acquire(ctx context.Context) (func(), error) {
 	case <-ctx.Done():
 		return nil, fmt.Errorf("backup: wait for running operation: %w", ctx.Err())
 	}
+}
+
+// acquireRestore — слот для предпросмотра или применения. Не ждёт: второй
+// импорт сразу получает «импорт уже идёт» (§110.5), а не висит до конца
+// первого, чтобы затем упереться в «экземпляр не чистый». Поверх слота
+// процесса — замок на все реплики Web за балансировщиком (§93) на всё время
+// операции: advisory-замок транзакции Restore не покрывает фазу ClickHouse,
+// и две реплики создавали бы базы и таблицы одновременно.
+func (u *BackupUsecase) acquireRestore(ctx context.Context) (func(), error) {
+	select {
+	case u.heavy <- struct{}{}:
+	default:
+		u.logger.Debug("backup import: another backup operation is running in this process")
+		return nil, port.ErrRestoreInProgress
+	}
+	if u.locker == nil {
+		return func() { <-u.heavy }, nil
+	}
+	unlock, err := u.locker.LockRestore(ctx)
+	if err != nil {
+		<-u.heavy
+		if errors.Is(err, port.ErrRestoreInProgress) {
+			u.logger.Debug("backup import: another restore is running on another replica")
+		}
+		return nil, err
+	}
+	return func() {
+		unlock()
+		<-u.heavy
+	}, nil
 }

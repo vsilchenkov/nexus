@@ -44,17 +44,20 @@ type BackupTargetInspector interface {
 // ClickHouse, статусы узлов и сверка с сид-строками уже выполнены usecase'ом;
 // адаптер только пишет — в порядке полей, одной транзакцией.
 type RestoreSet struct {
-	// TeamUpdates — команды цели, совпавшие по слагу (Default): меняются только
-	// название и внешняя ссылка, строка и её id остаются.
+	// TeamUpdates — команды цели, совпавшие по слагу (Default): меняются
+	// название, внешняя ссылка и имя базы ClickHouse (по instance.id цели —
+	// обычно то же, что уже было); строка и её id остаются.
 	TeamUpdates []backup.Team
 	Teams       []backup.Team
 	Users       []backup.User
-	// UserTeams, Favorites, Preferences, APITokens, Headers, RequestFields,
+	// UserTeams, Favorites, Preferences, Headers, RequestFields,
 	// PeerInstances — вставка с пропуском конфликтов (строка уже есть на цели).
 	UserTeams   []backup.UserTeam
 	Favorites   []backup.Favorite
 	Preferences []backup.Preference
-	APITokens   []backup.APIToken
+	// APITokens — обычная вставка: совпавшие с целью по хешу usecase в набор
+	// не кладёт, и конфликт здесь — ошибка, а не штатная ситуация.
+	APITokens []backup.APIToken
 	// CHTemplates — upsert по id: совпавший по имени шаблон цели несёт id цели.
 	// DefaultTemplateID — какой шаблон станет «по умолчанию» (пусто — не менять).
 	CHTemplates       []backup.CHTemplate
@@ -114,8 +117,20 @@ type CHDatabaseInspector interface {
 	TableExists(ctx context.Context, table string) (bool, error)
 }
 
+// BackupRestoreLocker — одна операция восстановления на все реплики Web
+// (§110.5, §93). Замок держится всё время предпросмотра или применения,
+// включая фазу ClickHouse, которую транзакция записи в PostgreSQL не
+// покрывает.
+type BackupRestoreLocker interface {
+	// LockRestore не ждёт: замок занят — ErrRestoreInProgress. release
+	// снимает замок и вызывается ровно один раз.
+	LockRestore(ctx context.Context) (release func(), err error)
+}
+
 // CHSchemaMaintainer доводит уже существующие таблицы логов до текущей схемы
 // (те же ADD COLUMN IF NOT EXISTS, что на старте сервисов, §37/§39/§42.10/§67).
+// В отличие от старта, ошибка любой таблицы возвращается: остальные таблицы
+// при этом всё равно доводятся (операции идемпотентны).
 type CHSchemaMaintainer interface {
-	EnsureColumns(ctx context.Context, tables []string)
+	EnsureColumns(ctx context.Context, tables []string) error
 }

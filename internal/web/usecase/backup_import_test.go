@@ -102,11 +102,15 @@ func (p *fakeCHProvisioner) CreateTable(_ context.Context, table, _ string) erro
 	return nil
 }
 
-// fakeCHSchema — доводка схемы существующих таблиц.
-type fakeCHSchema struct{ ensured []string }
+// fakeCHSchema — доводка схемы существующих таблиц; err — сбой ALTER.
+type fakeCHSchema struct {
+	ensured []string
+	err     error
+}
 
-func (s *fakeCHSchema) EnsureColumns(_ context.Context, tables []string) {
+func (s *fakeCHSchema) EnsureColumns(_ context.Context, tables []string) error {
 	s.ensured = append(s.ensured, tables...)
+	return s.err
 }
 
 func (s passSettings) PrepareImport(_ context.Context, p *domain.AppSettings) (*domain.AppSettings, []string, []SettingsFieldSkip, error) {
@@ -117,8 +121,23 @@ func (s passSettings) PrepareImport(_ context.Context, p *domain.AppSettings) (*
 	return p, []string{"sentry"}, nil, nil
 }
 
+// fakeLocker — замок восстановления на все реплики; busy — занят соседней.
+type fakeLocker struct {
+	busy             bool
+	locked, released int
+}
+
+func (l *fakeLocker) LockRestore(context.Context) (func(), error) {
+	if l.busy {
+		return nil, port.ErrRestoreInProgress
+	}
+	l.locked++
+	return func() { l.released++ }, nil
+}
+
 type importFixture struct {
 	uc        *BackupUsecase
+	locker    *fakeLocker
 	restorer  *fakeRestorer
 	ch        *fakeCHInspector
 	prov      *fakeCHProvisioner
@@ -130,6 +149,7 @@ type importFixture struct {
 func newImportFixture(t *testing.T, tgt *backup.Snapshot, id domain.InstanceID) *importFixture {
 	t.Helper()
 	f := &importFixture{
+		locker:   &fakeLocker{},
 		restorer: &fakeRestorer{},
 		ch:       &fakeCHInspector{dbs: map[string]port.CHDatabaseState{}, tables: map[string]bool{}},
 		target:   &stubTargetInspector{state: port.BackupTargetState{Teams: 1, Fresh: true}},
@@ -140,6 +160,7 @@ func newImportFixture(t *testing.T, tgt *backup.Snapshot, id domain.InstanceID) 
 		Snapshots:        &stubSnapshotReader{snap: tgt},
 		Target:           f.target,
 		Restorer:         f.restorer,
+		Locker:           f.locker,
 		CHInspector:      f.ch,
 		CHProvisioner:    f.prov,
 		CHSchema:         f.schema,
@@ -218,7 +239,7 @@ func sourceSnapshot(t *testing.T) *backup.Snapshot {
 		},
 		NodeGroups: []backup.NodeGroup{{ID: srcGroup, Name: "ERP"}},
 		Hosts:      []backup.Host{{ID: srcHost, Pattern: "API.example.com", Kind: "exact"}},
-		LogMasks:   []backup.LogMask{{ID: "m-src"}},
+		LogMasks:   []backup.LogMask{{ID: "m-src", Pattern: `token=\w+`, Replacement: "token=***"}},
 		PeerInstances: []backup.PeerInstance{
 			{ID: "p1", BaseURL: "https://nexus-msk.example.ru"},
 			{ID: "p2", BaseURL: "https://nexus-new.example.ru"},
@@ -237,6 +258,12 @@ func sealBackup(t *testing.T, s *backup.Snapshot, sourceID string, schema uint) 
 	t.Helper()
 	payload, err := json.Marshal(s)
 	require.NoError(t, err)
+	return sealPayload(t, s, payload, sourceID, schema)
+}
+
+// sealPayload — файл с произвольным содержимым под заголовком снимка s.
+func sealPayload(t *testing.T, s *backup.Snapshot, payload []byte, sourceID string, schema uint) []byte {
+	t.Helper()
 	file, err := backupfile.Seal(backupfile.Header{
 		ExportedAt: time.Date(2026, 9, 29, 17, 30, 0, 0, time.UTC), NexusVersion: "v1.39.0",
 		SchemaVersion: schema, SourceInstanceID: sourceID, Counts: s.Counts(),
@@ -310,22 +337,161 @@ func TestBackupPreview_ReconcilesWithSeeds(t *testing.T) {
 // TestBackupPreview_SameInstanceKeepsDatabaseNames — тот же instance.id:
 // имена баз из файла, включая legacy nexus_<slug>, иначе уцелевшие логи
 // стали бы невидимы.
-func TestBackupPreview_SameInstanceKeepsDatabaseNames(t *testing.T) {
+// TestBackupPreview_SameInstanceReusesDatabases — тот же instance.id:
+// вычисленные имена совпадают с именами исправного источника, уцелевшая база
+// подхватывается вместе с таблицей.
+func TestBackupPreview_SameInstanceReusesDatabases(t *testing.T) {
 	t.Parallel()
 	src := sourceSnapshot(t)
-	src.Teams[1].CHDatabase = "nexus_acme"
-	src.Nodes[2].ClickHouseTable = "nexus_acme.acme"
+	src.Teams[0].CHDatabase = "nexus_kz_default"
+	src.Teams[1].CHDatabase = "nexus_kz_acme"
+	src.Nodes[2].ClickHouseTable = "nexus_kz_acme.acme"
 	f := newImportFixture(t, targetSnapshot(), "kz")
-	f.ch.dbs["nexus_acme"] = port.CHDatabaseState{Ownership: port.CHOwnershipOwned, Tables: 1}
-	f.ch.tables["nexus_acme.acme"] = true
+	f.ch.dbs["nexus_kz_acme"] = port.CHDatabaseState{Ownership: port.CHOwnershipOwned, Tables: 1}
+	f.ch.tables["nexus_kz_acme.acme"] = true
 
 	p, err := f.uc.PreviewImport(context.Background(), Actor{}, previewRequest(sealBackup(t, src, "kz", 43)))
 	require.NoError(t, err)
 	require.Empty(t, p.Blockers)
-	assert.Equal(t, "nexus_acme", f.restorer.last.Teams[0].CHDatabase)
-	assert.Equal(t, "nexus_acme.acme", nodeByID(f.restorer.last, nodeAcme).ClickHouseTable)
+	assert.Equal(t, "nexus_kz_acme", f.restorer.last.Teams[0].CHDatabase)
+	assert.Equal(t, "nexus_kz_acme.acme", nodeByID(f.restorer.last, nodeAcme).ClickHouseTable)
 	assert.Equal(t, 1, p.Tables.Existing, "существующая таблица доводится до схемы, а не создаётся")
-	assert.Contains(t, p.Warnings, BackupIssue{Code: "ch_database_owned", Subject: "nexus_acme", Detail: "1"})
+	assert.Contains(t, p.Warnings, BackupIssue{Code: "ch_database_owned", Subject: "nexus_kz_acme", Detail: "1"})
+	for _, w := range p.Warnings {
+		assert.NotEqual(t, "ch_database_renamed", w.Code, "имена совпали — предупреждать не о чем")
+	}
+}
+
+// TestBackupPreview_SameInstanceRenamesForeignShapedDatabase — при том же
+// instance.id база файла не совпала с вычисленной (источник стартовал без
+// ClickHouse, сидированная nexus_default не переименована). Раньше имя
+// бралось из файла, и первый же рестарт Web падал на гейте владения
+// (rebaseSeededTeamDB требует ровно nexus_<id>_<slug>). Теперь имя — по id
+// цели, оператор получает предупреждение до применения.
+func TestBackupPreview_SameInstanceRenamesForeignShapedDatabase(t *testing.T) {
+	t.Parallel()
+	src := sourceSnapshot(t)
+	src.Teams[0].CHDatabase = "nexus_default"
+	src.Teams[1].CHDatabase = "nexus_acme"
+	src.Nodes[0].ClickHouseTable = "nexus_default.orders"
+	src.Nodes[2].ClickHouseTable = "nexus_acme.acme"
+	f := newImportFixture(t, targetSnapshot(), "kz")
+
+	p, err := f.uc.PreviewImport(context.Background(), Actor{}, previewRequest(sealBackup(t, src, "kz", 43)))
+	require.NoError(t, err)
+	require.Empty(t, p.Blockers)
+	set := f.restorer.last
+	assert.Equal(t, "nexus_kz_default", set.TeamUpdates[0].CHDatabase, "Default цели не уводится со своей базы")
+	assert.Equal(t, "nexus_kz_acme", set.Teams[0].CHDatabase)
+	assert.Equal(t, "nexus_kz_default.orders", nodeByID(set, nodeOrders).ClickHouseTable)
+	assert.Equal(t, "nexus_kz_acme.acme", nodeByID(set, nodeAcme).ClickHouseTable)
+	assert.Contains(t, p.Warnings, BackupIssue{Code: "ch_database_renamed", Subject: "nexus_default", Detail: "nexus_kz_default"})
+	assert.Contains(t, p.Warnings, BackupIssue{Code: "ch_database_renamed", Subject: "nexus_acme", Detail: "nexus_kz_acme"})
+}
+
+// TestBackupPreview_UnknownFieldMeansNewerVersion — поле, которого этот
+// бинарь не знает, при той же схеме PostgreSQL (новый ключ настроек
+// добавляется без миграции). Раньше оно молча терялось.
+func TestBackupPreview_UnknownFieldMeansNewerVersion(t *testing.T) {
+	t.Parallel()
+	src := sourceSnapshot(t)
+	payload, err := json.Marshal(src)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(payload, &raw))
+
+	tests := []struct {
+		name    string
+		mutate  func(m map[string]any)
+		payload []byte
+		wantErr error
+	}{
+		{name: "новое поле верхнего уровня", mutate: func(m map[string]any) { m["webhooks"] = []any{} }, wantErr: ErrBackupSchemaNewer},
+		{name: "новый ключ глобальных настроек", mutate: func(m map[string]any) {
+			m["app_settings"].(map[string]any)["future_section"] = map[string]any{"on": true}
+		}, wantErr: ErrBackupSchemaNewer},
+		{name: "повреждённый снимок", payload: []byte(`{"teams": 5}`), wantErr: backup.ErrInvalidSnapshot},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			body := tt.payload
+			if tt.mutate != nil {
+				var m map[string]any
+				require.NoError(t, json.Unmarshal(payload, &m))
+				tt.mutate(m)
+				var err error
+				body, err = json.Marshal(m)
+				require.NoError(t, err)
+			}
+			f := newImportFixture(t, targetSnapshot(), "kz")
+			_, err := f.uc.PreviewImport(context.Background(), Actor{}, previewRequest(sealPayload(t, src, body, "old", 43)))
+			require.ErrorIs(t, err, tt.wantErr)
+			assert.Nil(t, f.restorer.last, "до записи не дошло")
+		})
+	}
+	require.Contains(t, raw, "app_settings", "фикстура источника несёт глобальные настройки")
+}
+
+// TestBackupPreview_InvalidCatalogRows — строки каталогов проходят ту же
+// доменную проверку, что при создании через интерфейс. Раньше они писались
+// как есть: маска, которую Sender не скомпилирует, молча пропустила бы
+// секрет в лог (§95).
+func TestBackupPreview_InvalidCatalogRows(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		mutate  func(s *backup.Snapshot)
+		blocker string
+		warning string
+	}{
+		{name: "маска не компилируется", mutate: func(s *backup.Snapshot) {
+			s.LogMasks = append(s.LogMasks, backup.LogMask{ID: "m-bad", Pattern: `token=(\w+`})
+		}, blocker: "log_mask_invalid"},
+		{name: "хост не по формату", mutate: func(s *backup.Snapshot) {
+			s.Hosts = append(s.Hosts, backup.Host{ID: "h-bad", Pattern: "bad host", Kind: "exact"})
+		}, blocker: "host_invalid"},
+		{name: "группа с пустым именем", mutate: func(s *backup.Snapshot) {
+			s.NodeGroups = append(s.NodeGroups, backup.NodeGroup{ID: "g-bad", Name: "   "})
+		}, blocker: "node_group_invalid"},
+		{name: "порядок группы переполняет int32", mutate: func(s *backup.Snapshot) {
+			s.NodeGroups = append(s.NodeGroups, backup.NodeGroup{ID: "g-big", Name: "Большая", SortOrder: 1<<32 + 5})
+		}, blocker: "node_group_invalid"},
+		{name: "шаблон ClickHouse не проходит проверку", mutate: func(s *backup.Snapshot) {
+			s.CHTemplates = append(s.CHTemplates, backup.CHTemplate{ID: "tpl-bad", Name: "Bad", Spec: json.RawMessage(`{"engine":"Log"}`)})
+		}, blocker: "template_invalid"},
+		{name: "заголовок не по RFC 7230", mutate: func(s *backup.Snapshot) {
+			s.Headers = append(s.Headers, backup.CatalogEntry{ID: "hd-bad", Name: "X Bad"})
+		}, warning: "catalog_entry_invalid"},
+		{name: "поле запроса не по формату", mutate: func(s *backup.Snapshot) {
+			s.RequestFields = append(s.RequestFields, backup.CatalogEntry{ID: "rf-bad", Name: "1field"})
+		}, warning: "catalog_entry_invalid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			src := sourceSnapshot(t)
+			tt.mutate(src)
+			f := newImportFixture(t, targetSnapshot(), "kz")
+			p, err := f.uc.PreviewImport(context.Background(), Actor{}, previewRequest(sealBackup(t, src, "old", 43)))
+			require.NoError(t, err)
+			if tt.blocker != "" {
+				require.Len(t, p.Blockers, 1)
+				assert.Equal(t, tt.blocker, p.Blockers[0].Code)
+				assert.Nil(t, f.restorer.last, "план с блокировкой не доходит до dry-run")
+				return
+			}
+			require.Empty(t, p.Blockers)
+			var codes []string
+			for _, w := range p.Warnings {
+				codes = append(codes, w.Code)
+			}
+			assert.Contains(t, codes, tt.warning)
+			for _, e := range append(f.restorer.last.Headers, f.restorer.last.RequestFields...) {
+				assert.NotContains(t, []string{"X Bad", "1field"}, e.Name, "строка пропущена")
+			}
+		})
+	}
 }
 
 func TestBackupPreview_StatusModes(t *testing.T) {
@@ -514,4 +680,45 @@ func TestBackupPreview_ExternalAndOutsideTables(t *testing.T) {
 	assert.Equal(t, "ext.orders", nodeByID(f.restorer.last, nodeOrders).ClickHouseTable)
 	assert.Contains(t, p.Warnings, BackupIssue{Code: "external_table_missing", Subject: "ext.orders"})
 	assert.Contains(t, p.Warnings, BackupIssue{Code: "table_outside_team_db", Subject: "acme/acme", Detail: "legacy.acme"})
+}
+
+// TestBackupPreview_OutsideTableInForeignDatabase — таблица узла вне баз
+// команд в базе другой ноды на общем ClickHouse (§70.6): узел выключается,
+// как его отклонила бы проверка владения при сохранении. Раньше он
+// восстанавливался включённым и писал логи в чужую базу.
+func TestBackupPreview_OutsideTableInForeignDatabase(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		state        port.CHDatabaseState
+		wantDisabled bool
+	}{
+		{"чужая база", port.CHDatabaseState{Ownership: port.CHOwnershipForeign, Owner: "msk"}, true},
+		{"конфликт маркера", port.CHDatabaseState{Ownership: port.CHOwnershipConflict}, true},
+		{"база без маркера", port.CHDatabaseState{Ownership: port.CHOwnershipUnclaimed, Tables: 3}, false},
+		{"своя база", port.CHDatabaseState{Ownership: port.CHOwnershipOwned, Tables: 3}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			src := sourceSnapshot(t)
+			src.Nodes[2].ClickHouseTable = "legacy.acme"
+			f := newImportFixture(t, targetSnapshot(), "kz")
+			f.ch.dbs["legacy"] = tt.state
+			req := previewRequest(sealBackup(t, src, "old", 43))
+			req.Options.StatusMode = BackupStatusAsFile
+			p, err := f.uc.PreviewImport(context.Background(), Actor{}, req)
+			require.NoError(t, err)
+			require.Empty(t, p.Blockers, "узел выключается, импорт не блокируется")
+			acme := nodeByID(f.restorer.last, nodeAcme)
+			if !tt.wantDisabled {
+				assert.Equal(t, domain.NodeStatusEnabled, acme.Status)
+				assert.Equal(t, BackupNodeStatusPlan{Enabled: 3}, p.NodeStatuses)
+				return
+			}
+			assert.Equal(t, domain.NodeStatusDisabled, acme.Status)
+			assert.Equal(t, BackupNodeStatusPlan{Enabled: 2, Disabled: 1}, p.NodeStatuses, "счётчики пересчитаны")
+			assert.Contains(t, p.Warnings, BackupIssue{Code: "table_foreign_db", Subject: "legacy.acme", Detail: tt.state.Owner})
+		})
+	}
 }

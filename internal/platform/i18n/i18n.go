@@ -207,7 +207,7 @@ var translations = map[Lang]map[string]string{
 		"backup.unsupported_version":    "unsupported backup file format version",
 		"backup.file_invalid":           "the backup file contents did not pass the check",
 		"backup.confirm_host_mismatch":  "the entered address does not match this server",
-		"backup.digest_mismatch":        "the file or options differ from the preview — check the file again",
+		"backup.digest_mismatch":        "the file, options or restore plan differ from the preview (the server state changed) — check the file again",
 		"backup.import_blocked":         "the restore plan has blocking problems — check the file again",
 		"backup.clickhouse_failed":      "failed to create ClickHouse databases or tables; PostgreSQL was not changed, the restore can be repeated",
 		// request fields catalog (§41)
@@ -388,7 +388,7 @@ var translations = map[Lang]map[string]string{
 		"backup.unsupported_version":    "неподдерживаемая версия формата файла резервной копии",
 		"backup.file_invalid":           "содержимое файла резервной копии не прошло проверку",
 		"backup.confirm_host_mismatch":  "введённый адрес не совпадает с адресом этого сервера",
-		"backup.digest_mismatch":        "файл или параметры отличаются от предпросмотра — проверьте файл заново",
+		"backup.digest_mismatch":        "файл, параметры или план восстановления отличаются от предпросмотра (состояние сервера изменилось) — проверьте файл заново",
 		"backup.import_blocked":         "в плане восстановления есть блокирующие проблемы — проверьте файл заново",
 		"backup.clickhouse_failed":      "не удалось создать базы или таблицы ClickHouse; PostgreSQL не изменён, восстановление можно повторить",
 		// request fields catalog (§41)

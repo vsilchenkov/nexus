@@ -64,14 +64,15 @@ func newBackupUC(reader port.BackupSnapshotReader, target port.BackupTargetInspe
 }
 
 func exportableSnapshot() *backup.Snapshot {
-	base := "https://nexus.example.ru"
+	base, chHost, chPass := "https://nexus.example.ru", "ch.old", "ch-pa55"
 	return &backup.Snapshot{
 		Teams: []backup.Team{{ID: "t1", Slug: "default"}},
 		Users: []backup.User{{ID: "u1", Login: "admin", Role: "admin", DefaultTeamID: "t1"}},
 		Nodes: []backup.Node{{ID: "n1", Path: "a", TeamID: "t1", AuthType: "basic", AuthCredentials: "api:s3cret"}},
-		AppSettings: &domain.AppSettings{General: domain.GeneralSettings{
-			PublicBaseURL: &base,
-		}},
+		AppSettings: &domain.AppSettings{
+			General:    domain.GeneralSettings{PublicBaseURL: &base},
+			ClickHouse: domain.ClickHouseSettings{Host: &chHost, Password: &chPass},
+		},
 	}
 }
 
@@ -99,6 +100,12 @@ func TestBackupExport_SealsSnapshotAndAudits(t *testing.T) {
 	assert.Equal(t, "root", back.ExportedBy)
 	assert.Equal(t, "https://nexus.example.ru", back.SourcePublicURL)
 	assert.Equal(t, "api:s3cret", back.Nodes[0].AuthCredentials)
+	// Подключение к ClickHouse не импортируется: адрес — подсказка для
+	// предпросмотра, пароль в файл не попадает вовсе.
+	require.NotNil(t, back.AppSettings.ClickHouse.Host)
+	assert.Equal(t, "ch.old", *back.AppSettings.ClickHouse.Host)
+	assert.Nil(t, back.AppSettings.ClickHouse.Password)
+	assert.NotContains(t, string(payload), "ch-pa55")
 
 	require.Len(t, audit.entries, 1)
 	e := audit.entries[0]

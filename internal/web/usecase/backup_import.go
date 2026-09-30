@@ -1,6 +1,7 @@
 package usecase
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -123,8 +124,8 @@ type BackupImportPreview struct {
 	SettingsSections []string                    `json:"settings_sections"`
 	Warnings         []BackupIssue               `json:"warnings"`
 	Blockers         []BackupIssue               `json:"blockers"`
-	// Digest — sha256 файла и опций: применение сверяет его, чтобы записать
-	// ровно показанный план.
+	// Digest — sha256 файла, опций и плана (planDigest): применение сверяет
+	// его, чтобы записать ровно показанный план.
 	Digest string `json:"digest"`
 }
 
@@ -148,7 +149,7 @@ type backupImportPlan struct {
 // выполняет всю запись в PostgreSQL с откатом (dry-run): нарушения ограничений
 // видны до применения. ClickHouse только опрашивается.
 func (u *BackupUsecase) PreviewImport(ctx context.Context, actor Actor, req BackupImportRequest) (*BackupImportPreview, error) {
-	release, err := u.acquire(ctx)
+	release, err := u.acquireRestore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -203,8 +204,10 @@ func (u *BackupUsecase) planImport(ctx context.Context, actor Actor, req BackupI
 	if err := b.planClickHouse(ctx); err != nil {
 		return nil, err
 	}
-	b.finish(actor, backupDigest(req.File, req.Options))
-	return b.plan(), nil
+	b.finish(actor)
+	plan := b.plan()
+	plan.preview.Digest = backupDigest(req.File, req.Options, plan)
+	return plan, nil
 }
 
 // checkRestorable — экземпляр чистый и ClickHouse подключён. Проверяется до
@@ -240,20 +243,75 @@ func (u *BackupUsecase) openBackup(file []byte, passphrase string) (*backupfile.
 	if h.SchemaVersion > u.source.SchemaVersion {
 		return nil, nil, fmt.Errorf("%w: file %d, node %d", ErrBackupSchemaNewer, h.SchemaVersion, u.source.SchemaVersion)
 	}
-	var s backup.Snapshot
-	if err := json.Unmarshal(payload, &s); err != nil {
-		return nil, nil, fmt.Errorf("%w: payload: %w", backup.ErrInvalidSnapshot, err)
+	s, err := decodeSnapshot(payload)
+	if err != nil {
+		return nil, nil, err
 	}
 	if err := s.Validate(); err != nil {
 		return nil, nil, err
 	}
-	return h, &s, nil
+	return h, s, nil
 }
 
-// backupDigest — sha256 файла и опций. Опции сериализуются структурой —
-// порядок полей фиксирован.
-func backupDigest(file []byte, opts BackupImportOptions) string {
-	o, _ := json.Marshal(opts) // структура без каналов и функций — ошибки нет
+// decodeSnapshot — строгий разбор: поле, которого этот бинарь не знает,
+// означает файл более новой версии Nexus. Схема PostgreSQL при этом может
+// совпадать (новый ключ глобальных настроек или спецификации подтверждения
+// добавляется без миграции), и нестрогий разбор молча потерял бы его.
+// Второй, нестрогий проход отличает «новое поле» от повреждённого снимка без
+// разбора текста ошибки encoding/json.
+func decodeSnapshot(payload []byte) (*backup.Snapshot, error) {
+	var s backup.Snapshot
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	dec.DisallowUnknownFields()
+	strictErr := dec.Decode(&s)
+	if strictErr == nil {
+		return &s, nil
+	}
+	var lenient backup.Snapshot
+	if err := json.Unmarshal(payload, &lenient); err != nil {
+		return nil, fmt.Errorf("%w: payload: %w", backup.ErrInvalidSnapshot, err)
+	}
+	return nil, fmt.Errorf("%w: %w", ErrBackupSchemaNewer, strictErr)
+}
+
+// planDigest — что закрепляет дайджест помимо файла: опции и весь план, как
+// его видел администратор (заголовок файла уже в байтах файла), плюс решение
+// по каждой таблице. План строится заново по текущему состоянию цели и
+// ClickHouse, поэтому одних файла и опций мало: база, ставшая за это время
+// непустой без маркера, сменила бы «занять пустую» на «занять с таблицами»
+// под той же галочкой, а новые строки цели — счётчики «создать/есть».
+type planDigest struct {
+	Options          BackupImportOptions         `json:"options"`
+	Entities         map[string]BackupEntityPlan `json:"entities"`
+	Skipped          []BackupIssue               `json:"skipped"`
+	Databases        []BackupCHDatabasePlan      `json:"databases"`
+	Tables           BackupCHTablesPlan          `json:"tables"`
+	TableActions     []tableDigest               `json:"table_actions"`
+	NodeStatuses     BackupNodeStatusPlan        `json:"node_statuses"`
+	SettingsSections []string                    `json:"settings_sections"`
+	Warnings         []BackupIssue               `json:"warnings"`
+	Blockers         []BackupIssue               `json:"blockers"`
+}
+
+type tableDigest struct {
+	Table  string `json:"table"`
+	Exists bool   `json:"exists"`
+}
+
+// backupDigest — sha256 файла и плана. Сериализация детерминирована:
+// структуры с фиксированным порядком полей, ключи map сортирует
+// encoding/json, срезы идут в порядке файла и снимка цели.
+func backupDigest(file []byte, opts BackupImportOptions, plan *backupImportPlan) string {
+	p := plan.preview
+	d := planDigest{
+		Options: opts, Entities: p.Entities, Skipped: p.Skipped, Databases: p.Databases,
+		Tables: p.Tables, NodeStatuses: p.NodeStatuses, SettingsSections: p.SettingsSections,
+		Warnings: p.Warnings, Blockers: p.Blockers,
+	}
+	for _, t := range plan.tables {
+		d.TableActions = append(d.TableActions, tableDigest{Table: t.table, Exists: t.exists})
+	}
+	o, _ := json.Marshal(d) // структуры без каналов и функций — ошибки нет
 	h := sha256.New()
 	h.Write(file)
 	h.Write([]byte{0})

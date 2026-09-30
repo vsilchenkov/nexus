@@ -53,12 +53,11 @@ func describeCHSettings(c domain.ClickHouseSettings) string {
 	return out
 }
 
-// finish — заголовок файла, дайджест и запись аудита для транзакции записи.
-func (b *importBuilder) finish(actor Actor, digest string) {
+// finish — заголовок файла и запись аудита для транзакции записи.
+func (b *importBuilder) finish(actor Actor) {
 	b.preview.Header = *b.h
 	b.preview.ExportedBy = b.src.ExportedBy
 	b.preview.SourcePublicURL = b.src.SourcePublicURL
-	b.preview.Digest = digest
 	if b.set.AppSettings != nil {
 		b.set.AppSettings.UpdatedBy = actor.UserID
 	}

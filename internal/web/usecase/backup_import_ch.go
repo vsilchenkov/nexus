@@ -24,7 +24,49 @@ func (b *importBuilder) planClickHouse(ctx context.Context) error {
 		actions[t.db] = d.Action
 		b.databases = append(b.databases, d)
 	}
-	return b.planTables(ctx, actions)
+	if err := b.planTables(ctx, actions); err != nil {
+		return err
+	}
+	b.disableForeignOutsideTables(ctx, actions)
+	return nil
+}
+
+// disableForeignOutsideTables — таблица узла вне баз команд (не создаётся и
+// не переносится) может лежать в базе другой ноды на общем ClickHouse (§70.6).
+// Через интерфейс такой узел отклонила бы проверка владения при сохранении;
+// здесь он восстанавливается выключенным. Как и при сохранении, сбой проверки
+// не мешает (fail-open): таблица вне баз команд — давнее состояние узла.
+func (b *importBuilder) disableForeignOutsideTables(ctx context.Context, teamDBs map[string]string) {
+	owners := map[string]port.CHDatabaseState{}
+	warned := map[string]bool{}
+	for _, n := range b.set.Nodes {
+		if n.ClickHouseTable == "" || n.ExternalTable || n.Status == domain.NodeStatusDisabled {
+			continue
+		}
+		db, _, ok := strings.Cut(n.ClickHouseTable, ".")
+		if _, team := teamDBs[db]; !ok || team {
+			continue
+		}
+		st, seen := owners[db]
+		if !seen {
+			var err error
+			if st, err = b.u.chInspector.InspectDatabase(ctx, db); err != nil {
+				b.u.logger.Debug("backup import: outside table ownership check failed, allowing",
+					b.u.logger.Str("table", n.ClickHouseTable), b.u.logger.Err(err))
+			}
+			owners[db] = st
+		}
+		if st.Ownership != port.CHOwnershipForeign && st.Ownership != port.CHOwnershipConflict {
+			continue
+		}
+		if !warned[n.ClickHouseTable] {
+			warned[n.ClickHouseTable] = true
+			b.warn("table_foreign_db", n.ClickHouseTable, st.Owner)
+		}
+		b.uncountStatus(n.Status)
+		n.Status = domain.NodeStatusDisabled
+		b.countStatus(n.Status)
+	}
 }
 
 // planDatabase — решение по базе команды по маркеру владения §70.
@@ -194,6 +236,12 @@ func toDomainTemplate(t backup.CHTemplate) (*domain.CHTemplate, error) {
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 	if err := json.Unmarshal(t.Spec, &d.Spec); err != nil {
+		return nil, err
+	}
+	// Та же проверка, что при сохранении шаблона: шаблон, который ни один
+	// узел не использует, иначе лёг бы в PostgreSQL без неё и всплыл бы
+	// только при создании узла на нём.
+	if err := d.Validate(); err != nil {
 		return nil, err
 	}
 	return d, nil

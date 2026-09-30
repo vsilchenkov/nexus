@@ -615,6 +615,7 @@ func (a *App) Start(ctx context.Context) error {
 		Snapshots:        backupRepo,
 		Target:           backupRepo,
 		Restorer:         backupRepo,
+		Locker:           backupRepo,
 		CHInspector:      backupInspector,
 		CHProvisioner:    backupProvisioner,
 		CHSchema:         backupCHSchema,
@@ -624,7 +625,7 @@ func (a *App) Start(ctx context.Context) error {
 		Audit:            auditUC,
 		Source: usecase.BackupSource{
 			NexusVersion:  a.cfg.Build.Version,
-			SchemaVersion: a.schema.Version,
+			SchemaVersion: a.schema.KnownVersion(),
 			InstanceID:    a.identity.ID,
 			CHAvailable:   a.ch != nil,
 		},

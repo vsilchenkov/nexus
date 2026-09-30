@@ -604,9 +604,6 @@ type rmqValues struct {
 	port, interval, batch, prefetch any
 }
 
-// methodOrDefault страхует от пустого метода при прямой записи через репозиторий
-// (минуя usecase.SetDefaults): колонки incoming_method/outgoing_method —
-// NOT NULL с CHECK IN (...), пустая строка нарушила бы constraint. Пустое = POST.
 // identityArgs — аргументы id/created_at/updated_at вставки узла. nil —
 // «значение по умолчанию базы» (COALESCE в запросе): так ведёт себя Create,
 // и так же восстановление подставляет пустые поля.
@@ -626,6 +623,9 @@ func identityArgs(n *domain.Node, keep bool) (id *string, created, updated *time
 	return id, created, updated
 }
 
+// methodOrDefault страхует от пустого метода при прямой записи через репозиторий
+// (минуя usecase.SetDefaults): колонки incoming_method/outgoing_method —
+// NOT NULL с CHECK IN (...), пустая строка нарушила бы constraint. Пустое = POST.
 func methodOrDefault(m domain.HTTPMethod) string {
 	if m == "" {
 		return string(domain.HTTPMethodPOST)

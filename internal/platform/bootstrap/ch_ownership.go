@@ -37,21 +37,39 @@ func MustCHOwnership(
 	identity Identity,
 	logger logging.Logger,
 ) {
+	if err := CheckCHOwnership(ctx, pool, chConn, cfg, identity, logger); err != nil {
+		os.Exit(1) // причина уже в логе уровня error
+	}
+}
+
+// CheckCHOwnership — тело [MustCHOwnership] без выхода из процесса: причина
+// отказа логируется здесь же (уровень error, с операцией), ошибка
+// возвращается только как признак. Отдельно — чтобы integration-тест мог
+// пройти настоящий стартовый гейт, например после восстановления
+// конфигурации (§110): восстановленная нода обязана подниматься.
+func CheckCHOwnership(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	chConn chdrv.Conn,
+	cfg *config.Config,
+	identity Identity,
+	logger logging.Logger,
+) error {
 	if chConn == nil {
 		logger.Warn("clickhouse is not available; ownership gate skipped",
 			logger.Str("instance", identity.ID.String()))
-		return
+		return nil
 	}
 
 	if err := rebaseSeededTeamDB(ctx, pool, identity, logger); err != nil {
 		logger.ErrorWithOp("rebase seeded team database failed", err, "bootstrap.MustCHOwnership")
-		os.Exit(1)
+		return err
 	}
 
 	dbs, err := teamDatabases(ctx, pool)
 	if err != nil {
 		logger.ErrorWithOp("list team databases failed", err, "bootstrap.MustCHOwnership")
-		os.Exit(1)
+		return err
 	}
 
 	guard := chpf.NewGuard(staticConnProvider{chConn}, identity.ID, logger)
@@ -63,7 +81,7 @@ func MustCHOwnership(
 		logger.ErrorWithOp("clickhouse ownership check failed: refusing to start", err,
 			"bootstrap.MustCHOwnership",
 			logger.Str("instance", identity.ID.String()))
-		os.Exit(1)
+		return err
 	}
 	// Отмечаем захват: со следующего старта гейт первого запуска не действует —
 	// иначе перезапуск ноды до создания первого узла упирался бы в её же БД.
@@ -71,6 +89,7 @@ func MustCHOwnership(
 	logger.Info("clickhouse ownership confirmed",
 		logger.Str("instance", identity.ID.String()),
 		logger.Int("databases", len(dbs)))
+	return nil
 }
 
 // staticConnProvider — ConnProvider поверх исходного соединения. Manager на этом

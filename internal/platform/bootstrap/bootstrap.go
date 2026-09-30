@@ -352,6 +352,19 @@ type SchemaState struct {
 	// Ahead — схема новее каталога миграций этого бинаря: миграции не
 	// применялись, сервис работает на схеме, которую его код не создавал.
 	Ahead bool
+	// BinaryVersion — максимальная версия каталога миграций этого бинаря.
+	BinaryVersion uint
+}
+
+// KnownVersion — версия схемы, которую понимает код этого бинаря: при Ahead —
+// максимальная из его каталога миграций (колонок новее он не читает и не
+// пишет), иначе версия БД. Нужна там, где версия схемы — обещание о
+// содержимом данных (заголовок резервной копии §110).
+func (s SchemaState) KnownVersion() uint {
+	if s.Ahead && s.BinaryVersion > 0 {
+		return s.BinaryVersion
+	}
+	return s.Version
 }
 
 // AutoMigrate накатывает все непримененные миграции при старте.
@@ -384,5 +397,5 @@ func AutoMigrate(cfg *config.Config, logger logging.Logger) SchemaState {
 			logger.Int("db_version", int(st.DBVersion)),
 			logger.Int("binary_max_version", int(st.MaxLocal)))
 	}
-	return SchemaState{Version: st.DBVersion, Ahead: st.Ahead}
+	return SchemaState{Version: st.DBVersion, Ahead: st.Ahead, BinaryVersion: st.MaxLocal}
 }

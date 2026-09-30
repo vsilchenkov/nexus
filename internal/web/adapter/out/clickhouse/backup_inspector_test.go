@@ -42,8 +42,16 @@ func TestBackupInspector_InspectDatabase(t *testing.T) {
 			port.CHDatabaseState{Ownership: port.CHOwnershipNone}, false},
 		{"сбой проверки владения", stubOwnership{err: errors.New("ch down")},
 			port.CHDatabaseState{Ownership: port.CHOwnershipUnknown}, true},
-		{"чужая база — владелец в ответе, счёт таблиц без соединения падает",
+		// Раньше таблицы считались и здесь: сбой подсчёта превращал «чужая,
+		// владелец msk» в «неизвестно», и оператор видел не ту причину отказа.
+		{"чужая база — владелец в ответе, таблицы не считаются",
 			stubOwnership{verdict: chpf.VerdictForeign, owner: &chpf.Owner{InstanceID: "msk"}},
+			port.CHDatabaseState{Ownership: port.CHOwnershipForeign, Owner: "msk"}, false},
+		{"конфликт маркера — таблицы не считаются", stubOwnership{verdict: chpf.VerdictConflict},
+			port.CHDatabaseState{Ownership: port.CHOwnershipConflict}, false},
+		{"своя база — таблицы считаются, без соединения ошибка", stubOwnership{verdict: chpf.VerdictOwned},
+			port.CHDatabaseState{Ownership: port.CHOwnershipUnknown}, true},
+		{"без маркера — таблицы считаются, без соединения ошибка", stubOwnership{verdict: chpf.VerdictUnclaimed},
 			port.CHDatabaseState{Ownership: port.CHOwnershipUnknown}, true},
 	}
 	for _, tt := range tests {

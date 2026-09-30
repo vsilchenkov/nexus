@@ -3,8 +3,10 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/web/usecase/port"
@@ -16,7 +18,56 @@ import (
 // общая для всех реплик Web на одной базе.
 const backupRestoreLockKey int64 = 0x6e657875_0110
 
-var _ port.BackupRestorer = (*BackupRepoPg)(nil)
+// backupOperationLockKey — ключ сессионного pg_try_advisory_lock на всё время
+// предпросмотра или применения, включая фазу ClickHouse. Отличается от
+// backupRestoreLockKey: транзакция Restore идёт на другом соединении того же
+// процесса, и общий ключ заблокировал бы её собственным же замком.
+const backupOperationLockKey int64 = 0x6e657875_0111
+
+// backupUnlockTimeout — потолок снятия замка: вызывается и после отмены
+// запроса.
+const backupUnlockTimeout = 5 * time.Second
+
+var (
+	_ port.BackupRestorer      = (*BackupRepoPg)(nil)
+	_ port.BackupRestoreLocker = (*BackupRepoPg)(nil)
+)
+
+// LockRestore — сессионный advisory-замок на выделенном соединении пула:
+// соединение держится до release, иначе пул отдал бы сессию с замком
+// другому запросу. Замок занят — port.ErrRestoreInProgress.
+func (r *BackupRepoPg) LockRestore(ctx context.Context) (func(), error) {
+	conn, err := r.pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("backup operation lock: acquire conn: %w", err)
+	}
+	var got bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, backupOperationLockKey).Scan(&got); err != nil {
+		conn.Release()
+		return nil, fmt.Errorf("backup operation lock: %w", err)
+	}
+	if !got {
+		conn.Release()
+		return nil, port.ErrRestoreInProgress
+	}
+	return func() { r.unlockOperation(ctx, conn) }, nil
+}
+
+// unlockOperation снимает замок и возвращает соединение в пул. Не снялся —
+// соединение закрывается, а не возвращается: вместе с сессией уходит и
+// замок, иначе следующий импорт на этой реплике получал бы «уже идёт».
+func (r *BackupRepoPg) unlockOperation(ctx context.Context, conn *pgxpool.Conn) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), backupUnlockTimeout)
+	defer cancel()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, backupOperationLockKey); err != nil {
+		r.logger.Warn("backup operation unlock failed; closing the connection to drop the lock", r.logger.Err(err))
+		// Закрытие завершает сессию на сервере; его ошибка (соединение уже
+		// мертво) ничего не меняет — замок уходит вместе с сессией.
+		_ = conn.Hijack().Close(ctx)
+		return
+	}
+	conn.Release()
+}
 
 // restoreStep — одна группа таблиц восстановления.
 type restoreStep func(ctx context.Context, tx pgx.Tx, set *port.RestoreSet) error

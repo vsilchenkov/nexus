@@ -120,7 +120,7 @@ function Replaced({ preview }: { preview: Preview }) {
   const masks = preview.entities.log_masks;
   const parts: string[] = [];
   if (masks) {
-    parts.push(t("settings.backup.preview.replace_masks", { create: masks.create, replace: masks.replace ?? 0 }));
+    parts.push(t("settings.backup.preview.replace_masks", { create: masks.create, current: masks.replace ?? 0 }));
   }
   if (preview.settings_sections.length > 0) {
     parts.push(t("settings.backup.preview.replace_settings", { sections: preview.settings_sections.join(", ") }));

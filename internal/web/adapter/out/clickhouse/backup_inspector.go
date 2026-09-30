@@ -31,6 +31,9 @@ func NewBackupInspector(conn ConnProvider, owners ownershipChecker, logger loggi
 }
 
 // InspectDatabase — вердикт маркера владения и число таблиц без маркера.
+// Таблицы считаются только там, где число меняет решение (своя база, без
+// маркера): у чужой базы и у конфликта маркера решение одно — отказ, и сбой
+// подсчёта подменил бы вердикт «принадлежит ноде X» на «неизвестно».
 func (i *BackupInspectorCH) InspectDatabase(ctx context.Context, db string) (port.CHDatabaseState, error) {
 	v, owner, err := i.owners.Check(ctx, db)
 	if err != nil {
@@ -40,7 +43,7 @@ func (i *BackupInspectorCH) InspectDatabase(ctx context.Context, db string) (por
 	if v == chpf.VerdictForeign && owner != nil {
 		st.Owner = owner.InstanceID
 	}
-	if v == chpf.VerdictNoDatabase {
+	if v != chpf.VerdictOwned && v != chpf.VerdictUnclaimed {
 		return st, nil
 	}
 	if st.Tables, err = i.countTables(ctx, db); err != nil {

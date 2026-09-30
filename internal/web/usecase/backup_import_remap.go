@@ -21,11 +21,10 @@ type importBuilder struct {
 	set     *port.RestoreSet
 	preview *BackupImportPreview
 
-	// keepDBNames — у источника и цели один instance.id: имена баз команд
-	// берутся из файла как есть. Иначе база команды, созданной до §70
-	// (nexus_<slug> на ноде, получившей идентификатор позже), не совпала бы с
-	// вычисленной, и уцелевшие в ней логи стали бы невидимы.
-	keepDBNames bool
+	// sameInstance — у источника и цели один instance.id. Имена баз от этого
+	// не зависят (всегда вычисляются по id цели), флаг нужен только для
+	// предупреждения о базе файла, которая с вычисленной не сошлась.
+	sameInstance bool
 
 	teamID     map[string]string // id команды в файле → id на цели
 	teamDB     map[string]string // база команды в файле → база на цели
@@ -57,8 +56,8 @@ func newImportBuilder(u *BackupUsecase, h *backupfile.Header, src, tgt *backup.S
 			Skipped:  []BackupIssue{}, Warnings: []BackupIssue{}, Blockers: []BackupIssue{},
 			Databases: []BackupCHDatabasePlan{}, SettingsSections: []string{},
 		},
-		keepDBNames: h.SourceInstanceID == u.source.InstanceID.String(),
-		teamID:      map[string]string{}, teamDB: map[string]string{},
+		sameInstance: h.SourceInstanceID == u.source.InstanceID.String(),
+		teamID:       map[string]string{}, teamDB: map[string]string{},
 		userID: map[string]string{}, templateID: map[string]string{}, groupID: map[string]string{},
 		hostByID: map[string]backup.Host{}, members: map[[2]string]bool{},
 	}
@@ -128,37 +127,52 @@ func (b *importBuilder) remapIdentity() {
 }
 
 // remapTeams — совпавшая по слагу команда (Default) остаётся строкой цели:
-// её id Web кеширует на старте. Меняются название, внешняя ссылка и, при том
-// же instance.id, имя базы.
+// её id Web кеширует на старте. Меняются название и внешняя ссылка.
+//
+// Имя базы команды — всегда instance.id цели + слаг, и при том же
+// идентификаторе тоже: гейт владения на каждом старте Web требует ровно это
+// имя (rebaseSeededTeamDB), и база «как в файле» оставила бы ноду
+// неподнимающейся после первого же рестарта. У исправного источника имена и
+// так совпадают — его собственный Web жил под тем же гейтом.
 func (b *importBuilder) remapTeams() {
 	bySlug := map[string]backup.Team{}
 	for _, t := range b.tgt.Teams {
 		bySlug[t.Slug] = t
 	}
 	for _, t := range b.src.Teams {
+		b.warnRenamedDatabase(t)
 		if cur, ok := bySlug[t.Slug]; ok {
 			cur.Name, cur.ExternalURL = t.Name, t.ExternalURL
-			if b.keepDBNames {
-				cur.CHDatabase = t.CHDatabase
-			}
+			cur.CHDatabase = b.u.source.InstanceID.CHDatabase(t.Slug)
 			b.addTeam(t, cur)
 			b.set.TeamUpdates = append(b.set.TeamUpdates, cur)
 			b.count("teams", 0, 1)
 			continue
 		}
-		if !b.keepDBNames {
-			if err := b.u.source.InstanceID.ValidateTeamSlug(t.Slug); err != nil {
-				b.block("team_slug_too_long", t.Slug, err.Error())
-			}
+		if err := b.u.source.InstanceID.ValidateTeamSlug(t.Slug); err != nil {
+			b.block("team_slug_too_long", t.Slug, err.Error())
 		}
 		nt := t
-		if !b.keepDBNames {
-			nt.CHDatabase = b.u.source.InstanceID.CHDatabase(t.Slug)
-		}
+		nt.CHDatabase = b.u.source.InstanceID.CHDatabase(t.Slug)
 		b.addTeam(t, nt)
 		b.set.Teams = append(b.set.Teams, nt)
 		b.count("teams", 1, 0)
 	}
+}
+
+// warnRenamedDatabase — при том же instance.id база команды в файле не
+// совпала с вычисленной (источник работал без ClickHouse на старте, и
+// сидированная база не была переименована, или имя правили вручную). Логи из
+// старой базы узлы видеть перестанут — оператор должен знать об этом до
+// применения. При другом идентификаторе смена имён ожидаема и не сообщается.
+func (b *importBuilder) warnRenamedDatabase(t backup.Team) {
+	want := b.u.source.InstanceID.CHDatabase(t.Slug)
+	if !b.sameInstance || t.CHDatabase == "" || t.CHDatabase == want {
+		return
+	}
+	b.u.logger.Debug("backup preview: team database renamed for instance",
+		b.u.logger.Str("team", t.Slug), b.u.logger.Str("from", t.CHDatabase), b.u.logger.Str("to", want))
+	b.warn("ch_database_renamed", t.CHDatabase, want)
 }
 
 func (b *importBuilder) addTeam(src, dst backup.Team) {

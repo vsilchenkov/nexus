@@ -42,6 +42,12 @@ func (u *BackupUsecase) Export(ctx context.Context, actor Actor, passphrase stri
 	}
 	s.ExportedBy = actor.UserLogin
 	s.SourcePublicURL = publicBaseURL(s.AppSettings)
+	if s.AppSettings != nil && s.AppSettings.ClickHouse.Password != nil {
+		// Подключение к ClickHouse не импортируется никогда (§110.7): адрес
+		// остаётся подсказкой в предпросмотре, а пароль в файле только
+		// расширял бы ущерб от утечки файла или слабого пароля к нему.
+		s.AppSettings.ClickHouse.Password = nil
+	}
 	if err := s.Validate(); err != nil {
 		return nil, fmt.Errorf("backup export: configuration would not restore: %w", err)
 	}

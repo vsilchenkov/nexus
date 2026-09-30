@@ -21,9 +21,10 @@ const backupApplyTimeout = 10 * time.Minute
 var (
 	// ErrBackupConfirmHost — введённый адрес не совпал с адресом сервера.
 	ErrBackupConfirmHost = errors.New("backup: confirmation host does not match this server")
-	// ErrBackupDigestMismatch — применяется не тот файл или не те опции, что
-	// были в предпросмотре.
-	ErrBackupDigestMismatch = errors.New("backup: file or options differ from the preview")
+	// ErrBackupDigestMismatch — применяется не тот файл, не те опции, или
+	// план, пересобранный по текущему состоянию цели и ClickHouse, уже не тот,
+	// что был показан в предпросмотре.
+	ErrBackupDigestMismatch = errors.New("backup: file, options or plan differ from the preview")
 	// ErrBackupBlocked — план на момент применения содержит блокирующие
 	// проблемы (состояние ClickHouse или цели изменилось после предпросмотра).
 	ErrBackupBlocked = errors.New("backup: import plan has blocking problems")
@@ -69,7 +70,7 @@ func (u *BackupUsecase) ApplyImport(ctx context.Context, actor Actor, req Backup
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), backupApplyTimeout)
 	defer cancel()
-	release, err := u.acquire(ctx)
+	release, err := u.acquireRestore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -135,8 +136,11 @@ func (u *BackupUsecase) provisionClickHouse(ctx context.Context, plan *backupImp
 	}
 	if len(existing) > 0 {
 		// Уцелевшие таблицы доводятся до текущей схемы — иначе чтение логов
-		// падало бы до рестарта сервисов (те же ALTER, что на старте).
-		u.chSchema.EnsureColumns(ctx, existing)
+		// падало бы до рестарта сервисов (те же ALTER, что на старте). Сбой
+		// прерывает импорт до записи в PostgreSQL, как и сбой создания.
+		if err := u.chSchema.EnsureColumns(ctx, existing); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrBackupCHProvision, err)
+		}
 		res.TablesUpdated = len(existing)
 	}
 	u.logger.Debug("backup import: clickhouse provisioned",

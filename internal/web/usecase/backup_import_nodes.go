@@ -128,6 +128,18 @@ func (b *importBuilder) disableIfRejected(n *domain.Node, subject string, ackErr
 	}
 }
 
+// uncountStatus — обратное countStatus: узел, выключенный после подсчёта.
+func (b *importBuilder) uncountStatus(s domain.NodeStatus) {
+	switch s {
+	case domain.NodeStatusEnabled:
+		b.preview.NodeStatuses.Enabled--
+	case domain.NodeStatusPaused:
+		b.preview.NodeStatuses.Paused--
+	default:
+		b.preview.NodeStatuses.Disabled--
+	}
+}
+
 func (b *importBuilder) countStatus(s domain.NodeStatus) {
 	switch s {
 	case domain.NodeStatusEnabled:
