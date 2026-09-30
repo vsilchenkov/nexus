@@ -91,6 +91,33 @@ func TestGuard_EmptyInstanceOwnsEmptyMarker(t *testing.T) {
 	assert.Equal(t, VerdictForeign, g.verdictFor([]Owner{{InstanceID: "kz"}}))
 }
 
+// §111.4: маркер без строки — «захват идёт» только для ноды с идентификатором.
+// У ноды без идентификатора строка соседа читалась бы как своя, поэтому ждать
+// её и принимать за доказательство владения ей нельзя.
+func TestGuard_MarkerBeingWritten(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		id      string
+		verdict Verdict
+		want    bool
+	}{
+		{name: "пустой маркер, нода с идентификатором", id: "kz", verdict: VerdictUnknown, want: true},
+		{name: "пустой маркер, нода без идентификатора", id: "", verdict: VerdictUnknown, want: false},
+		{name: "маркера нет — решает claimIfEmpty по прежнему правилу", id: "kz", verdict: VerdictUnclaimed, want: false},
+		{name: "маркер наш", id: "kz", verdict: VerdictOwned, want: false},
+		{name: "маркер чужой", id: "kz", verdict: VerdictForeign, want: false},
+		{name: "конфликт владения", id: "kz", verdict: VerdictConflict, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, newTestGuard(t, tt.id).markerBeingWritten(tt.verdict))
+		})
+	}
+}
+
 func TestGuard_CacheTTL(t *testing.T) {
 	t.Parallel()
 

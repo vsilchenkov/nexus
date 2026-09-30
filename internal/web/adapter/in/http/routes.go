@@ -41,6 +41,7 @@ type Handlers struct {
 	Breaker       *BreakerHandler
 	NodeRuntime   *NodeRuntimeHandler
 	Rejected      *RejectedHandler // §94: журнал отказов на входе
+	Backup        *BackupHandler   // §110: резервная копия конфигурации
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -459,6 +460,15 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			authedAdmin.POST("/instances/check", RequireSessionOnly(), h.Instances.CheckAll)
 			authedAdmin.POST("/instances/:id/check", RequireSessionOnly(), h.Instances.CheckOne)
 			authedAdmin.POST("/instances/probe", RequireSessionOnly(), h.Instances.Probe)
+		}
+
+		// §110: резервная копия конфигурации. Только session-cookie: файл несёт
+		// креды всех узлов и хеши паролей, а API-токен однокомандный и read-only.
+		if h.Backup != nil {
+			authedAdmin.GET("/backup/status", RequireSessionOnly(), h.Backup.Status)
+			authedAdmin.POST("/backup/export", RequireSessionOnly(), h.Backup.Export)
+			authedAdmin.POST("/backup/import/preview", RequireSessionOnly(), h.Backup.PreviewImport)
+			authedAdmin.POST("/backup/import/apply", RequireSessionOnly(), h.Backup.ApplyImport)
 		}
 
 		// Orphan-таблицы ClickHouse (§7.10 / Phase 6.7). Admin-only.

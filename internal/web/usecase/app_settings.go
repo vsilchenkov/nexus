@@ -97,94 +97,9 @@ func (u *AppSettingsUsecase) Raw(ctx context.Context) (*domain.AppSettings, erro
 // Если в патче DSN/password равны "***" — значение НЕ перезаписывается
 // (оператор отредактировал только не-секретное поле).
 func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *domain.AppSettings) error {
-	if patch == nil {
-		return fmt.Errorf("patch is nil")
-	}
-
-	if err := validateTelegramPatch(patch); err != nil {
-		return err
-	}
-	// §106.4: расписание дозаполнения client_host ("" — выключено).
-	if err := validateClientHostBackfillCron(patch.General.ClientHostBackfillCron); err != nil {
-		return err
-	}
-	if patch.General.PublicBaseURL != nil {
-		if err := domain.ValidatePublicBaseURL(*patch.General.PublicBaseURL); err != nil {
-			return err
-		}
-	}
-	// §44.C: интервал автообновления метрик в допустимом диапазоне.
-	if patch.General.MetricsRefetchMs != nil {
-		if err := domain.ValidateMetricsRefetchMs(*patch.General.MetricsRefetchMs); err != nil {
-			return err
-		}
-	}
-	// §94.5: срок хранения журнала отказов (0 = сбор выключен).
-	if patch.General.RejectedRetentionDays != nil {
-		if err := domain.ValidateRejectedRetentionDays(*patch.General.RejectedRetentionDays); err != nil {
-			return err
-		}
-	}
-	// §97: рабочие лимиты тела — в пределах потолка из конфига.
-	if patch.General.MaxBodyBytes != nil {
-		if err := domain.ValidateMaxBodyBytes(*patch.General.MaxBodyBytes, u.maxBodyBytesCap); err != nil {
-			return err
-		}
-	}
-	if patch.General.MaxAsyncBodyBytes != nil {
-		if err := domain.ValidateMaxAsyncBodyBytes(*patch.General.MaxAsyncBodyBytes, u.maxAsyncBodyBytesCap); err != nil {
-			return err
-		}
-	}
-	// §98.5: глобальная политика защиты узла — те же границы, что у полей узла.
-	if patch.General.CircuitBreakerThreshold != nil {
-		if err := domain.ValidateBreakerThreshold(*patch.General.CircuitBreakerThreshold); err != nil {
-			return err
-		}
-	}
-	if patch.General.CircuitBreakerCooldownSec != nil {
-		if err := domain.ValidateBreakerCooldownSec(*patch.General.CircuitBreakerCooldownSec); err != nil {
-			return err
-		}
-	}
-	// §34.3: override версии разрешён только в dev (web.allow_version_override).
-	if patch.General.VersionOverride != nil && !u.allowVersionOverride {
-		return domain.ErrVersionOverrideForbidden
-	}
-	// §34.2: длительность сессии в допустимом диапазоне.
-	if patch.Security.SessionTTLSeconds != nil {
-		if err := domain.ValidateSessionTTLSeconds(*patch.Security.SessionTTLSeconds); err != nil {
-			return err
-		}
-	}
-	// §51: уровень логирования сервисов в допустимом диапазоне (2..5).
-	if patch.Logging.Level != nil {
-		if err := domain.ValidateLogLevel(*patch.Logging.Level); err != nil {
-			return err
-		}
-	}
-	// §88: заданные поля секции mail — по отдельности.
-	if err := domain.ValidateMailSettings(patch.Mail); err != nil {
-		return err
-	}
-
-	current, err := u.repo.Get(ctx)
+	merged, sections, err := u.Prepare(ctx, patch)
 	if err != nil {
 		return err
-	}
-
-	merged := mergeAppSettings(current, patch)
-	// §88: межполевые правила почты проверяются по СМЕРЖЕННОЙ секции — на
-	// патче их проверить нельзя, там половины значений просто нет (например,
-	// приходит один флаг enabled, а хост уже сохранён ранее).
-	if err := domain.ValidateMailConsistency(merged.Mail); err != nil {
-		return err
-	}
-	// §97: async-лимит не может быть выше sync — по той же причине, что и у
-	// почты, проверяем по СМЕРЖЕННОМУ объекту: патч может нести только одно из
-	// двух полей, а второе уже сохранено ранее.
-	if domain.BodyLimitOrDefault(merged.General.MaxAsyncBodyBytes) > domain.BodyLimitOrDefault(merged.General.MaxBodyBytes) {
-		return domain.ErrAsyncBodyLimitOverSync
 	}
 	merged.UpdatedBy = actor.UserID
 
@@ -192,29 +107,34 @@ func (u *AppSettingsUsecase) Update(ctx context.Context, actor Actor, patch *dom
 		return err
 	}
 
-	sections := changedSections(patch)
 	u.audit.Log(ctx, actor, domain.ActionAppSettingsUpdate, "app_settings", "1", map[string]any{
 		"changed_sections": sections,
 	})
-
-	// Hot-reload: для каждой изменённой секции публикуем событие в Redis.
-	// Подписчики (Receiver/Sender/Web) переинициализируют Sentry и/или CH.
-	if u.publisher != nil {
-		for _, s := range sections {
-			if err := u.publisher.Publish(ctx, reloader.Section(s)); err != nil {
-				u.logger.Warn("reload publish failed",
-					u.logger.Str("section", s),
-					u.logger.Err(err))
-				continue
-			}
-			// §51.9: успешный publish раньше молчал — «настройка сохранилась,
-			// но сервисы не перечитали» было видно только по audit-записи.
-			u.logger.Debug("app_settings: reload published",
-				u.logger.Str("section", s),
-				u.logger.Str("actor", actor.UserID))
-		}
-	}
+	u.PublishSections(ctx, actor.UserID, sections)
 	return nil
+}
+
+// PublishSections — hot-reload: для каждой изменённой секции публикуется
+// событие в Redis, подписчики (Receiver/Sender/Web) перечитывают настройки.
+// Сбой публикации не откатывает запись: значение сохранено и подхватится при
+// рестарте, а WARN показывает, что сервисы его пока не видят.
+func (u *AppSettingsUsecase) PublishSections(ctx context.Context, actorID string, sections []string) {
+	if u.publisher == nil {
+		return
+	}
+	for _, s := range sections {
+		if err := u.publisher.Publish(ctx, reloader.Section(s)); err != nil {
+			u.logger.Warn("reload publish failed",
+				u.logger.Str("section", s),
+				u.logger.Err(err))
+			continue
+		}
+		// §51.9: успешный publish раньше молчал — «настройка сохранилась,
+		// но сервисы не перечитали» было видно только по audit-записи.
+		u.logger.Debug("app_settings: reload published",
+			u.logger.Str("section", s),
+			u.logger.Str("actor", actorID))
+	}
 }
 
 // mergeAppSettings накладывает patch поверх current: nil-поля в patch

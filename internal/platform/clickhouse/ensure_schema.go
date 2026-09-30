@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 
@@ -23,9 +24,7 @@ var ensureTableNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+\.[A-Za-z0-9_]+$`
 // нескольких узлов) альтерятся один раз; ошибка по одной таблице — log+continue,
 // старт не валим. Старые записи остаются с node_id=” (legacy, истекают по TTL).
 func EnsureNodeIDColumn(ctx context.Context, conn driver.Conn, tables []string, logger logging.Logger) {
-	ensureLogColumn(ctx, conn, tables,
-		"ALTER TABLE %s ADD COLUMN IF NOT EXISTS node_id String DEFAULT ''",
-		"ensure node_id column failed", logger)
+	_ = ensureLogColumn(ctx, conn, tables, stmtNodeIDColumn, "ensure node_id column failed", logger) // залогировано по таблицам; старт не валим
 }
 
 // EnsureHTTPMethodColumn (§39) идемпотентно добавляет колонку http_method
@@ -37,9 +36,7 @@ func EnsureNodeIDColumn(ctx context.Context, conn driver.Conn, tables []string, 
 // (RenderCreateTable из RequiredLogColumns). Колонка `method` уже существует —
 // меняется только что в неё пишут (§39: подпуть запроса вместо глагола).
 func EnsureHTTPMethodColumn(ctx context.Context, conn driver.Conn, tables []string, logger logging.Logger) {
-	ensureLogColumn(ctx, conn, tables,
-		"ALTER TABLE %s ADD COLUMN IF NOT EXISTS http_method String DEFAULT '' AFTER type",
-		"ensure http_method column failed", logger)
+	_ = ensureLogColumn(ctx, conn, tables, stmtHTTPMethodColumn, "ensure http_method column failed", logger) // залогировано по таблицам; старт не валим
 }
 
 // EnsureClientHostColumn (§67) идемпотентно добавляет колонку client_host
@@ -51,9 +48,7 @@ func EnsureHTTPMethodColumn(ctx context.Context, conn driver.Conn, tables []stri
 // попадают — списки таблиц исключают их на уровне SQL (NOT external_table);
 // их владельцы выполняют этот же ALTER вручную (SQL — в описании релиза).
 func EnsureClientHostColumn(ctx context.Context, conn driver.Conn, tables []string, logger logging.Logger) {
-	ensureLogColumn(ctx, conn, tables,
-		"ALTER TABLE %s ADD COLUMN IF NOT EXISTS client_host String DEFAULT '' AFTER IP",
-		"ensure client_host column failed", logger)
+	_ = ensureLogColumn(ctx, conn, tables, stmtClientHostColumn, "ensure client_host column failed", logger) // залогировано по таблицам; старт не валим
 }
 
 // EnsureBodySizeColumns (§42-доп) идемпотентно добавляет колонки request_size
@@ -65,10 +60,36 @@ func EnsureClientHostColumn(ctx context.Context, conn driver.Conn, tables []stri
 // как в RequiredLogColumns. Исторические строки получают DEFAULT 0 и
 // добиваются BackfillBodySizes.
 func EnsureBodySizeColumns(ctx context.Context, conn driver.Conn, tables []string, logger logging.Logger) {
-	ensureLogColumn(ctx, conn, tables,
-		"ALTER TABLE %s ADD COLUMN IF NOT EXISTS request_size Int64 DEFAULT 0, "+
-			"ADD COLUMN IF NOT EXISTS response_size Int64 DEFAULT 0",
-		"ensure body size columns failed", logger)
+	_ = ensureLogColumn(ctx, conn, tables, stmtBodySizeColumns, "ensure body size columns failed", logger) // залогировано по таблицам; старт не валим
+}
+
+// Колонки текущей схемы логов, которых может не быть в таблице старой версии.
+const (
+	stmtNodeIDColumn     = "ALTER TABLE %s ADD COLUMN IF NOT EXISTS node_id String DEFAULT ''"
+	stmtHTTPMethodColumn = "ALTER TABLE %s ADD COLUMN IF NOT EXISTS http_method String DEFAULT '' AFTER type"
+	stmtClientHostColumn = "ALTER TABLE %s ADD COLUMN IF NOT EXISTS client_host String DEFAULT '' AFTER IP"
+	stmtBodySizeColumns  = "ALTER TABLE %s ADD COLUMN IF NOT EXISTS request_size Int64 DEFAULT 0, " +
+		"ADD COLUMN IF NOT EXISTS response_size Int64 DEFAULT 0"
+)
+
+// ErrNoConn — соединения с ClickHouse нет.
+var ErrNoConn = errors.New("clickhouse: connection is not available")
+
+// EnsureLogColumns — все четыре доводки выше разом, но с ошибкой: для
+// операций, где недоведённая таблица обязана прервать операцию, а не
+// деградировать чтение (восстановление конфигурации §110). Порядок тот же,
+// что на старте. Ошибки отдельных таблиц собираются через errors.Join, каждая
+// с именем таблицы; они же логируются, как на старте.
+func EnsureLogColumns(ctx context.Context, conn driver.Conn, tables []string, logger logging.Logger) error {
+	if conn == nil {
+		return ErrNoConn
+	}
+	return errors.Join(
+		ensureLogColumn(ctx, conn, tables, stmtNodeIDColumn, "ensure node_id column failed", logger),
+		ensureLogColumn(ctx, conn, tables, stmtHTTPMethodColumn, "ensure http_method column failed", logger),
+		ensureLogColumn(ctx, conn, tables, stmtClientHostColumn, "ensure client_host column failed", logger),
+		ensureLogColumn(ctx, conn, tables, stmtBodySizeColumns, "ensure body size columns failed", logger),
+	)
 }
 
 // BackfillBodySizes (§42-доп) разово заполняет request_size/response_size у
@@ -131,19 +152,29 @@ func BackfillBodySizes(ctx context.Context, conn driver.Conn, tables []string, l
 // ensureLogColumn — общий идемпотентный ALTER для добавления колонки в набор
 // лог-таблиц. stmtFmt принимает имя таблицы единственным %s. Дубли таблиц
 // (общие у нескольких узлов) альтерятся один раз; ошибка по одной таблице —
-// log+continue, старт не валим.
-func ensureLogColumn(ctx context.Context, conn driver.Conn, tables []string, stmtFmt, warnMsg string, logger logging.Logger) {
+// log+continue: следующие таблицы доводятся, ошибки возвращаются все разом
+// (стартовые обёртки их отбрасывают, EnsureLogColumns — нет). Имя, не
+// прошедшее проверку, в DDL не попадает и тоже считается ошибкой.
+func ensureLogColumn(ctx context.Context, conn driver.Conn, tables []string, stmtFmt, warnMsg string, logger logging.Logger) error {
 	if conn == nil {
-		return
+		return nil
 	}
+	var errs []error
 	seen := make(map[string]bool, len(tables))
 	for _, t := range tables {
-		if t == "" || seen[t] || !ensureTableNamePattern.MatchString(t) {
+		if t == "" || seen[t] {
 			continue
 		}
 		seen[t] = true
+		if !ensureTableNamePattern.MatchString(t) {
+			logger.Debug("ensure log column: table name rejected", logger.Str("table", t))
+			errs = append(errs, fmt.Errorf("table %q: invalid name", t))
+			continue
+		}
 		if err := conn.Exec(ctx, fmt.Sprintf(stmtFmt, t)); err != nil {
 			logger.Warn(warnMsg, logger.Str("table", t), logger.Err(err))
+			errs = append(errs, fmt.Errorf("table %s: %w", t, err))
 		}
 	}
+	return errors.Join(errs...)
 }

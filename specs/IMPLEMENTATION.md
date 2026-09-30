@@ -2523,6 +2523,7 @@ Kafka и память) и «сколько РАЗРЕШЕНО сегодня» (
   **без единой таблицы** усыновляется, гейт первого запуска до неё не доходит. Граница послабления
   (в коде и в §70): база с таблицами, но без маркера, по-прежнему валит старт; пустую базу
   соседа-до-§70 мы пометим своей и будем писать вдвоём — это ровно поведение до §70 (`node_id`, §61).
+  §111 добавил сюда же маркер без строки у ноды с идентификатором (раздел 4.96).
 - **Как это проскочило все гейты и чем ловить впредь.** Дефект виден только при подъёме
   прод-compose на пустых томах, а это делает лишь job `loadtest` — он `auto-run` только на
   `master`/теге, на `dev` — `manual`. §70 мержился в dev, где его никто не кликал; на теге v1.20.2
@@ -6967,3 +6968,300 @@ DEPLOYMENT §5.4.2.
   превращает всё неразбираемое, включая пустую строку, в unspecified; проверка `ClientIP == ""` в
   `absorbClient` стала мёртвой и удалена. Для образца это и нужно: `rejected_samples.client_ip` —
   `INET NOT NULL`, пустая строка уронила бы пачку.
+
+### 4.95 §110 — резервная копия конфигурации: экспорт и импорт
+
+Раздел [110-config-backup.md](sections/110-config-backup.md). Ветка `feature/config-backup`.
+Статус ◐ — в работе. Миграций нет, выкат только Web.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §110 + подготовительные рефакторинги | ✅ Phase 110.0 | [sections/110-config-backup.md](sections/110-config-backup.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md), отметка в [16-out-of-scope.md](sections/16-out-of-scope.md); предикат «чистой ноды» `pg.FreshInstanceSQL` ([platform/pg/fresh.go](../internal/platform/pg/fresh.go), им же пользуется `isFreshPG` в [bootstrap/instance.go](../internal/platform/bootstrap/instance.go)); `NodeRepoPg.InsertPreservingIdentity` + `insert(keepIdentity)`/`identityArgs` ([node_repo.go](../internal/web/adapter/out/postgres/node_repo.go), тест [node_repo_identity_test.go](../internal/web/adapter/out/postgres/node_repo_identity_test.go)); таблица проверок настроек `fieldChecks`, `Prepare`, `PrepareImport`, `PublishSections` ([app_settings_checks.go](../internal/web/usecase/app_settings_checks.go), `Update` в [app_settings.go](../internal/web/usecase/app_settings.go) идёт через `Prepare`; тест [app_settings_import_test.go](../internal/web/usecase/app_settings_import_test.go)); `planTableProvision` ([node_provision_plan.go](../internal/web/usecase/node_provision_plan.go), `provisionTable` в [node.go](../internal/web/usecase/node.go) исполняет план; тест [node_provision_plan_test.go](../internal/web/usecase/node_provision_plan_test.go)); ключ `passphrase` в [sensitive.go](../internal/platform/sensitive/sensitive.go) |
+| §110.3 файл: конверт, шифрование паролем | ✅ Phase 110.1 | [platform/backupfile/backupfile.go](../internal/platform/backupfile/backupfile.go) — `Seal`/`Open`/`ReadHeader`/`ValidatePassphrase`, Argon2id (`DefaultKDF`: 64 МиБ, 3 прохода, 4 потока) → AES-256-GCM, gzip, AAD = байты `protected`; границы KDF (`checkKDF`), предел распаковки `MaxPayloadBytes` 64 МиБ; тесты [backupfile_test.go](../internal/platform/backupfile/backupfile_test.go) (round-trip, переформатированный файл, подмена заголовка и шифротекста, неверный пароль, версия, KDF, gzip-бомба, длина пароля в символах) и `FuzzOpen` |
+| §110.2 формат снимка + порты | ✅ Phase 110.2 | [domain/backup/snapshot.go](../internal/domain/backup/snapshot.go) — DTO v1 (json-теги = колонки), `Counts`; [node.go](../internal/domain/backup/node.go) — `NodeFromDomain`/`ToDomain`/`AckSpec` (битая спека §83 — ошибка одного узла, а не всего снимка); [validate.go](../internal/domain/backup/validate.go) — `Validate` (ссылки, дубли, роли, вид хоста; до 20 нарушений в тексте); [columns.go](../internal/domain/backup/columns.go) — `Tables`/`ExcludedTables` для теста покрытия колонок; тесты [backup_test.go](../internal/domain/backup/backup_test.go) (round-trip каждого поля `domain.Node` рефлексией); порты [usecase/port/backup.go](../internal/web/usecase/port/backup.go) — `BackupSnapshotReader`, `BackupTargetInspector`, `RestoreSet`/`BackupRestorer`, `CHDatabaseInspector`, `CHSchemaMaintainer`, `ErrTargetNotClean`, `ErrRestoreInProgress` |
+| §110.4 выгрузка + `/api/backup/status` | ✅ Phase 110.3 | чтение снимка [postgres/backup_snapshot_repo.go](../internal/web/adapter/out/postgres/backup_snapshot_repo.go) + [backup_snapshot_catalogs.go](../internal/web/adapter/out/postgres/backup_snapshot_catalogs.go) — одна транзакция `REPEATABLE READ READ ONLY`, узлы через `NodeRepoPg.scan` (расшифровка кредов), настройки через `AppSettingsRepoPg.Get`, пользователи сырым SQL, токены без отозванных; `TargetState` (счётчики + `FreshInstanceSQL`); usecase [backup.go](../internal/web/usecase/backup.go) (`BackupUsecase`, `BackupDeps`, `Status`, слот тяжёлой операции `heavy`) и [backup_export.go](../internal/web/usecase/backup_export.go) (`Export`: пароль → снимок → `Validate` → `Seal` → аудит `config.export`; имя `nexus-backup-<нода|хост>-<UTC>.json`); handler [backup_handler.go](../internal/web/adapter/in/http/backup_handler.go) — `GET /api/backup/status`, `POST /api/backup/export` (admin + `RequireSessionOnly`, пароль только телом); wiring в [app.go](../internal/web/app.go) (`App.schema` — версия схемы для заголовка); действия `config.export`/`config.import` в [domain/audit.go](../internal/domain/audit.go); i18n `backup.*`; тесты [backup_export_test.go](../internal/web/usecase/backup_export_test.go), [backup_handler_test.go](../internal/web/adapter/in/http/backup_handler_test.go), `TestBackupRoutes_*` в [routes_role_test.go](../internal/web/adapter/in/http/routes_role_test.go), integration [backup_snapshot_test.go](../tests/integration/backup_snapshot_test.go) — сторож покрытия колонок и таблиц против `information_schema` + чтение снимка |
+| §110.5–§110.8 план восстановления + предпросмотр (dry-run) | ✅ Phase 110.4 | usecase: [backup_import.go](../internal/web/usecase/backup_import.go) (`PreviewImport`, `planImport`: режим статусов → гейт чистоты и ClickHouse ДО расшифровки → схема по открытому заголовку до Argon2id → `Open` → `Validate` → чтение цели тем же `ReadSnapshot` → сборка плана → dry-run; `backupDigest`), сборщик `importBuilder` — [backup_import_remap.go](../internal/web/usecase/backup_import_remap.go) (команды по слагу, пользователи по логину, членство/избранное/личные настройки только при членстве, токены по хешу), [backup_import_catalogs.go](../internal/web/usecase/backup_import_catalogs.go) (шаблоны по имени, группы/хосты/справочники по имени без регистра, маски — замена, инстансы — без своего адреса), [backup_import_nodes.go](../internal/web/usecase/backup_import_nodes.go) (перенос ссылок и таблицы по карте баз, снимок allowlist по сопоставленным хостам, режим статусов, `Validate`/самоссылка → выключен, лимит на команду), [backup_import_ch.go](../internal/web/usecase/backup_import_ch.go) (решение по маркеру §70, таблицы через `planTableProvision` + `RenderCreateTable`, внешние §64 — только проверка), [backup_import_result.go](../internal/web/usecase/backup_import_result.go) (настройки через `PrepareImport`, аудит `config.import`); запись — [postgres/backup_restore.go](../internal/web/adapter/out/postgres/backup_restore.go) + [backup_restore_rows.go](../internal/web/adapter/out/postgres/backup_restore_rows.go) (`pg_try_advisory_xact_lock` → `LOCK TABLE teams, nodes` → `FreshInstanceSQL` под блокировкой; `ch_claimed=true`; аудит в той же транзакции; dry-run = откат); CH-инспектор [clickhouse/backup_inspector.go](../internal/web/adapter/out/clickhouse/backup_inspector.go) (`Guard.Check` + число таблиц без маркера; `tableExists` общий с провижинером); `POST /api/backup/import/preview` в [backup_handler.go](../internal/web/adapter/in/http/backup_handler.go) (`MaxBytesReader` 64 МиБ, таблица `importErrorCodes`); `PrepareImport` теперь сбрасывает `version_override` всегда; тесты [backup_import_test.go](../internal/web/usecase/backup_import_test.go) (сид-сверка, тот же instance.id, режимы статусов, дайджест, отказы, решения по базам, проверки узлов, внешние таблицы), [backup_inspector_test.go](../internal/web/adapter/out/clickhouse/backup_inspector_test.go), handler-тесты предпросмотра, integration [backup_restore_test.go](../tests/integration/backup_restore_test.go) (выгрузка из заполненной базы → dry-run на чистой — ограничения настоящей схемы, цель осталась чистой; «импорт уже идёт»; нечистая цель) и `TestBackupSnapshot_NullableColumnsArePointers` |
+| §110.8 применение восстановления | ✅ Phase 110.5 | usecase [backup_import_apply.go](../internal/web/usecase/backup_import_apply.go) — `ApplyImport`: `confirm_host` (имя хоста без порта и регистра, `sameHostname`) → контекст `WithoutCancel` + потолок 10 мин → слот → пересборка плана → сверка `preview_digest` → блокирующие проблемы (`ErrBackupBlocked`) → фаза ClickHouse `provisionClickHouse` (`CreateDatabase` с захватом §70, `CreateTable`, для уцелевших таблиц `EnsureColumns`) → `Restore(false)` → `PublishSections` (секции настроек + `masking`, без `SectionAll`); доводчик схемы [clickhouse/schema_maintainer.go](../internal/web/adapter/out/clickhouse/schema_maintainer.go) (`Ensure*Column` платформы, без backfill); восстановимость цели (`checkRestorable`) требует инспектор, провижинер и доводчик; wiring в [app.go](../internal/web/app.go) (порты ClickHouse — только при подключённом ClickHouse и гейте владения); `POST /api/backup/import/apply` в [backup_handler.go](../internal/web/adapter/in/http/backup_handler.go) (400 адрес, 409 дайджест/блокировки, 500 `backup.clickhouse_failed`); i18n `backup.confirm_host_mismatch`/`digest_mismatch`/`import_blocked`/`clickhouse_failed`; Swagger; тесты [backup_import_apply_test.go](../internal/web/usecase/backup_import_apply_test.go) (ClickHouse до записи, уцелевшие таблицы, отказы не трогают ClickHouse и PG, сбой ClickHouse не доходит до PG, разрыв клиента, `sameHostname`), handler-тесты применения, integration [backup_roundtrip_test.go](../tests/integration/backup_roundtrip_test.go) — выгрузка → восстановление на чистые PG с настоящим ClickHouse: другой `instance.id` и другой `ENCRYPTION_KEY` (UUID и креды узлов, базы `nexus_nw_*` с маркером, пользователи с хешами, токены, маски, секрет настроек, адрес ClickHouse не перенесён, аудит, повтор → `ErrTargetNotClean`) и тот же `instance.id` (уцелевшая база переиспользована, старая строка лога видна, недостающая колонка добавлена); все integration-тесты §110 (`^TestBackup`) — в группе `test-int-ch` [Makefile](../Makefile) (до этого блока гейт `check-int-coverage` ронял `make test-integration`: тесты 110.3–110.4 не попадали ни в одну группу) |
+| §110.9 интерфейс «Настройки → Резервная копия» | ✅ Phase 110.6 | страница [pages/settings/Backup.tsx](../web-ui/src/pages/settings/Backup.tsx) (`GET /api/backup/status`), вкладка и маршрут admin в [Settings.tsx](../web-ui/src/pages/Settings.tsx) после «Инстансы»; компоненты [components/backup/](../web-ui/src/components/backup/): `ExportCard` (пароль дважды, `api.postBlob` → `saveBlob`), `RestoreCard` (гейт «не чистый»/«нет ClickHouse» → файл + пароль → предпросмотр → диалог → результат), `ImportPreview` (сущности, замены, ClickHouse, статусы, пропуски/предупреждения/блокировки, режим статусов, галочка «занять» только при непустой базе без маркера), `ConfirmRestoreDialog` (ввод `location.hostname`), `types.ts` (типы, таймауты, `backupErrorText`, `saveBlob`); [api/client.ts](../web-ui/src/api/client.ts) — `postBlob` (JSON-ошибка из blob), `attachmentName`, `timeout` у `post`; фильтр `config.export`/`config.import` в [AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx); locales `settings.backup.*` + зеркало серверных `backup.*`; тесты [Backup.test.tsx](../web-ui/src/pages/settings/Backup.test.tsx) (гейт, пароль дважды, поток с дайджестом, блокировки, перезапуск предпросмотра при смене режима, галочка, перевод ошибки по коду); бандл `internal/web/static` пересобран |
+| §110.10 процедура аварийного восстановления | ✅ Phase 110.7 | [DEPLOYMENT.md §12.1](../DEPLOYMENT.md) — регулярная выгрузка, восстановление по шагам: `instance.id` до первого старта (тот же — если ClickHouse уцелел; пустой идентификатор + уцелевший ClickHouse → первый старт с `--ch-adopt`, иначе гейт §70.5 не пустит Web на свежей PostgreSQL), подключение ClickHouse из конфига, типичные предупреждения предпросмотра, тайм-аут nginx на очень большой конфигурации (проверка по `config.import` в аудите), что сделать после; запись в `[Unreleased]` [CHANGELOG.md](../CHANGELOG.md) |
+| §110 ревизия перед сдачей и стенд | ✅ Phase 110.8 | имена баз всегда по `instance.id` цели ([backup_import_remap.go](../internal/web/usecase/backup_import_remap.go): `keepDBNames` убран, при том же id и другом имени — предупреждение `ch_database_renamed`); дайджест закрепляет весь план (`planDigest` в [backup_import.go](../internal/web/usecase/backup_import.go)); сбой доводки уцелевших таблиц прерывает импорт (`chpf.EnsureLogColumns` в [ensure_schema.go](../internal/platform/clickhouse/ensure_schema.go), `CHSchemaMaintainer.EnsureColumns` → `error`); строгий разбор снимка (`decodeSnapshot`: неизвестное поле → `backup.schema_newer`), `SchemaState.KnownVersion` в [bootstrap.go](../internal/platform/bootstrap/bootstrap.go); пароль ClickHouse не выгружается; доменная проверка строк каталогов ([backup_import_catalogs.go](../internal/web/usecase/backup_import_catalogs.go)); таблица вне баз команд в базе чужой ноды → узел выключен (`disableForeignOutsideTables`); неблокирующий слот и замок на все реплики (`acquireRestore`, `BackupRepoPg.LockRestore` в [backup_restore.go](../internal/web/adapter/out/postgres/backup_restore.go)); инспектор не считает таблицы чужой базы; `bootstrap.CheckCHOwnership` выделен из `MustCHOwnership` ради теста рестарта; фронт: переменная интерполяции `replace` → `current` (зарезервирована i18next), тест на настоящих словарях [ImportPreview.i18n.test.tsx](../web-ui/src/components/backup/ImportPreview.i18n.test.tsx); integration: рестарт после восстановления проходит настоящие стартовые гейты, `Restore` на нечистой цели, замок на реплики, `EnsureLogColumns` на настоящем ClickHouse |
+
+**Неочевидности §110 (пополняется по блокам):**
+
+- **Проверки глобальных настроек — таблицей, а не цепочкой `if`.** У них два потребителя с разной
+  реакцией: форма «Настройки» отклоняет весь патч на первой ошибке, восстановление §110.7
+  сбрасывает только поле с ошибкой и переносит остальное. Список один (`fieldChecks`), иначе
+  импорт записал бы значение, которое форма не даёт сохранить (лимит тела выше потолка конфига
+  цели, §97). Порядок проверок в `Update` сменился (сначала `general`), поэтому при нескольких
+  невалидных полях первой называется другая ошибка — поведение «патч отклонён» прежнее.
+- **`NodeRepoPg.Create` по-прежнему игнорирует `n.ID`.** Вставка с id — отдельный метод вне
+  `port.NodeRepo`: копирование узла §53 и хендлеры рассчитывают, что id выдаёт база, и общий
+  флаг в `Create` сделал бы это молчаливым контрактом.
+- **`protected` в файле — base64-строка, а не вложенный объект.** Байты защищённого заголовка —
+  AAD шифрования, а у JSON нет канонической формы: вложенный объект, переформатированный
+  редактором (или пересобранный `json.Marshal`, который уплотняет `RawMessage`), дал бы другие
+  байты, и копия стала бы невосстановимой. Тест `TestOpen_SurvivesReformatting`.
+- **Неверный пароль и изменённый файл — одна ошибка `ErrDecrypt`.** GCM их не различает, и
+  различать нельзя: подсказка «файл цел, пароль не тот» помогала бы подбору.
+- **Выгрузка отказывает, если снимок своей базы не проходит `Validate`.** Файл, который импорт
+  отвергнет, обнаруживается при выгрузке, когда исходную базу ещё можно поправить, а не в момент
+  аварии. Ответ — 500 `backup.snapshot_invalid`, подробности (id строк) — только в журнале Web.
+- **Сторож полноты — в integration, по `information_schema`.** Он ловит и новую колонку, и новую
+  ТАБЛИЦУ: миграция, добавившая таблицу, обязана решить, попадает ли она в резервную копию
+  (`backup.Tables`) или сознательно исключается (`backup.ExcludedTables`). Unit-тест DTO этого
+  не видит — схема есть только в живой базе.
+- **Пароль файла — только телом POST.** Скачивание через `<a href>` с паролем в query было бы
+  проще для фронта, но адрес запроса оседает в логах nginx и истории браузера; фронт получает
+  файл через `fetch` → blob.
+- **Имена баз — всегда по `instance.id` цели, и при том же идентификаторе тоже.** Phase 110.4
+  брала их из файла при совпавшем id (`keepDBNames`) ради «команды до §70 в `nexus_<slug>`» — но
+  такая нода с идентификатором не живёт: `rebaseSeededTeamDB` на КАЖДОМ старте Web требует ровно
+  `id.CHDatabase(slug)` и роняет старт иначе. Исключение срабатывало только на нештатном файле
+  (источник стартовал без ClickHouse, сидированная `nexus_default` не переименована) и оставляло
+  восстановленную ноду неподнимающейся после первого рестарта. Integration «база в файле не по
+  идентификатору» на старом коде падал ровно с `team "acme" is already bound to "nexus_acme"`.
+- **Гейт чистоты — до расшифровки.** На боевой ноде файл не вскрывается вовсе: и Argon2id не
+  тратится, и неверный пароль не маскирует настоящую причину отказа (тест «нечистая цель» идёт с
+  неверным паролем). Схема сверяется дважды: по открытому заголовку до Argon2id и по заверенному
+  после.
+- **Цель читается тем же `ReadSnapshot`, что и источник.** Сид-строки (Default, `admin`,
+  «Standard logs», маски) нужны плану как «что уже есть»; отдельный порт повторял бы тот же набор
+  запросов.
+- **Своя пустая база не даёт предупреждения.** Стартовый гейт §70.5 занимает базу Default на
+  первом старте, и «ваша база, старые логи будут видны» висело бы на каждом восстановлении.
+  Предупреждение — только для своей базы с таблицами.
+- **Ошибка dry-run — блокирующая проблема, а не ошибка запроса**, кроме `ErrTargetNotClean` и
+  `ErrRestoreInProgress`: администратору нужен план целиком вместе с причиной, а не 500.
+- **Два advisory-замка с РАЗНЫМИ ключами.** `backupRestoreLockKey` — транзакционный
+  (`pg_try_advisory_xact_lock`) в `Restore`, освобождается откатом dry-run сам; integration держит
+  его сессионным `pg_advisory_lock` с тем же литералом — при смене ключа тест покраснеет.
+  `backupOperationLockKey` — сессионный, на выделенном соединении пула, на ВСЮ операцию
+  (`LockRestore`): транзакционный не покрывает фазу ClickHouse, и две реплики за nginx (§93)
+  создавали бы базы и таблицы одновременно. Общий ключ заблокировал бы `Restore` собственной же
+  операции (другое соединение того же процесса). Соединение с замком не возвращается в пул до
+  `release`, а если `pg_advisory_unlock` не прошёл — закрывается (`Hijack().Close`): замок уходит
+  вместе с сессией, иначе реплика навсегда отвечала бы «импорт уже идёт».
+- **Слот процесса для импорта не ждёт** (`acquireRestore`), для выгрузки — ждёт (`acquire`). Раньше
+  второй импорт висел до конца первого и получал «экземпляр не чистый» вместо «импорт уже идёт».
+- **Применение идёт на `context.WithoutCancel`.** Между фазой ClickHouse и транзакцией PG закрытая
+  вкладка оборвала бы восстановление посередине: базы заняты, таблицы созданы, PG пустая. Повтор
+  такое пережил бы (всё идемпотентно), но администратор в аварии видит «ошибку сети» и не знает, что
+  делать. Потолок 10 минут — чтобы отвязанный контекст не висел на недоступном ClickHouse.
+- **ClickHouse — до PostgreSQL, а не после.** Захват базы, `CREATE TABLE IF NOT EXISTS` и
+  `ADD COLUMN IF NOT EXISTS` идемпотентны; транзакция PG — нет (после commit цель уже не чистая,
+  повтор невозможен). Сбой ClickHouse после записи PG оставил бы узлы без таблиц и без способа
+  доимпортировать — поэтому любой сбой фазы ClickHouse прерывает импорт до записи.
+- **`confirm_host` сверяется по имени хоста без порта.** nginx передаёт `$http_host` с портом, но
+  прокси перед ним (HAProxy на KZ) может отдать Host без порта, а администратор вводит то, что видит в
+  адресной строке. Это подтверждение «вы на том сервере», а не аутентификация — её дают роль admin и
+  сессия; поэтому послабление по порту безопасно.
+- **Уцелевшие таблицы доводятся `EnsureColumns` без backfill.** Иначе чтение логов падало бы на
+  отсутствующей колонке до рестарта сервисов. Backfill размеров тел (§42.10) и `client_host` —
+  фоновые задачи старта; импорт их не запускает, чтобы не держать запрос на миллионах строк.
+- **Публикуется секция `masking`, но не `SectionAll`.** Маски заменены целиком, и Sender должен их
+  перечитать без рестарта (§95). `SectionAll` переподключил бы ClickHouse во всех сервисах, а
+  подключение к ClickHouse из файла сознательно не переносится.
+- **Integration проходит НАСТОЯЩИЕ стартовые гейты** (`startWeb`: `MustInstanceIdentity` +
+  `bootstrap.CheckCHOwnership`) — на первом старте свежей базы (там `rebaseSeededTeamDB`
+  переименовывает Default) и после восстановления (`restartAfterRestore`: гейт пропускает, имена
+  баз равны `id.CHDatabase(slug)`). Ради этого тело `MustCHOwnership` вынесено в
+  `CheckCHOwnership(...) error`; `Must*` — обёртка с `os.Exit(1)`, тексты логов прежние. Ручная
+  имитация гейта (`UPDATE teams`) не поймала бы MEDIUM-1 ревизии — ловит только сам гейт.
+- **Хрупкость §70, найденная стендом §110 — ЗАКРЫТА §111 (раздел 4.96).** В §110 код §70 не
+  менялся: `rebaseSeededTeamDB` переименовывал Default только при `identity.Claimed` — строку
+  `instance_identity` вставил ИМЕННО этот старт. Первый старт Web, оборвавшийся между
+  `MustInstanceIdentity` и `MustCHOwnership` (стенд: тайм-аут Redis, `cmd/web/main.go` —
+  идентичность → Redis → гейт CH), или идентификатор, заявленный первым Receiver/Sender (они тоже
+  зовут `MustInstanceIdentity`), — и Web больше не поднимался: «team "default" is already bound to
+  "nexus_default" on a used database» на ПУСТОЙ базе. DEPLOYMENT (процедура §110, шаг 3) требовал
+  запускать Web первым и лечил пересозданием пустой базы PostgreSQL; §111 заменил условие на
+  `FreshPG && !CHClaimed`, и обход из DEPLOYMENT убран.
+- **Дайджест предпросмотра — файл, опции и ВЕСЬ план** (`planDigest`: счётчики, решения по базам
+  и каждой таблице, предупреждения, блокировки). Применение пересобирает план по текущему
+  состоянию; при дайджесте «файл + опции» база, ставшая непустой без маркера, молча переходила из
+  `claim` в `adopt` под галочкой, поставленной ради другой базы, а новые строки цели меняли
+  счётчики. Детерминизм: структуры, ключи map сортирует `encoding/json`, срезы — в порядке файла и
+  снимка цели (обходов map без сортировки в плане нет). Дайджест считается ДО dry-run: блокер
+  `dry_run_failed` в него не входит. Побочный эффект: техническая причина в `detail` (текст ошибки
+  проверки внешней таблицы) при повторе может отличаться — тогда «проверьте файл заново», это
+  честно.
+- **Доводка уцелевших таблиц — с ошибкой, в отличие от старта.** `ensureLogColumn` теперь
+  возвращает `errors.Join` ошибок по таблицам; стартовые `Ensure*Column` её отбрасывают (старт не
+  валим, как раньше), `EnsureLogColumns` — для восстановления — нет. Недопустимое имя таблицы тоже
+  ошибка (раньше молча пропускалось). Грабли: integration §110.5 создавал «уцелевшую» таблицу из
+  трёх колонок без `type`/`IP`, к которым привязаны `AFTER` доводок, — проходил только потому, что
+  ошибка глоталась. Теперь таблица старой схемы — `createLegacyLogTable`.
+- **Строгий разбор снимка — двумя проходами.** `DisallowUnknownFields` отличает «поле новой
+  версии» от «битого снимка» только по тексту ошибки; вместо разбора текста — второй, нестрогий
+  проход: прошёл → `ErrBackupSchemaNewer`, не прошёл → `ErrInvalidSnapshot`. Кастомных
+  `UnmarshalJSON` в типах снимка нет (строгость не обходится), `RawMessage`-поля не проверяются
+  намеренно.
+- **Строки каталогов — доменная проверка при импорте.** Маска (RE2 не компилируется → Sender молча
+  пропустит → секрет в логе), хост, группа, шаблон — блокер; заголовок и поле запроса — пропуск
+  с предупреждением (узлы хранят имя у себя). `sort_order` группы проверяется ДО сужения
+  `int` → `int32`, иначе переполнение превращало бы недопустимое значение в допустимое.
+- **Таблица вне баз команд в базе чужой ноды → узел выключен**, счётчики статусов пересчитываются
+  (`uncountStatus`). Сбой проверки владения — пропуск (fail-open), как у `assertTableNotForeign`
+  при сохранении узла.
+- **Пароль ClickHouse не выгружается.** Секция не импортируется никогда, адрес нужен только как
+  подсказка в предпросмотре; пароль в файле лишь расширял бы ущерб от утечки файла.
+- **i18next: `replace` — зарезервированная опция `t()`, не имя переменной.** Параметр
+  `{create, replace}` гасил интерполяцию всей строки («маски логов ( из файла вместо )»). Тесты
+  страницы подменяют `t` на «вернуть ключ» и этого не видят — поэтому
+  `ImportPreview.i18n.test.tsx` рендерит предпросмотр на настоящих словарях en/ru со ВСЕМИ кодами
+  проблем сервера (новый код без перевода покажется сырым кодом — тест красный). Нашёл стенд.
+- **Смена опций перезапускает предпросмотр, «Восстановить» — только для плана текущих опций.**
+  Опции входят в `preview_digest`; держать их вне плана значило бы применять не то, что показано,
+  или получать 409 `digest_mismatch`. Кнопка активна только когда `preview.variables === options`
+  (тот же объект, что ушёл в запрос) и запрос не идёт.
+- **Файл уходит строкой `file.text()`, а не разобранным JSON.** Сервер считает дайджест по байтам
+  файла; `JSON.parse` → `stringify` переформатировал бы его (AAD конверта — отдельная строка
+  `protected`, её это не ломает, но дайджест предпросмотра и применения обязан совпасть байт в байт).
+- **`postBlob` разбирает ошибку обратно в JSON.** С `responseType: "blob"` axios и тело ошибки
+  отдаёт blob'ом — без разбора карточка выгрузки показывала бы «ошибка» вместо «пароль короче 12».
+- **Ошибки переводятся по `code` в языке интерфейса**, кроме `backup.passphrase_too_short`: сервер
+  переводит по `Accept-Language`, который может не совпадать с языком UI, а этот текст несёт число.
+  Поэтому верхний namespace `backup.*` в locales повторяет серверные ключи.
+- **Тексты проблем плана сами подставляют `{{subject}}`/`{{detail}}`**; `detail`, которого перевод
+  не использовал (техническая причина), дописывается после тире. Так число таблиц читается внутри
+  фразы, а текст ошибки ClickHouse не теряется.
+- **Причина неактивной «Скачать файл» — строкой под полем (Phase 110.9).** Кнопка выключена, пока
+  пароль короче `min_passphrase_len` или поля не совпадают, а объяснялось только второе: про длину
+  была лишь серая приписка к подписи. Пользователь ввёл 3 символа в оба поля и спросил, почему
+  кнопка не работает. Теперь под первым полем — «Пароль короче N символов (введено M)»; обе строки
+  живут ВНУТРИ своего `Field` (а не одной строкой под сеткой), поэтому в одну колонку каждая
+  остаётся под своим полем. Длина — `[...pass].length` (символы, как `utf8.RuneCountInString` на
+  сервере): пароль из 6 букв и 5 эмодзи — это 11, а не 16. Параметр перевода назван `len`, не
+  `count`: `count` у i18next включает плюрализацию и поиск ключей `_one/_few/_many`.
+
+**Проверка восстановления на образах Docker (30.09.2026).** Стенд §110 гонял нативный Web на стеке
+`services`; путь «новый сервер: образы + compose» проверен отдельно. Временный compose-проект из
+тех же `deploy/docker/*.Dockerfile` (коммит `568b709d`), PostgreSQL 12, ClickHouse 26.3, пустые
+тома, новый `ENCRYPTION_KEY`, наружу только Web. Файл — со стенда (8 команд, 172 узла,
+17 пользователей). Два прогона через интерфейс:
+
+| Проверка | `instance.id = dr` | без идентификатора |
+|---|---|---|
+| Первый старт трёх сервисов разом | `seeded team database rebased` → `nexus_dr_default`, `/ready` 200 | `adopting empty unmarked` → `nexus_default`, `/ready` 200 |
+| Восстановление | 2 с; 8 команд, 172 узла, 72 таблицы | 2 с; то же, режим «все на паузу» (167 + 5 выключенных) |
+| Узлы построчно, 46 полей (с `id`, авторами, датами) | отличия — только префикс базы и 4 обещанных статуса | 0 отличий |
+| Базы ClickHouse | 8 × `nexus_dr_<slug>` с маркером | 8 × `nexus_<slug>` с маркером |
+| Рестарт | `ownership confirmed databases=8` | то же |
+
+На первом дополнительно: запросы через восстановленные узлы (`POST /api/v1/request/default/stand/…`
+из браузера, эхо в сетевом пространстве Sender'а) вернули `Basic dXNlcjpwYXNz` и
+`Bearer secret-token` — креды расшифрованы под новым ключом, шифртекст в базе другой; sync и async —
+200 без рестарта Sender'а (он стартовал ДО миграций), строки логов в `nexus_dr_default.*` с
+`node_id`; хеши паролей 16 пользователей совпали с исходными; повторный импорт — карточка
+заблокирована, API отвечает 409 `backup.target_not_clean`. Не переносятся, как и обещает §110.2:
+аудит, журнал отказов, история поиска, одноразовые токены.
+
+Грабли временного стека: порт 18000 на машине разработчика занят; сервисам обязателен
+`restart: unless-stopped` (как в боевом compose) — без него `docker compose restart` всего стека
+роняет Receiver (Kafka ещё поднимается) и Sender (ClickHouse) насовсем, и это дефект compose, а не
+Nexus; Web, стартовавший раньше ClickHouse, пропускает гейт владения (§70.5) и пишет
+`clickhouse connect failed; replay and live-tail will be disabled` — восстановится ли подключение
+без рестарта Web, в этом прогоне не проверялось.
+
+### 4.96 §111 — устойчивый первый старт ноды с `instance.id`
+
+Раздел [111-first-start-rebase.md](sections/111-first-start-rebase.md). Ветка
+`feature/first-start-rebase` (от `feature/config-backup`: правит `CheckCHOwnership` и процедуру
+DEPLOYMENT из §110). Статус ✅ — код и документы (Phase 111.1), ревизия и стенд (Phase 111.2); в
+`dev` не слито. Миграций, ключей конфига и правок интерфейса нет, выкат только Web.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §111, правка §70.5 | ✅ Phase 111.0 | [sections/111-first-start-rebase.md](sections/111-first-start-rebase.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) (§111 и фраза про ребейз в §70.5), [sections/70-multi-instance-clickhouse.md](sections/70-multi-instance-clickhouse.md) (шаг 1 сверки и абзац «Ребейз сидированной команды») |
+| §111.3 правило «по состоянию ноды» | ✅ Phase 111.1 | [bootstrap/ch_ownership.go](../internal/platform/bootstrap/ch_ownership.go) — чистая `decideRebase` (идентичность, slug, текущее имя → оставить / переименовать / отказ с причиной), причины — sentinel'ы `errSeededDBInUse`, `errSeededDBClaimed`, `errTeamDBUnexpected`; [bootstrap/instance.go](../internal/platform/bootstrap/instance.go) — поле `Identity.Claimed` удалено |
+| §111.4 сверка до ClickHouse, условная запись, debug-строки | ✅ Phase 111.1 | `CheckCHOwnership` (сверка до `chConn == nil`, отказ без ClickHouse → warn), `renameSeededTeamDB` (CAS `… AND ch_database = $3` + перечитывание при нуле строк), `loadTeamBindings` |
+| §111.4 захват базы, начатый соседней репликой | ✅ Phase 111.1 | [clickhouse/owner.go](../internal/platform/clickhouse/owner.go) — `ensureOne` зовёт `claimIfEmpty` и при `markerBeingWritten` (вердикт `unknown` без ошибки у ноды с идентификатором); `countDataTables` не считает таблицу-маркер данными для ноды с идентификатором; ожидание и разбор содержимого — существующий `Claim` |
+| §111.5 DEPLOYMENT без обхода | ✅ Phase 111.1 | [DEPLOYMENT.md](../DEPLOYMENT.md) §5А.3 (шаг 2 и абзац «Порядок первого запуска сервисов не важен»), §12.1 шаги 1 и 3; [CHANGELOG.md](../CHANGELOG.md) — `Fixed` в Unreleased |
+| §111.7 тесты | ✅ Phase 111.1 | unit [bootstrap/ch_ownership_test.go](../internal/platform/bootstrap/ch_ownership_test.go) (матрица §111.3); integration [multi_instance_first_start_test.go](../tests/integration/multi_instance_first_start_test.go) — `TestMultiInstance_RebaseFirstStart` (S1–S4, повторный старт), `TestMultiInstance_ReplicaFirstStartRace` (маркер без строки: дождаться, дописать, чужой, база с таблицей, нода без идентификатора, две реплики с разносом), `TestMultiInstance_RebaseRefusals` (узел на ноде; захват под старым именем); группа `test-int-ch` |
+
+**Неочевидности.**
+
+- **Красное на старом коде — все четыре сценария, точным текстом.** S1–S4 падали с
+  `instance "rN" is configured, but team "default" is already bound to "nexus_default" on a used
+  database`; S3 дополнительно показывал, что имя остаётся сидированным. Оба теста защиты были
+  зелёными и до правки — они проверяют, что §111 ничего не ослабил.
+- **Сценарии идут через настоящий стартовый гейт**, а не через `UPDATE teams` в тесте:
+  `claimIdentity` = `bootstrap.MustInstanceIdentity` (так выглядит старт Receiver/Sender и старт
+  Web, оборвавшийся до гейта), затем `startWeb` / `bootstrap.CheckCHOwnership`. Отдельной
+  тестовой точки входа в `rebaseSeededTeamDB` нет — единственный вызывающий остаётся гейт.
+- **`Identity.Claimed` удалено, а не оставлено «на всякий случай».** Признак «строку вставили мы»
+  по построению одноразовый; пока поле существует, следующий гейт снова привяжет к нему решение.
+  В `claimResult.claimed` он остался только ради debug-строки `instance identity resolved`.
+- **Порядок отказов в `decideRebase` — «есть узлы» раньше «базы захвачены».** Если выполняются
+  обе причины, оператору называется первая: переезд данных узлов — более тяжёлая часть процедуры
+  §5А.5, и без неё вторая причина не лечится.
+- **Отказ сверки без ClickHouse — warn, а не выход.** До §111 при `chConn == nil` сверка не
+  выполнялась вовсе, и Web поднимался. Перенос сверки выше этой проверки не должен добавлять
+  причин не подняться при лежащем ClickHouse (§70.5 обещает старт без него) — тот же отказ
+  наступит на первом старте с доступным ClickHouse. Integration это фиксирует (`u1`, `nil`-conn).
+- **CAS вместо блокировки.** `UPDATE … WHERE slug = $1 AND ch_database = $3`: проигравшая реплика
+  обновляет ноль строк (READ COMMITTED перепроверяет `WHERE` после снятия блокировки строки) и
+  перечитывает имя; совпало с ожидаемым — debug-строка, не совпало — отказ `errTeamDBUnexpected`.
+  Advisory-lock §110 здесь не нужен: операция идемпотентна и сводится к одной строке.
+- **Sender и Receiver базу не переименовывают** — как и до §111. Соблазн «пусть переименует тот,
+  кто первым пришёл» ломает §70.5: Sender может стартовать раньше миграций Web.
+- **У S4 оказалось две причины, вторая — в гейте ClickHouse, и план её не предусматривал** (там
+  стояло «гейт владения баз не меняется»). После правки переименования тест двух реплик остался
+  нестабильным: 1 отказ на 12 прогонов, текст — `database already exists on first run of this
+  instance: nexus_r4_default (verdict=unknown)`. Захват базы — `CREATE DATABASE` → `CREATE TABLE`
+  маркера → `INSERT` строки; вторая реплика, попавшая между вторым и третьим шагом, видела маркер
+  без строки (`VerdictUnknown` без ошибки), `claimIfEmpty` для неё не вызывался, и гейт первого
+  запуска отказывал на собственной базе. Замер временным тестом (две `Guard` одной ноды,
+  `EnsureAll` с разносом 0/1/3/6/10/20 мс × 40 раундов): **до правки 51 отказ из 240** (при 20 мс —
+  19 из 40: окно шире, чем кажется, Docker Desktop растягивает DDL), **после — 0 из 240**.
+- **Почему послабление только для ноды с идентификатором.** У ноды без идентификатора маркер
+  соседа читается как свой (`instance_id=''` у обеих). Отказ на `unknown` там — случайная, но
+  реальная защита в окне одновременного первого старта двух таких нод; ждать запись и принимать
+  её за свою значило бы это окно расширить. Правило то же, что у `provenOurs` в `firstRunGate`.
+- **Ожидание не написано заново — переиспользован `Claim`.** Он уже умел проигрывать гонку
+  `CREATE TABLE` (код 57), ждать строку (`ownerClaimRetries` × `ownerClaimDelay` = 1 с) и
+  дописывать маркер, оставшийся пустым. Не хватало только входа в него из `ensureOne`. Побочный
+  выигрыш: нода, убитая между `CREATE TABLE` и `INSERT` на первом старте, раньше не поднималась
+  вовсе (первый запуск — отказ гейта; не первый — `cannot determine ownership`), теперь
+  дописывает маркер сама.
+- **Тест двух реплик вероятностный, остальные — детерминированные.** «Маркер без строки»
+  создаётся руками (`createEmptyMarker`), строку дописывает горутина через 300 мс
+  (`writeMarkerRowAfter`) — так окно воспроизводится без хуков в продакшн-коде. Подтверждено
+  откатом условия: на прежнем поведении красные «дождаться», «дописать», «чужой» и «две
+  реплики», зелёные — оба теста защиты.
+
+**Ревизия перед сдачей (Phase 111.2).**
+
+- **Комментарий к сбою `isFreshPG` обещал обратное коду.** Было: «`FreshPG` используется только
+  гейтом первого запуска, консервативное `false` лишь снимает лишнюю строгость». Для сверки имён
+  `false` — это ОТКАЗ на сидированном имени (так было и до §111, комментарий врал уже тогда).
+  §111 делает отказ разовым: следующий старт перепроверит признак; до §111 тот же сбой на первом
+  старте оставлял ноду неподнимающейся навсегда. Комментарий и §111.3 исправлены.
+- **Текст отказа отсылал к процедуре без номера раздела** — теперь `DEPLOYMENT.md 5A.5`.
+- **ТЗ не говорило, что без ClickHouse предупреждением становится ЛЮБОЙ неуспех сверки** (не
+  только отказ на сидированном имени, но и «чужое» имя, и сбой чтения команд) — код делал именно
+  так, §111.3 дописан.
+- **DEPLOYMENT, 5А.3:** абзац «тот же отказ … на ноде с узлами» стоял после абзаца про реплики и
+  читался как относящийся к `database already exists on first run` — переставлен. **§12.1, шаг
+  2** требовал идентификатор «до первого старта Web», хотя шаг 1 (и §111.2, S2) говорит, что его
+  фиксирует первый стартовавший сервис — теперь «до первого старта сервисов».
+- Правило `markerBeingWritten` покрыто unit-тестом
+  ([clickhouse/owner_test.go](../internal/platform/clickhouse/owner_test.go)): раньше его держал
+  только integration.
+
+**Стенд (Phase 111.2).** Стек `services`, Web и Receiver нативно, скрытыми окнами; базы
+PostgreSQL — тестовые.
+
+| Проверка | Результат |
+|---|---|
+| Точный симптом: `nexus_restore3` — артефакт стенда §110 (идентификатор `rs3` заявлен, `ch_claimed=f`, Default → `nexus_default`, узлов 0), бинарь до §111 | отказ `is already bound to "nexus_default" on a used database`, код 1 |
+| Та же база, новый бинарь | `seeded team database rebased … to=nexus_rs3_default` → `clickhouse ownership confirmed`, `/ready` 200; в браузере чип `RS3`, «Настройки → Команды» — `nexus_rs3_default`, карточка восстановления активна, консоль чистая |
+| S2: чистая база, первым Receiver (`claimed_by = Receiver@…`), затем Web | переименование и захват, `/ready` 200 у обоих |
+| Повторный старт Web | `team database matches instance`, переименования нет |
+| S4: две реплики Web одновременно на чистой базе (`:8001`, `:8002`) | обе `ownership confirmed` в одну секунду: одна переименовала, другая захватила базу, в маркере одна строка |
+| S3: первый старт Web без ClickHouse | `seeded team database rebased` + `ownership gate skipped`, Web поднят; карточка «Резервная копия» — «ClickHouse не подключён … перезапустите Web»; следующий старт с ClickHouse — захват; узел, созданный после, получил таблицу в `nexus_fs4_default` |
+| Нода с данными: восстановленная `nexus_restore5` (172 узла, 8 команд) | восемь `team database matches instance`, `ownership confirmed databases=8` |
+
+Грабля стенда: копию конфига для второй реплики нельзя делать `Get-Content | Out-File` —
+PowerShell 5.1 читает UTF-8 как ANSI и добавляет BOM, Web падает на `yaml: control characters are
+not allowed`. Копировать байтами (`sed`, `Copy-Item` + точечная правка).

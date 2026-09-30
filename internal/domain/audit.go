@@ -148,4 +148,9 @@ const (
 	ActionPeerInstanceCreate = "instance.create"
 	ActionPeerInstanceUpdate = "instance.update"
 	ActionPeerInstanceDelete = "instance.delete"
+
+	// Резервная копия конфигурации (§110). В details — только счётчики и
+	// размер файла: ни пароля, ни содержимого снимка.
+	ActionConfigExport = "config.export"
+	ActionConfigImport = "config.import"
 )
