@@ -112,8 +112,9 @@ func TestMultiInstance_RebaseFirstStart(t *testing.T) {
 	t.Run("S4: две реплики Web стартуют одновременно", func(t *testing.T) {
 		pool, cleanup := startPostgres(t, ctx)
 		defer cleanup()
-		// Обе реплики прошли заявку до того, как любая дошла до гейта: строку
-		// вставила первая, у второй идентичность «не заявитель».
+		// Обе реплики прошли заявку до того, как любая дошла до гейта. До §111
+		// строку instance_identity вставляла первая, и вторая, как «не
+		// заявитель», получала отказ сверки имён.
 		replicas := []bootstrap.Identity{
 			claimIdentity(t, ctx, pool, "r4", "web"),
 			claimIdentity(t, ctx, pool, "r4", "web"),

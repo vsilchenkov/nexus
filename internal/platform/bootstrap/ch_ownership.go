@@ -118,9 +118,9 @@ func (s staticConnProvider) Conn() chdrv.Conn { return s.conn }
 var (
 	errTeamDBUnexpected = errors.New("bootstrap: rename the database and update teams.ch_database manually")
 	errSeededDBInUse    = errors.New("bootstrap: this node already has nodes or teams; " +
-		"migrate the data manually before switching instance.id (DEPLOYMENT.md, changing instance.id on a running node)")
+		"migrate the data manually before switching instance.id (DEPLOYMENT.md 5A.5, changing instance.id on a running node)")
 	errSeededDBClaimed = errors.New("bootstrap: this node has already claimed its clickhouse databases under that name; " +
-		"rename them manually before switching instance.id (DEPLOYMENT.md, changing instance.id on a running node)")
+		"rename them manually before switching instance.id (DEPLOYMENT.md 5A.5, changing instance.id on a running node)")
 )
 
 // teamBinding — команда и имя её ClickHouse-БД, как они записаны в PostgreSQL.
