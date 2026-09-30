@@ -3472,8 +3472,8 @@ definitions:
         type: array
       digest:
         description: |-
-          Digest — sha256 файла и опций: применение сверяет его, чтобы записать
-          ровно показанный план.
+          Digest — sha256 файла, опций и плана (planDigest): применение сверяет
+          его, чтобы записать ровно показанный план.
         type: string
       entities:
         additionalProperties:

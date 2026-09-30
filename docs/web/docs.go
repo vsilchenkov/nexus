@@ -12455,7 +12455,7 @@ const docTemplate = `{
                     }
                 },
                 "digest": {
-                    "description": "Digest — sha256 файла и опций: применение сверяет его, чтобы записать\nровно показанный план.",
+                    "description": "Digest — sha256 файла, опций и плана (planDigest): применение сверяет\nего, чтобы записать ровно показанный план.",
                     "type": "string"
                 },
                 "entities": {
