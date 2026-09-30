@@ -22,6 +22,17 @@
 
 ## [Unreleased]
 
+## [1.40.0] - 2026-09-30
+
+**Откат:** без отката схемы (миграций нет). Конфигурация, восстановленная из файла (§110), и
+база Default, переименованная под `instance.id` (§111), — обычные строки PostgreSQL: прежняя
+версия работает с ними как со своими. Записи `config.export` и `config.import` остаются в
+журнале аудита.
+
+Два раздела ТЗ: резервная копия конфигурации с восстановлением на чистом сервере (§110) и
+устойчивый первый старт ноды с `instance.id` (§111). Миграций, новых ключей `config.yml` и правок
+`deploy/` нет. Функционально меняется только Web; обновление штатное, порядок сервисов не важен.
+
 ### Added
 
 - **§110 «Настройки → Резервная копия» — выгрузка всей конфигурации в файл и восстановление на
@@ -3722,7 +3733,8 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.39.0...HEAD
+[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.40.0...HEAD
+[1.40.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.39.0...v1.40.0
 [1.39.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.38.1...v1.39.0
 [1.38.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.38.0...v1.38.1
 [1.38.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.37.0...v1.38.0
