@@ -17,6 +17,19 @@
 
 name: nexus
 
+# §112: потолок лога контейнера. Без него Docker пишет stdout/stderr драйвером
+# json-file БЕЗ ограничения, и файл обнуляется только пересозданием контейнера
+# (на бою nginx — 1.2 ГБ за 4 недели). Потолок = max-size × max-file, по
+# умолчанию 250 МБ на контейнер; переопределяется из .env. Применяется только
+# пересозданием контейнера (`up -d`), `restart` его не подхватывает. Якоря между
+# файлами не видны — блок повторён в каждом compose-файле со своими
+# контейнерами; расхождение значений ловит tests/deploy.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-50m}
+    max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+
 services:
 
   receiver:
@@ -24,6 +37,7 @@ services:
       context: ..
       dockerfile: deploy/docker/receiver.Dockerfile
     restart: unless-stopped
+    logging: *logging
     env_file: ../.env
     depends_on:
       sender: { condition: service_started }
@@ -44,6 +58,7 @@ services:
       context: ..
       dockerfile: deploy/docker/sender.Dockerfile
     restart: unless-stopped
+    logging: *logging
     env_file: ../.env
     ports:
       - "9190:9190"
@@ -63,6 +78,7 @@ services:
       context: ..
       dockerfile: deploy/docker/web.Dockerfile
     restart: unless-stopped
+    logging: *logging
     env_file: ../.env
     ports:
       - "8000:8000"

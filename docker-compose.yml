@@ -39,11 +39,25 @@
 
 name: nexus
 
+# §112: потолок лога контейнера. Без него Docker пишет stdout/stderr драйвером
+# json-file БЕЗ ограничения, и файл обнуляется только пересозданием контейнера
+# (на бою nginx — 1.2 ГБ за 4 недели). Потолок = max-size × max-file, по
+# умолчанию 250 МБ на контейнер; переопределяется из .env. Применяется только
+# пересозданием контейнера (`up -d`), `restart` его не подхватывает. Якоря между
+# файлами не видны — блок повторён в каждом compose-файле со своими
+# контейнерами; расхождение значений ловит tests/deploy.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-50m}
+    max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+
 services:
 
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_USER: ${PG_USER:-nexus}
       POSTGRES_PASSWORD: ${PG_PASSWORD:-nexus}
@@ -62,6 +76,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *logging
     command:
       - redis-server
       - --appendonly
@@ -92,6 +107,7 @@ services:
       dockerfile: deploy/docker/kafka.Dockerfile
     image: nexus-kafka:latest
     restart: unless-stopped
+    logging: *logging
     environment:
       # §75: JMX-агент отдаёт /metrics на 7071 внутри сети (наружу не публикуем —
       # ходит только Prometheus, job `kafka-jmx` в deploy/prometheus.yml).
@@ -183,6 +199,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.55.0
     restart: unless-stopped
+    logging: *logging
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -200,6 +217,7 @@ services:
       context: .
       dockerfile: deploy/docker/receiver.Dockerfile
     restart: unless-stopped
+    logging: *logging
     env_file: .env
     depends_on:
       postgres: { condition: service_healthy }
@@ -224,6 +242,7 @@ services:
       context: .
       dockerfile: deploy/docker/sender.Dockerfile
     restart: unless-stopped
+    logging: *logging
     env_file: .env
     depends_on:
       postgres: { condition: service_healthy }
@@ -248,6 +267,7 @@ services:
       context: .
       dockerfile: deploy/docker/web.Dockerfile
     restart: unless-stopped
+    logging: *logging
     env_file: .env
     depends_on:
       postgres: { condition: service_healthy }
@@ -302,6 +322,7 @@ services:
       dockerfile: deploy/docker/nginx.Dockerfile
     image: nexus-nginx:latest
     restart: unless-stopped
+    logging: *logging
     environment:
       # Тот же скрипт генерации upstream'ов, что и в §93, просто список из
       # одного адреса.

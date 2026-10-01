@@ -7275,6 +7275,34 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §112 | ✅ Phase 112.0 | [sections/112-docker-log-rotation.md](sections/112-docker-log-rotation.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
-| §112.2–§112.3 `logging` во всех compose-файлах | ⛔ | — |
-| §112.4 процедура применения на работающем стеке | ⛔ | — |
-| §112.5 тест-страж | ⛔ | — |
+| §112.2–§112.3 `logging` во всех compose-файлах | ✅ Phase 112.1 | якорь `x-logging` + `logging: *logging` в [docker-compose.yml](../docker-compose.yml), [deploy/docker-compose.yml](../deploy/docker-compose.yml), [.app.yml](../deploy/docker-compose.app.yml), [.deps.yml](../deploy/docker-compose.deps.yml), [.ha.yml](../deploy/docker-compose.ha.yml) и [.stand-ha.yml](../deploy/docker-compose.stand-ha.yml) (реплики — через `x-app-base`), clickhouse в [standalone.override](../deploy/docker-compose.standalone.override.yml) и [ha.standalone.override](../deploy/docker-compose.ha.standalone.override.yml); переменные в [.env.example](../.env.example) |
+| §112.4 процедура применения на работающем стеке | ✅ Phase 112.1 | [DEPLOYMENT.md](../DEPLOYMENT.md) §2 (карта `.env`), §5.4.3 (ротация, проверка `docker inspect`), §9.1.7 (что изменится после обновления, пересоздание зависимостей) |
+| §112.5 тест-страж | ✅ Phase 112.1 | [tests/deploy/compose_logging_test.go](../tests/deploy/compose_logging_test.go) — каждый сервис с `image:`/`build:` во всех compose-файлах; состав контейнеров боевого файла; переменные в `.env.example` |
+
+**Неочевидности.**
+
+- **yaml.v3 разворачивает вложенные отображения в тип ВНЕШНЕЙ карты.** Первая версия теста
+  объявляла `type composeService map[string]any` — блок `logging` приходил как `composeService`,
+  приведение к `map[string]any` проваливалось, и тест кричал «no logging block» даже на
+  исправленных файлах. В обратную сторону та же грабля дала бы молча зелёный тест на любой
+  проверке «блока нет». Отсюда псевдоним `= map[string]any` и отдельный страж
+  `TestCompose_ProdStackContainersChecked`. Red-green проверен подменой файлов: старый корневой
+  файл — 8 красных сервисов, дефолт `max-file:-3` в одном файле — красный ровно на нём.
+- **Эффективный конфиг сверен `docker compose config` на 15 сочетаниях** (корневой ± nginx-профиль
+  и оверлей, HA ± малая память ± standalone ± external-pg, standalone ± малая память, вариант A ±
+  loadtest/dev, app, deps, stand-ha) и с переопределением `DOCKER_LOG_*` из окружения — у каждого
+  сервиса `json-file/50m/5`. Процедура: `docker compose -f … config --format json` и разбор
+  `services.*.logging` (скрипт — в истории сессии, не в репозитории: один раз на правку, Docker в
+  unit-прогоне не нужен).
+- **`logging` — параметр создания контейнера.** `restart` его не применяет; посервисный выкат с
+  `--no-deps` (DEPLOYMENT §9.1.5) пересоздаёт только приложение — Kafka/Redis/Prometheus/nginx
+  остаются без потолка, пока их не пересоздать отдельно (§9.1.7).
+- **Явное имя сервиса включает его профиль.** `docker compose up -d --no-deps nginx` на одиночном
+  стеке без балансировщика ПОДНЯЛ бы nginx (профиль `nginx`), и тот упёрся бы в 8000, занятый Web.
+  Поэтому в процедуре §9.1.7 nginx — отдельной командой с оговоркой «только где он уже работает».
+- **Оверлеи-заплатки `logging` не объявляют** (nginx.yml, override.yml, loadtest.yml, dev.yml,
+  external-pg): при наложении compose сохраняет поле базового сервиса. Объявляют только файлы,
+  добавляющие СВОИ контейнеры, — по ним и проходит тест.
+- **Повод — не главный потребитель диска.** На srv-p-1c-bus из 260 ГБ занятых логи Nexus — 1.2 ГБ;
+  основное — журнал событий 1C ESB (124 ГБ, ~142 МБ в сутки от служебных задач ESB, крутящихся
+  каждую секунду, не от трафика). §112 закрывает неограниченность роста, а не нехватку места.
