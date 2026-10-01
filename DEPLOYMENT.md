@@ -2819,16 +2819,33 @@ Sender'а он уже переживает.
   пересоздать. Сделайте это отдельно, в тихое время:
 
   ```bash
-  docker compose up -d --no-deps prometheus redis   # секунды: Redis — кеш и сессии, Prometheus — графики
-  docker compose up -d --no-deps kafka              # брокер недоступен 30–60 с: async-приём отвечает ошибкой
+  docker compose up -d --no-deps --wait prometheus redis   # секунды: Redis — кеш и сессии (с appendonly — вход в панель не сбрасывается)
+  docker compose up -d --no-deps --wait kafka              # брокер недоступен до минуты: async-приём ждёт или отвечает ошибкой
+  docker compose restart sender                            # ОБЯЗАТЕЛЬНО после Kafka — см. ниже
   # только если включён профиль nginx (§5.4.1) или пары реплик (§5.5) — вход недоступен секунды:
-  docker compose up -d --no-deps nginx
+  docker compose up -d --no-deps --wait nginx
   ```
+
+  ⚠️ **После пересоздания Kafka перезапустите Sender.** Consumer Sender'а (kafka-go) после
+  рестарта брокера иногда зависает: остаётся в consumer-группе, но не читает `nexus.async`, и
+  очередь копится до перезапуска Sender'а. На стенде так случилось в одном прогоне из двух.
+  Собственная метрика `nexus_kafka_lag` при этом показывает 0, верить ей нельзя. Сообщения не
+  теряются: после `restart sender` (вход в группу — до минуты) очередь разбирается. Проверка по
+  брокеру — столбец `LAG` должен уйти в 0:
+
+  ```bash
+  docker compose exec -T -e KAFKA_OPTS= kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+    --bootstrap-server localhost:9092 --describe --all-groups
+  ```
+
+  (`-e KAFKA_OPTS=` обязателен: иначе CLI наследует JMX-агент брокера §75 и падает с
+  «Address in use».) Это свойство любого рестарта Kafka, не только этого релиза.
 
   ⚠️ `nginx` указывайте **только** на стеке, где он уже работает: явное имя сервиса включает его
   профиль, и на одиночном стеке без балансировщика команда подняла бы nginx и упёрлась в
   «port is already allocated» на 8000. На стеке с PostgreSQL в контейнере пересоздайте так же
-  `postgres` — это короткий простой всей шины.
+  `postgres` (`up -d --no-deps --wait postgres`, секунды): панель и API, читающие базу, на это
+  время отвечают ошибкой.
 - **`docker compose up -d` без списка сервисов** пересоздаёт весь стек разом, включая Kafka, — то
   же окно 30–60 с.
 - **Локальная копия шаблона в корне** (способ 1 §5.3.1: `docker-compose.override.yml`, скопированный

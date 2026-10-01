@@ -7294,6 +7294,8 @@ Web завершался с `team "default" is already bound to "nexus_default" 
 - Штатная команда `up -d --build web receiver sender` без `--no-deps` пересоздаёт изменившиеся
   зависимости из `depends_on` (Kafka, PostgreSQL-контейнер), поэтому релиз обновляется только с
   `--no-deps`; откат `images.sh rollback --apply` (§74.5) теперь тоже ставит `--no-deps`.
+  После пересоздания Kafka — `docker compose restart sender`: consumer kafka-go после рестарта
+  брокера может зависнуть (дефект вне §112, закрыт процедурой).
 - Тест-страж `tests/deploy/compose_logging_test.go`: сервис с `image:`/`build:` без `logging` или
   с другим дефолтом — красный тест; пустой набор файлов — тоже.
 

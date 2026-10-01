@@ -115,10 +115,15 @@ compose сохраняет его из базового файла.
    Пересоздать их отдельно, в тихое время:
 
    ```bash
-   docker compose up -d --no-deps prometheus redis
-   docker compose up -d --no-deps kafka      # брокер недоступен 30–60 с
-   docker compose up -d --no-deps nginx      # ТОЛЬКО где nginx уже работает
+   docker compose up -d --no-deps --wait prometheus redis
+   docker compose up -d --no-deps --wait kafka   # брокер недоступен до минуты
+   docker compose restart sender                 # consumer kafka-go может зависнуть после рестарта брокера
+   docker compose up -d --no-deps --wait nginx   # ТОЛЬКО где nginx уже работает
    ```
+
+   Перезапуск Sender после Kafka обязателен: на стенде consumer после рестарта брокера в одном
+   прогоне из двух остался в группе, но перестал читать `nexus.async` (метрика `nexus_kafka_lag`
+   при этом — 0). Это дефект любого рестарта Kafka, к §112 не относится; здесь закрыт процедурой.
 
    Явное имя сервиса включает его профиль: на одиночном стеке без балансировщика последняя
    команда подняла бы nginx, и он упёрся бы в порт 8000, занятый Web.
