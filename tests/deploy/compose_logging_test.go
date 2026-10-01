@@ -127,25 +127,6 @@ func TestCompose_ProdStackContainersChecked(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
-// TestImagesSh_RollbackDoesNotRecreateDependencies — откат кода (§74.5) меняет
-// только образы приложения. Без --no-deps `up -d web receiver sender`
-// пересоздаёт и зависимости из depends_on, если их спецификация в compose
-// разошлась с контейнером (§112 добавил logging всем сервисам) — откат дал
-// бы внезапный простой Kafka и PostgreSQL-контейнера. Проверено экспериментом.
-func TestImagesSh_RollbackDoesNotRecreateDependencies(t *testing.T) {
-	t.Parallel()
-	raw, err := os.ReadFile(filepath.Join(repoRoot, "scripts", "deploy", "images.sh"))
-	require.NoError(t, err)
-	var restart string
-	for line := range strings.Lines(string(raw)) {
-		if strings.Contains(line, "restart=") && strings.Contains(line, " up -d") {
-			restart = line
-		}
-	}
-	require.NotEmpty(t, restart, "rollback restart command not found in images.sh")
-	assert.Contains(t, restart, "--no-deps", "rollback must not recreate dependencies: %s", restart)
-}
-
 // TestEnvExample_DocumentsLogRotation — переменные §112 видны оператору в
 // шаблоне .env, а не только в compose.
 func TestEnvExample_DocumentsLogRotation(t *testing.T) {

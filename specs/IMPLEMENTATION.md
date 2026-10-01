@@ -7281,6 +7281,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | §112 ревизия перед сдачей и живая проверка | ✅ Phase 112.2 | границы §112.6 (log4j-файлы Kafka, локальные копии шаблонов), DEPLOYMENT §5.4.3/§9.1.7, процедура §112.4 в лад с DEPLOYMENT (nginx — отдельно) |
 | §112.4 п. 2 — обновление приложения только с `--no-deps` | ✅ Phase 112.3 | DEPLOYMENT §9.1 (оговорка), §9.1.7 |
 | §112.4 п. 4 — откат `images.sh` без пересоздания зависимостей | ✅ Phase 112.4 | [scripts/deploy/images.sh](../scripts/deploy/images.sh) (`--no-deps`), DEPLOYMENT §10.1, §74.5 ТЗ; страж `TestImagesSh_RollbackDoesNotRecreateDependencies` |
+| Стенд: `images.sh`/`pg_dump.sh` затирали `COMPOSE_FILE` вызывающего | ✅ Phase 112.5 | [images.sh](../scripts/deploy/images.sh), [pg_dump.sh](../scripts/deploy/pg_dump.sh) — внутренняя переменная `NEXUS_COMPOSE`; [tests/deploy/scripts_test.go](../tests/deploy/scripts_test.go) — поддельный `docker` в PATH |
 
 **Неочевидности.**
 
@@ -7353,6 +7354,27 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 - **После `git checkout` прежнего тега** спецификация пересозданных с потолком зависимостей
   расходится уже со СТАРЫМ файлом — и там приложение перезапускать с `--no-deps` (DEPLOYMENT §9.1.7,
   «Откат»).
+
+**Стенд перед релизом 1.40.1 (Phase 112.5): скрипты затирали `COMPOSE_FILE`.** Прогон процедуры
+§9.1.7 на копии стека v1.40.0 (проект `nexus112stand`, стек из трёх файлов через `COMPOSE_FILE`)
+уронил `images.sh rollback --apply`: `read E:\…\nexus: Incorrect function` (на Linux —
+`is a directory`). Причина — `COMPOSE_FILE="${NEXUS_COMPOSE_FILE:-}"` в `images.sh` и `pg_dump.sh`:
+внутренняя переменная скрипта носила имя штатной переменной compose. Унаследованную из
+окружения переменную sh держит экспортированной, присваивание её обнуляет, а compose на ЗАДАННОЙ
+пустой `COMPOSE_FILE` берёт путь `""` = текущий каталог (на НЕзаданной — читает `.env`, поэтому на
+боевых стеках с `COMPOSE_FILE` в `.env` дефект не проявлялся). Задевает прежде всего `rolling.sh`
+(§93): он сам экспортирует `COMPOSE_FILE` и на шаге 2 вызывает `pg_dump.sh`, где ошибка compose
+проглочена `2>/dev/null` в `detect_mode` — скрипт молча выбирал `native` для PostgreSQL в
+контейнере. Живёт с v1.31.0. Тест — поддельный `docker` в PATH, который, как настоящий compose,
+падает на пустой `COMPOSE_FILE`; красный на старых скриптах (откат — ошибка, pg_dump — `native`).
+На Windows Git Bash `COMPOSE_FILE` со списком путей нужно защищать `MSYS2_ENV_CONV_EXCL=COMPOSE_FILE`,
+иначе MSYS переписывает `C:/…` как POSIX-список — это свойство стенда, не скриптов.
+
+Прогон процедуры релиза на стенде: шаг А (`up -d --build --no-deps web receiver sender`) пересоздал
+ровно три контейнера приложения с `map[max-file:5 max-size:50m]`, зависимости сохранили ID и
+`map[]`; sync и async прошли. `images.sh rollback 1.40.0 --apply` вернул версию 1.40.0, снова не
+тронув зависимости; async после рестарта Sender доставлен с задержкой входа в consumer-группу (≈10 с),
+без потерь.
 
 Попутно: `TestSend_SentCallOutlivesReadyWait` (`internal/platform/grpcsender`) однажды упал в
 полном параллельном прогоне `go test ./...` (`not sent within ready_wait 100ms`), в одиночку —
