@@ -122,7 +122,8 @@ Sender схему не мигрирует и этих метрик не отда
 - перед обновлением: `scripts/deploy/images.sh tag <текущая версия>` — вешает версионный тег на
   текущие `:latest`;
 - при аварии: `scripts/deploy/images.sh rollback <версия>` — возвращает `:latest` на сохранённые
-  образы и перезапускает сервисы **без сборки** (`docker compose up -d --no-build --force-recreate`);
+  образы и перезапускает сервисы **без сборки** и без зависимостей
+  (`docker compose up -d --no-build --no-deps --force-recreate`; `--no-deps` — с §112.4);
 - `scripts/deploy/images.sh list` — какие версии сохранены на сервере.
 
 Скрипт не заменяет `git checkout` прежнего тега: рабочее дерево нужно вернуть, чтобы следующая

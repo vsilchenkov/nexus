@@ -36,8 +36,22 @@
 
 name: nexus-stand
 
+# §112: потолок лога контейнера. Без него Docker пишет stdout/stderr драйвером
+# json-file БЕЗ ограничения, и файл обнуляется только пересозданием контейнера
+# (на бою nginx — 1.2 ГБ за 4 недели). Потолок = max-size × max-file, по
+# умолчанию 250 МБ на контейнер; переопределяется из .env. Применяется только
+# пересозданием контейнера (`up -d`), `restart` его не подхватывает. Якоря между
+# файлами не видны — блок повторён в каждом compose-файле со своими
+# контейнерами; расхождение значений ловит tests/deploy.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-50m}
+    max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+
 x-app-base: &app-base
   restart: unless-stopped
+  logging: *logging
   # Сколько docker ждёт после SIGTERM, прежде чем убить процесс. Обязано быть
   # БОЛЬШЕ, чем shutdown.drain_sec + shutdown.timeout_sec из config.yml
   # (5 + 30 = 35 с), иначе весь graceful-путь §93.5 бессмыслен: дефолт движка
@@ -102,6 +116,7 @@ services:
       dockerfile: deploy/docker/nginx.Dockerfile
     image: nexus-nginx:latest
     restart: unless-stopped
+    logging: *logging
     environment:
       NEXUS_WEB_UPSTREAMS: "web-1:8000 web-2:8000"
       NEXUS_RECEIVER_UPSTREAMS: "receiver-1:8080 receiver-2:8080"

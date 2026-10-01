@@ -37,7 +37,10 @@ set -eu
 PREFIX="${NEXUS_IMAGE_PREFIX:-nexus}"
 SERVICES="${NEXUS_SERVICES:-web receiver sender}"
 RESTART_SERVICES="${NEXUS_RESTART_SERVICES:-$SERVICES}"
-COMPOSE_FILE="${NEXUS_COMPOSE_FILE:-}"
+# Не COMPOSE_FILE: это штатная переменная docker compose. Унаследованную из
+# окружения (rolling.sh её экспортирует) присваивание затёрло бы, а на пустой
+# COMPOSE_FILE compose падает, приняв каталог за файл.
+NEXUS_COMPOSE="${NEXUS_COMPOSE_FILE:-}"
 
 die() {
 	echo "ОШИБКА: $*" >&2
@@ -69,8 +72,8 @@ image_exists() {
 }
 
 compose_cmd() {
-	if [ -n "$COMPOSE_FILE" ]; then
-		echo "docker compose -f $COMPOSE_FILE"
+	if [ -n "$NEXUS_COMPOSE" ]; then
+		echo "docker compose -f $NEXUS_COMPOSE"
 	else
 		echo "docker compose"
 	fi
@@ -129,7 +132,10 @@ cmd_rollback() {
 		echo "$PREFIX-$svc:latest → $version"
 	done
 
-	restart="$(compose_cmd) up -d --no-build --force-recreate $RESTART_SERVICES"
+	# --no-deps: откат меняет только образы приложения. Без него compose
+	# пересоздаёт и зависимости из depends_on, если их спецификация в файле
+	# разошлась с контейнером (§112) — внезапный простой Kafka и PostgreSQL.
+	restart="$(compose_cmd) up -d --no-build --no-deps --force-recreate $RESTART_SERVICES"
 	echo
 	if [ "$apply" -eq 1 ]; then
 		echo "+ $restart"

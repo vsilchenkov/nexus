@@ -3437,6 +3437,15 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
 
 Если будете расширять — вот логичные следующие шаги, в порядке полезности:
 
+- **Зависание async-consumer'а Sender'а после рестарта Kafka** (найдено стендом перед 1.40.1, см.
+  §112 «Стенд перед релизом»). kafka-go v0.4.51 после рестарта брокера иногда остаётся в
+  consumer-группе (heartbeat идёт, партиции назначены), но `FetchMessage` больше не возвращается;
+  `nexus_kafka_lag` (из `Reader.Stats`) при этом 0, `nexus_kafka_in_flight` — 0. Лечится только
+  рестартом Sender'а; сейчас закрыто процедурой (DEPLOYMENT §9.1.7). Нужно отдельное ТЗ:
+  сторож прогресса (лаг по брокеру > 0 и нет fetch N секунд → пересоздать reader), лаг из
+  брокера вместо `Reader.Stats`, алерт; заодно проверить другие reader'ы (clog-retry, dlq,
+  paused) и обновление kafka-go.
+
 0. **Горизонтальное масштабирование Receiver/Web (нулевой простой при обновлении)** — вынесено
    из §74 отдельным ТЗ. Сейчас у каждого сервиса один экземпляр, и `docker compose up` даёт
    короткий перерыв даже на плановом обновлении, а падение экземпляра — полный простой. Что уже
@@ -7265,3 +7274,137 @@ PostgreSQL — тестовые.
 Грабля стенда: копию конфига для второй реплики нельзя делать `Get-Content | Out-File` —
 PowerShell 5.1 читает UTF-8 как ANSI и добавляет BOM, Web падает на `yaml: control characters are
 not allowed`. Копировать байтами (`sed`, `Copy-Item` + точечная правка).
+
+### 4.97 §112 — ротация логов контейнеров Docker
+
+Раздел [112-docker-log-rotation.md](sections/112-docker-log-rotation.md). Ветка
+`feature/docker-log-rotation` (от `dev`). Миграций, ключей `config.yml` и правок интерфейса нет;
+новые необязательные переменные `.env` — `DOCKER_LOG_MAX_SIZE`, `DOCKER_LOG_MAX_FILE`.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §112 | ✅ Phase 112.0 | [sections/112-docker-log-rotation.md](sections/112-docker-log-rotation.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| §112.2–§112.3 `logging` во всех compose-файлах | ✅ Phase 112.1 | якорь `x-logging` + `logging: *logging` в [docker-compose.yml](../docker-compose.yml), [deploy/docker-compose.yml](../deploy/docker-compose.yml), [.app.yml](../deploy/docker-compose.app.yml), [.deps.yml](../deploy/docker-compose.deps.yml), [.ha.yml](../deploy/docker-compose.ha.yml) и [.stand-ha.yml](../deploy/docker-compose.stand-ha.yml) (реплики — через `x-app-base`), clickhouse в [standalone.override](../deploy/docker-compose.standalone.override.yml) и [ha.standalone.override](../deploy/docker-compose.ha.standalone.override.yml); переменные в [.env.example](../.env.example) |
+| §112.4 процедура применения на работающем стеке | ✅ Phase 112.1 | [DEPLOYMENT.md](../DEPLOYMENT.md) §2 (карта `.env`), §5.4.3 (ротация, проверка `docker inspect`), §9.1.7 (что изменится после обновления, пересоздание зависимостей) |
+| §112.5 тест-страж | ✅ Phase 112.1 | [tests/deploy/compose_logging_test.go](../tests/deploy/compose_logging_test.go) — каждый сервис с `image:`/`build:` во всех compose-файлах; состав контейнеров боевого файла; переменные в `.env.example` |
+| §112 ревизия перед сдачей и живая проверка | ✅ Phase 112.2 | границы §112.6 (log4j-файлы Kafka, локальные копии шаблонов), DEPLOYMENT §5.4.3/§9.1.7, процедура §112.4 в лад с DEPLOYMENT (nginx — отдельно) |
+| §112.4 п. 2 — обновление приложения только с `--no-deps` | ✅ Phase 112.3 | DEPLOYMENT §9.1 (оговорка), §9.1.7 |
+| §112.4 п. 4 — откат `images.sh` без пересоздания зависимостей | ✅ Phase 112.4 | [scripts/deploy/images.sh](../scripts/deploy/images.sh) (`--no-deps`), DEPLOYMENT §10.1, §74.5 ТЗ; страж `TestImagesSh_RollbackDoesNotRecreateDependencies` |
+| Стенд: перезапуск Sender после пересоздания Kafka (consumer kafka-go зависает) | ✅ Phase 112.6 (процедура) | DEPLOYMENT §9.1.7, ТЗ §112.4; корень — «Куда копать дальше» |
+| Стенд: `images.sh`/`pg_dump.sh` затирали `COMPOSE_FILE` вызывающего | ✅ Phase 112.5 | [images.sh](../scripts/deploy/images.sh), [pg_dump.sh](../scripts/deploy/pg_dump.sh) — внутренняя переменная `NEXUS_COMPOSE`; [tests/deploy/scripts_test.go](../tests/deploy/scripts_test.go) — поддельный `docker` в PATH |
+
+**Неочевидности.**
+
+- **yaml.v3 разворачивает вложенные отображения в тип ВНЕШНЕЙ карты.** Первая версия теста
+  объявляла `type composeService map[string]any` — блок `logging` приходил как `composeService`,
+  приведение к `map[string]any` проваливалось, и тест кричал «no logging block» даже на
+  исправленных файлах. В обратную сторону та же грабля дала бы молча зелёный тест на любой
+  проверке «блока нет». Отсюда псевдоним `= map[string]any` и отдельный страж
+  `TestCompose_ProdStackContainersChecked`. Red-green проверен подменой файлов: старый корневой
+  файл — 8 красных сервисов, дефолт `max-file:-3` в одном файле — красный ровно на нём.
+- **Эффективный конфиг сверен `docker compose config` на 15 сочетаниях** (корневой ± nginx-профиль
+  и оверлей, HA ± малая память ± standalone ± external-pg, standalone ± малая память, вариант A ±
+  loadtest/dev, app, deps, stand-ha) и с переопределением `DOCKER_LOG_*` из окружения — у каждого
+  сервиса `json-file/50m/5`. Процедура: `docker compose -f … config --format json` и разбор
+  `services.*.logging` (скрипт — в истории сессии, не в репозитории: один раз на правку, Docker в
+  unit-прогоне не нужен).
+- **`logging` — параметр создания контейнера.** `restart` его не применяет; посервисный выкат с
+  `--no-deps` (DEPLOYMENT §9.1.5) пересоздаёт только приложение — Kafka/Redis/Prometheus/nginx
+  остаются без потолка, пока их не пересоздать отдельно (§9.1.7).
+- **Явное имя сервиса включает его профиль.** `docker compose up -d --no-deps nginx` на одиночном
+  стеке без балансировщика ПОДНЯЛ бы nginx (профиль `nginx`), и тот упёрся бы в 8000, занятый Web.
+  Поэтому в процедуре §9.1.7 nginx — отдельной командой с оговоркой «только где он уже работает».
+- **Оверлеи-заплатки `logging` не объявляют** (nginx.yml, override.yml, loadtest.yml, dev.yml,
+  external-pg): при наложении compose сохраняет поле базового сервиса. Объявляют только файлы,
+  добавляющие СВОИ контейнеры, — по ним и проходит тест.
+- **Повод — не главный потребитель диска.** На srv-p-1c-bus из 260 ГБ занятых логи Nexus — 1.2 ГБ;
+  основное — журнал событий 1C ESB (124 ГБ, ~142 МБ в сутки от служебных задач ESB, крутящихся
+  каждую секунду, не от трафика). §112 закрывает неограниченность роста, а не нехватку места.
+
+**Ревизия перед сдачей (Phase 112.2).** Обе находки — в обещаниях документов, код не менялся;
+регрессионного теста у них нет (это границы, а не поведение).
+
+- **«Прочих файловых логов нет» — неправда для Kafka.** Проверка на бою
+  (`docker exec nexus-kafka-1 ls /opt/kafka/logs`): log4j образа `apache/kafka` пишет, кроме
+  stdout, `server.log` с почасовой ротацией БЕЗ удаления, плюс `controller.log`,
+  `log-cleaner.log`, `state-change.log` — 674 файла, 8.2 МБ за 4 недели в слое контейнера. §112
+  их не ограничивает; размер ничтожный, пересоздание очищает. Записано границей в §112.6,
+  DEPLOYMENT §5.4.3 и сводном ТЗ, а не исправлено: правка log4j брокера ради ~100 МБ в год не
+  окупает риск сломать его вывод.
+- **Локальные копии шаблонов.** Способ 1 DEPLOYMENT §5.3.1 копирует
+  `deploy/docker-compose.standalone.override.yml` в корень; копия с тегом не обновляется, и её
+  `clickhouse` (свой контейнер, а не заплатка) остался бы без потолка при полном ощущении, что
+  §112 применён. DEPLOYMENT §9.1.7 — готовый фрагмент `logging` для копии и команда пересоздания.
+  Боевой srv-p-1c-bus этим не затронут: его локальный override только правит
+  postgres/receiver/sender/web (проверено), в `.env` —
+  `COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.nginx.yml:docker-compose.override.yml`
+  и `COMPOSE_PROFILES=nginx`.
+- Процедура §112.4 ТЗ ставила nginx в одну команду с prometheus/redis — в лад с DEPLOYMENT
+  вынесено отдельно с оговоркой про профиль.
+
+**Живая проверка (Phase 112.2).** Интерфейса у §112 нет, браузерный прогон неприменим; проверялось
+поведение Docker. Из боевого `docker-compose.yml` поднят одноразовый контейнер сервиса `redis`
+(`docker compose -p nexus112check run -d --no-deps`, без портов) с
+`DOCKER_LOG_MAX_SIZE=1k DOCKER_LOG_MAX_FILE=2`, вывел 2000 строк: `docker inspect` —
+`json-file map[max-file:2 max-size:1k]`, `docker logs` отдаёт 11 последних строк (1989–1999) —
+ротация режет. Контейнер и сеть проекта удалены (`docker rm -f` запрещён правилами разрешений —
+`stop`, затем `rm`).
+
+**Подготовка релиза 1.40.1 (Phase 112.3–112.4): скрытые пути пересоздания зависимостей.**
+
+- **`docker compose up -d <svc>` пересоздаёт изменившиеся зависимости из `depends_on`.** Проверено
+  экспериментом: у зависимости поменяли только `logging` — `up -d <зависимый>` её пересоздал, с
+  `--no-deps` — нет. Штатная команда §9.1 (`up -d --build web receiver sender`) на этом релизе
+  перезапустила бы Kafka и PostgreSQL-контейнер посреди обновления приложения. Отсюда правило
+  §9.1.7: приложение — только с `--no-deps`, зависимости — отдельными шагами.
+- **Тот же путь был в откате.** `images.sh rollback --apply` перезапускал приложение
+  `up -d --no-build --force-recreate` без `--no-deps` (`rolling.sh` флаг ставил, `images.sh` —
+  нет). Откат 1.40.1 → 1.40.0 устроил бы простой брокера ровно в аварийный момент. Исправлено;
+  тест-страж читает строку `restart=` скрипта — shell-скрипт в unit-прогоне не исполняется.
+- **После `git checkout` прежнего тега** спецификация пересозданных с потолком зависимостей
+  расходится уже со СТАРЫМ файлом — и там приложение перезапускать с `--no-deps` (DEPLOYMENT §9.1.7,
+  «Откат»).
+
+**Стенд перед релизом 1.40.1 (Phase 112.5): скрипты затирали `COMPOSE_FILE`.** Прогон процедуры
+§9.1.7 на копии стека v1.40.0 (проект `nexus112stand`, стек из трёх файлов через `COMPOSE_FILE`)
+уронил `images.sh rollback --apply`: `read E:\…\nexus: Incorrect function` (на Linux —
+`is a directory`). Причина — `COMPOSE_FILE="${NEXUS_COMPOSE_FILE:-}"` в `images.sh` и `pg_dump.sh`:
+внутренняя переменная скрипта носила имя штатной переменной compose. Унаследованную из
+окружения переменную sh держит экспортированной, присваивание её обнуляет, а compose на ЗАДАННОЙ
+пустой `COMPOSE_FILE` берёт путь `""` = текущий каталог (на НЕзаданной — читает `.env`, поэтому на
+боевых стеках с `COMPOSE_FILE` в `.env` дефект не проявлялся). Задевает прежде всего `rolling.sh`
+(§93): он сам экспортирует `COMPOSE_FILE` и на шаге 2 вызывает `pg_dump.sh`, где ошибка compose
+проглочена `2>/dev/null` в `detect_mode` — скрипт молча выбирал `native` для PostgreSQL в
+контейнере. Живёт с v1.31.0. Тест — поддельный `docker` в PATH, который, как настоящий compose,
+падает на пустой `COMPOSE_FILE`; красный на старых скриптах (откат — ошибка, pg_dump — `native`).
+На Windows Git Bash `COMPOSE_FILE` со списком путей нужно защищать `MSYS2_ENV_CONV_EXCL=COMPOSE_FILE`,
+иначе MSYS переписывает `C:/…` как POSIX-список — это свойство стенда, не скриптов.
+
+Прогон процедуры релиза на стенде: шаг А (`up -d --build --no-deps web receiver sender`) пересоздал
+ровно три контейнера приложения с `map[max-file:5 max-size:50m]`, зависимости сохранили ID и
+`map[]`; sync и async прошли. `images.sh rollback 1.40.0 --apply` вернул версию 1.40.0, снова не
+тронув зависимости; async после рестарта Sender доставлен с задержкой входа в consumer-группу (≈10 с),
+без потерь.
+
+Шаг Б (зависимости), замеры на стенде:
+
+- `prometheus redis` — 7.6 с; сессия панели пережила пересоздание Redis (`appendonly` на томе —
+  так же на бою).
+- `kafka` — 9–23 с до healthy. Зонд async раз в секунду: из 110 запросов один 502 в момент
+  остановки, несколько ждали до ~11 с (producer дождался брокера), остальные 200.
+  **В первом прогоне Sender перестал читать `nexus.async`:** после пары `Not Coordinator For
+  Group` в 08:08:44 — тишина, отставание партиции 102 по `kafka-consumer-groups.sh` больше 6 минут,
+  `nexus_kafka_in_flight=0` (висит в `FetchMessage`, а не в обработке; debug-лог пуст — не
+  retry-in-place), а `nexus_kafka_lag` — 0. `docker compose restart sender` — через ~30 с (вход в
+  группу после выселения зависшего участника) очередь разобрана, потерь нет. Второй прогон
+  (брокер поднялся за 9 с) — чисто, без предупреждений. Поэтому в процедуре §9.1.7 перезапуск
+  Sender после Kafka — обязательный шаг, а не «по симптомам»: симптома, видимого по метрикам
+  Nexus, нет. Корень — в «Куда копать дальше».
+- `nginx` — вход недоступен < 1 с (2 из 40 проб с шагом 0.25 с).
+- `postgres` (контейнер) — 6.5 с; панель один раз ответила 500, sync-приём узла без авторизации
+  шёл без ошибок (конфиг узла из кеша).
+- Итог: у всех 8 контейнеров `json-file map[max-file:5 max-size:50m]`, sync и async работают.
+
+Попутно: `TestSend_SentCallOutlivesReadyWait` (`internal/platform/grpcsender`) однажды упал в
+полном параллельном прогоне `go test ./...` (`not sent within ready_wait 100ms`), в одиночку —
+10 из 10 зелёных. Тайминговый тест под нагрузкой, к §112 не относится.

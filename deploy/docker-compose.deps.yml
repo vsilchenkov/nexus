@@ -15,12 +15,26 @@
 
 name: nexus-deps
 
+# §112: потолок лога контейнера. Без него Docker пишет stdout/stderr драйвером
+# json-file БЕЗ ограничения, и файл обнуляется только пересозданием контейнера
+# (на бою nginx — 1.2 ГБ за 4 недели). Потолок = max-size × max-file, по
+# умолчанию 250 МБ на контейнер; переопределяется из .env. Применяется только
+# пересозданием контейнера (`up -d`), `restart` его не подхватывает. Якоря между
+# файлами не видны — блок повторён в каждом compose-файле со своими
+# контейнерами; расхождение значений ловит tests/deploy.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-50m}
+    max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+
 services:
 
   postgres:
     image: postgres:16-alpine
     container_name: nexus_postgres
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_USER: ${PG_USER:-nexus}
       POSTGRES_PASSWORD: ${PG_PASSWORD:-nexus}
@@ -40,6 +54,7 @@ services:
     image: redis:7-alpine
     container_name: nexus_redis
     restart: unless-stopped
+    logging: *logging
     command:
       - redis-server
       - --appendonly
@@ -66,6 +81,7 @@ services:
     command: ["--", "--memory_worker_correct_memory_tracker=1"]
     container_name: nexus_clickhouse
     restart: unless-stopped
+    logging: *logging
     environment:
       CLICKHOUSE_DB: nexus_default
       CLICKHOUSE_USER: ${CH_USER:-default}
@@ -107,6 +123,7 @@ services:
     image: nexus-kafka:latest
     container_name: nexus_kafka
     restart: unless-stopped
+    logging: *logging
     environment:
       KAFKA_OPTS: "-javaagent:/opt/jmx/agent.jar=7071:/opt/jmx/kafka.yml"
       CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
@@ -169,6 +186,7 @@ services:
     image: prom/prometheus:v2.55.0
     container_name: nexus_prometheus
     restart: unless-stopped
+    logging: *logging
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
