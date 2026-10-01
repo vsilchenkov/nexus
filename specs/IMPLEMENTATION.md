@@ -7265,3 +7265,16 @@ PostgreSQL — тестовые.
 Грабля стенда: копию конфига для второй реплики нельзя делать `Get-Content | Out-File` —
 PowerShell 5.1 читает UTF-8 как ANSI и добавляет BOM, Web падает на `yaml: control characters are
 not allowed`. Копировать байтами (`sed`, `Copy-Item` + точечная правка).
+
+### 4.97 §112 — ротация логов контейнеров Docker
+
+Раздел [112-docker-log-rotation.md](sections/112-docker-log-rotation.md). Ветка
+`feature/docker-log-rotation` (от `dev`). Миграций, ключей `config.yml` и правок интерфейса нет;
+новые необязательные переменные `.env` — `DOCKER_LOG_MAX_SIZE`, `DOCKER_LOG_MAX_FILE`.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §112 | ✅ Phase 112.0 | [sections/112-docker-log-rotation.md](sections/112-docker-log-rotation.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| §112.2–§112.3 `logging` во всех compose-файлах | ⛔ | — |
+| §112.4 процедура применения на работающем стеке | ⛔ | — |
+| §112.5 тест-страж | ⛔ | — |
