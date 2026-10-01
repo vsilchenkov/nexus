@@ -108,10 +108,15 @@ compose сохраняет его из базового файла.
 2. **Посервисный выкат с `--no-deps`** (порядок v1.36/v1.39: Receiver → Sender → Web) зависимости не
    трогает: Kafka, Redis, Prometheus и nginx продолжают писать без потолка, пока их не пересоздать.
    Пересоздать их отдельно, в тихое время:
+
    ```bash
-   docker compose up -d --no-deps nginx prometheus redis
+   docker compose up -d --no-deps prometheus redis
    docker compose up -d --no-deps kafka      # брокер недоступен 30–60 с
+   docker compose up -d --no-deps nginx      # ТОЛЬКО где nginx уже работает
    ```
+
+   Явное имя сервиса включает его профиль: на одиночном стеке без балансировщика последняя
+   команда подняла бы nginx, и он упёрся бы в порт 8000, занятый Web.
 3. **Пересоздание удаляет старый файл лога** вместе с каталогом контейнера — место освобождается
    сразу (на боевом сервере — 1.2 ГБ nginx), но история `docker logs` до этого момента теряется.
    Нужна — сохранить заранее: `docker compose logs --no-color nginx > nginx-before-112.log`.
@@ -141,8 +146,17 @@ docker inspect --format '{{.Name}} {{.HostConfig.LogConfig.Type}} {{.HostConfig.
 
 §112 ограничивает **только stdout/stderr контейнеров Nexus**, которые пишет Docker. Не закрывает:
 
-- **файлы внутри контейнеров**: GC-лог JVM Kafka (`/opt/kafka/logs/kafkaServer-gc.log`) уже
-  ограничен самим JVM (`filecount=10,filesize=100M`); прочих файловых логов сервисы Nexus не пишут;
+- **файлы внутри контейнеров.** Kafka, кроме stdout, пишет log4j-файлы в `/opt/kafka/logs`
+  слоя контейнера: `server.log` ротируется ежечасно **без удаления** старых кусков (на бою за
+  4 недели — 674 файла, 8.2 МБ вместе с `controller.log` и `log-cleaner.log`); GC-лог ограничен
+  самим JVM (`filecount=10,filesize=100M`). Всё это пропадает при пересоздании контейнера, а при
+  нынешнем темпе даёт ~100 МБ и ~9 тыс. файлов в год — отдельной правки нет. Сервисы Nexus и
+  nginx файловых логов не пишут (`access_log /dev/stdout`, `error_log /dev/stderr`);
+- **локальные копии шаблонов.** Установка, где шаблон standalone скопирован в корень как
+  `docker-compose.override.yml` (способ 1 DEPLOYMENT §5.3.1), живёт со своей копией: её
+  `clickhouse` потолка не получит, пока в копию не добавить `logging` (DEPLOYMENT §9.1.7) или не
+  подключить шаблон через `-f`/`COMPOSE_FILE`. То же — у любого локального compose-файла со своим
+  контейнером: тест-страж видит только файлы репозитория;
 - **тома данных**: Prometheus (`PROMETHEUS_RETENTION`), Kafka (retention топиков), PostgreSQL,
   ClickHouse — у каждого своя политика хранения;
 - **file-fallback NDJSON Sender'а** при недоступном ClickHouse — отдельный механизм;

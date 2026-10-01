@@ -1266,8 +1266,10 @@ SELECT event_date, count() FROM system.part_log WHERE error = 241 GROUP BY event
   перекрывает. Это способ ограничить ЧУЖИЕ контейнеры хоста, и правка требует рестарта dockerd, то
   есть всех контейнеров хоста.
 - **Чего §112 не ограничивает:** тома данных (Prometheus — `PROMETHEUS_RETENTION`, Kafka —
-  retention топиков, PostgreSQL, ClickHouse), файлы внутри контейнеров (GC-лог Kafka ограничен
-  самим JVM: 10 × 100 МБ), file-fallback Sender'а, чужие контейнеры и процессы хоста.
+  retention топиков, PostgreSQL, ClickHouse), файлы внутри контейнеров (Kafka пишет log4j-файлы
+  в `/opt/kafka/logs` с почасовой ротацией без удаления — на бою ~2 МБ в неделю, очищаются
+  пересозданием контейнера; GC-лог ограничен самим JVM: 10 × 100 МБ), file-fallback Sender'а,
+  чужие контейнеры и процессы хоста, а также контейнеры из локальных копий шаблонов (§9.1.7).
 
 ---
 
@@ -2814,6 +2816,22 @@ Sender'а он уже переживает.
   `postgres` — это короткий простой всей шины.
 - **`docker compose up -d` без списка сервисов** пересоздаёт весь стек разом, включая Kafka, — то
   же окно 30–60 с.
+- **Локальная копия шаблона в корне** (способ 1 §5.3.1: `docker-compose.override.yml`, скопированный
+  из `deploy/docker-compose.standalone.override.yml`) обновлением не меняется, и её контейнер
+  `clickhouse` останется без потолка. Добавьте в сервис `clickhouse` копии
+
+  ```yaml
+      logging:
+        driver: json-file
+        options:
+          max-size: ${DOCKER_LOG_MAX_SIZE:-50m}
+          max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+  ```
+
+  и пересоздайте его (`docker compose up -d --no-deps clickhouse` — логи недоступны на время
+  рестарта ClickHouse), либо перейдите на подключение шаблона через `-f`/`COMPOSE_FILE` (способ 2).
+  Копиям, которые только правят существующие сервисы (порты, лимиты, профили, — как боевой
+  override с postgres/receiver/sender/web), ничего делать не нужно.
 - **Проверка** — команда `docker inspect` из §5.4.3: `map[]` у контейнера = он ещё не пересоздан.
 
 **Откат.** Схему откатывать не нужно. Прежние compose-файлы потолка не задают: после отката и

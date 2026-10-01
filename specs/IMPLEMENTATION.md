@@ -7278,6 +7278,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | §112.2–§112.3 `logging` во всех compose-файлах | ✅ Phase 112.1 | якорь `x-logging` + `logging: *logging` в [docker-compose.yml](../docker-compose.yml), [deploy/docker-compose.yml](../deploy/docker-compose.yml), [.app.yml](../deploy/docker-compose.app.yml), [.deps.yml](../deploy/docker-compose.deps.yml), [.ha.yml](../deploy/docker-compose.ha.yml) и [.stand-ha.yml](../deploy/docker-compose.stand-ha.yml) (реплики — через `x-app-base`), clickhouse в [standalone.override](../deploy/docker-compose.standalone.override.yml) и [ha.standalone.override](../deploy/docker-compose.ha.standalone.override.yml); переменные в [.env.example](../.env.example) |
 | §112.4 процедура применения на работающем стеке | ✅ Phase 112.1 | [DEPLOYMENT.md](../DEPLOYMENT.md) §2 (карта `.env`), §5.4.3 (ротация, проверка `docker inspect`), §9.1.7 (что изменится после обновления, пересоздание зависимостей) |
 | §112.5 тест-страж | ✅ Phase 112.1 | [tests/deploy/compose_logging_test.go](../tests/deploy/compose_logging_test.go) — каждый сервис с `image:`/`build:` во всех compose-файлах; состав контейнеров боевого файла; переменные в `.env.example` |
+| §112 ревизия перед сдачей и живая проверка | ✅ Phase 112.2 | границы §112.6 (log4j-файлы Kafka, локальные копии шаблонов), DEPLOYMENT §5.4.3/§9.1.7, процедура §112.4 в лад с DEPLOYMENT (nginx — отдельно) |
 
 **Неочевидности.**
 
@@ -7306,3 +7307,36 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 - **Повод — не главный потребитель диска.** На srv-p-1c-bus из 260 ГБ занятых логи Nexus — 1.2 ГБ;
   основное — журнал событий 1C ESB (124 ГБ, ~142 МБ в сутки от служебных задач ESB, крутящихся
   каждую секунду, не от трафика). §112 закрывает неограниченность роста, а не нехватку места.
+
+**Ревизия перед сдачей (Phase 112.2).** Обе находки — в обещаниях документов, код не менялся;
+регрессионного теста у них нет (это границы, а не поведение).
+
+- **«Прочих файловых логов нет» — неправда для Kafka.** Проверка на бою
+  (`docker exec nexus-kafka-1 ls /opt/kafka/logs`): log4j образа `apache/kafka` пишет, кроме
+  stdout, `server.log` с почасовой ротацией БЕЗ удаления, плюс `controller.log`,
+  `log-cleaner.log`, `state-change.log` — 674 файла, 8.2 МБ за 4 недели в слое контейнера. §112
+  их не ограничивает; размер ничтожный, пересоздание очищает. Записано границей в §112.6,
+  DEPLOYMENT §5.4.3 и сводном ТЗ, а не исправлено: правка log4j брокера ради ~100 МБ в год не
+  окупает риск сломать его вывод.
+- **Локальные копии шаблонов.** Способ 1 DEPLOYMENT §5.3.1 копирует
+  `deploy/docker-compose.standalone.override.yml` в корень; копия с тегом не обновляется, и её
+  `clickhouse` (свой контейнер, а не заплатка) остался бы без потолка при полном ощущении, что
+  §112 применён. DEPLOYMENT §9.1.7 — готовый фрагмент `logging` для копии и команда пересоздания.
+  Боевой srv-p-1c-bus этим не затронут: его локальный override только правит
+  postgres/receiver/sender/web (проверено), в `.env` —
+  `COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.nginx.yml:docker-compose.override.yml`
+  и `COMPOSE_PROFILES=nginx`.
+- Процедура §112.4 ТЗ ставила nginx в одну команду с prometheus/redis — в лад с DEPLOYMENT
+  вынесено отдельно с оговоркой про профиль.
+
+**Живая проверка (Phase 112.2).** Интерфейса у §112 нет, браузерный прогон неприменим; проверялось
+поведение Docker. Из боевого `docker-compose.yml` поднят одноразовый контейнер сервиса `redis`
+(`docker compose -p nexus112check run -d --no-deps`, без портов) с
+`DOCKER_LOG_MAX_SIZE=1k DOCKER_LOG_MAX_FILE=2`, вывел 2000 строк: `docker inspect` —
+`json-file map[max-file:2 max-size:1k]`, `docker logs` отдаёт 11 последних строк (1989–1999) —
+ротация режет. Контейнер и сеть проекта удалены (`docker rm -f` запрещён правилами разрешений —
+`stop`, затем `rm`).
+
+Попутно: `TestSend_SentCallOutlivesReadyWait` (`internal/platform/grpcsender`) однажды упал в
+полном параллельном прогоне `go test ./...` (`not sent within ready_wait 100ms`), в одиночку —
+10 из 10 зелёных. Тайминговый тест под нагрузкой, к §112 не относится.
