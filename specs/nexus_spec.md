@@ -7264,3 +7264,50 @@ Web завершался с `team "default" is already bound to "nexus_default" 
 Миграций, ключей конфига и изменений интерфейса нет, выкат только Web.
 
 Полный текст — [sections/111-first-start-rebase.md](sections/111-first-start-rebase.md).
+
+---
+
+## 112. Ротация логов контейнеров Docker
+
+Развивает §5.4 DEPLOYMENT (ресурсы сервера), §93 (пары реплик).
+
+**Повод.** Разбор диска боевого srv-p-1c-bus 01.10.2026: ни один compose-файл не задавал
+`logging:`, `/etc/docker/daemon.json` нет — Docker писал вывод контейнеров драйвером `json-file`
+без ограничения. Лог `nexus-nginx-1` — 1.2 ГБ за 4 недели (~43 МБ в сутки, ~15 ГБ в год), файл
+обнуляется только пересозданием контейнера.
+
+**Решение.**
+
+- Каждый сервис с `image:`/`build:` в каждом compose-файле объявляет `logging: *logging` — якорь
+  `x-logging` (`driver: json-file`, `max-size: ${DOCKER_LOG_MAX_SIZE:-50m}`,
+  `max-file: "${DOCKER_LOG_MAX_FILE:-5}"`). Потолок 250 МБ на контейнер: одиночный стек ≤ 2 ГБ,
+  пары реплик §93 ≤ 2.75 ГБ. Оверлеи-заплатки `logging` не объявляют — наследуют из базового файла.
+- Файлы: корневой `docker-compose.yml`, `deploy/docker-compose.yml`, `.app.yml`, `.deps.yml`,
+  `.ha.yml` (через якорь `x-app-base`), `.stand-ha.yml`, clickhouse в `standalone.override` и
+  `ha.standalone.override`.
+- Compose, а не `daemon.json`: едет с тегом, не трогает чужие контейнеры хоста, не требует
+  рестарта dockerd. Драйвер остаётся `json-file` — `docker logs` и сборщики, читающие
+  `*-json.log`, работают как раньше.
+- Применяется только пересозданием (`up -d`). Посервисный выкат с `--no-deps` зависимости не
+  трогает: Kafka (простой брокера 30–60 с), Redis, Prometheus, nginx пересоздаются отдельно.
+  Пересоздание удаляет старый файл лога — место освобождается сразу, история `docker logs` теряется.
+- Штатная команда `up -d --build web receiver sender` без `--no-deps` пересоздаёт изменившиеся
+  зависимости из `depends_on` (Kafka, PostgreSQL-контейнер), поэтому релиз обновляется только с
+  `--no-deps`; откат `images.sh rollback --apply` (§74.5) теперь тоже ставит `--no-deps`.
+  После пересоздания Kafka — `docker compose restart sender`: consumer kafka-go после рестарта
+  брокера может зависнуть (дефект вне §112, закрыт процедурой).
+- Тест-страж `tests/deploy/compose_logging_test.go`: сервис с `image:`/`build:` без `logging` или
+  с другим дефолтом — красный тест; пустой набор файлов — тоже.
+
+**Границы:** только stdout/stderr контейнеров Nexus. Вне §112: log4j-файлы Kafka внутри контейнера
+(`server.log` ротируется ежечасно без удаления — на бою 674 файла / 8.2 МБ за 4 недели, пропадают
+при пересоздании; GC-лог ограничен JVM), тома данных (у каждого свой retention), file-fallback
+Sender'а, чужие контейнеры и процессы хоста, внешний ClickHouse, а также локальные копии шаблонов
+(способ 1 DEPLOYMENT §5.3.1: `clickhouse` из копии потолка не получит без ручной правки).
+
+**Вне рамок:** централизованный сбор логов, сжатие ротированных файлов, разные потолки по сервисам.
+
+Миграций, ключей `config.yml` и изменений интерфейса нет; новые необязательные переменные `.env` —
+`DOCKER_LOG_MAX_SIZE`, `DOCKER_LOG_MAX_FILE`.
+
+Полный текст — [sections/112-docker-log-rotation.md](sections/112-docker-log-rotation.md).

@@ -24,7 +24,10 @@
 set -eu
 
 ENV_FILE="${NEXUS_ENV_FILE:-.env}"
-COMPOSE_FILE="${NEXUS_COMPOSE_FILE:-}"
+# Не COMPOSE_FILE: это штатная переменная docker compose. Унаследованную из
+# окружения (rolling.sh её экспортирует) присваивание затёрло бы, compose упал
+# бы на пустом значении, а detect_mode молча выбрал бы native.
+NEXUS_COMPOSE="${NEXUS_COMPOSE_FILE:-}"
 PG_SERVICE="${NEXUS_PG_SERVICE:-postgres}"
 
 die() {
@@ -38,8 +41,8 @@ usage() {
 }
 
 compose() {
-	if [ -n "$COMPOSE_FILE" ]; then
-		docker compose -f "$COMPOSE_FILE" "$@"
+	if [ -n "$NEXUS_COMPOSE" ]; then
+		docker compose -f "$NEXUS_COMPOSE" "$@"
 	else
 		docker compose "$@"
 	fi
@@ -156,7 +159,7 @@ echo "готово: $OUT ($SIZE байт)"
 echo
 echo "Восстановление (в аварии, DEPLOYMENT §10):"
 if [ "$MODE" = docker ]; then
-	echo "  $(if [ -n "$COMPOSE_FILE" ]; then echo "docker compose -f $COMPOSE_FILE"; else echo "docker compose"; fi) exec -T $PG_SERVICE psql -U $PG_USER $PG_DATABASE < $OUT"
+	echo "  $(if [ -n "$NEXUS_COMPOSE" ]; then echo "docker compose -f $NEXUS_COMPOSE"; else echo "docker compose"; fi) exec -T $PG_SERVICE psql -U $PG_USER $PG_DATABASE < $OUT"
 else
 	echo "  env PGPASSWORD=\"\$PG_PASSWORD\" psql -h 127.0.0.1 -p $PG_PORT -U $PG_USER $PG_DATABASE < $OUT"
 fi

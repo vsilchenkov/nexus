@@ -42,6 +42,19 @@
 # В .env обязателен CH_HOST=clickhouse (имя сервиса в сети nexus_net),
 # CH_PORT=9000 — нативный TCP-порт, НЕ HTTP 8123. Полный список — DEPLOYMENT.md §2.
 
+# §112: потолок лога контейнера. Без него Docker пишет stdout/stderr драйвером
+# json-file БЕЗ ограничения, и файл обнуляется только пересозданием контейнера
+# (на бою nginx — 1.2 ГБ за 4 недели). Потолок = max-size × max-file, по
+# умолчанию 250 МБ на контейнер; переопределяется из .env. Применяется только
+# пересозданием контейнера (`up -d`), `restart` его не подхватывает. Якоря между
+# файлами не видны — блок повторён в каждом compose-файле со своими
+# контейнерами; расхождение значений ловит tests/deploy.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-50m}
+    max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+
 services:
 
   clickhouse:
@@ -58,6 +71,7 @@ services:
     # переопределяет конфиг сервера; 24.x его молча игнорирует (проверено).
     command: ["--", "--memory_worker_correct_memory_tracker=1"]
     restart: unless-stopped
+    logging: *logging
     environment:
       # Nexus заводит по БД на команду (nexus_<slug>) сам — эта нужна как
       # стартовая для команды default. Право на CREATE DATABASE даёт

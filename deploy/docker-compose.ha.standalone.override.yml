@@ -33,6 +33,19 @@
 # шина обещает клиенту 300 МиБ, которых на такой машине физически не переварить,
 # а брокер с heap 512m ловит OutOfMemoryError на первом же крупном async.
 
+# §112: потолок лога контейнера. Без него Docker пишет stdout/stderr драйвером
+# json-file БЕЗ ограничения, и файл обнуляется только пересозданием контейнера
+# (на бою nginx — 1.2 ГБ за 4 недели). Потолок = max-size × max-file, по
+# умолчанию 250 МБ на контейнер; переопределяется из .env. Применяется только
+# пересозданием контейнера (`up -d`), `restart` его не подхватывает. Якоря между
+# файлами не видны — блок повторён в каждом compose-файле со своими
+# контейнерами; расхождение значений ловит tests/deploy.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-50m}
+    max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+
 services:
 
   # ── ClickHouse в стеке (его нет ни в корневом файле, ни в ha.yml) ──────────
@@ -50,6 +63,7 @@ services:
     # переопределяет конфиг сервера; 24.x его молча игнорирует (проверено).
     command: ["--", "--memory_worker_correct_memory_tracker=1"]
     restart: unless-stopped
+    logging: *logging
     environment:
       CLICKHOUSE_DB: nexus_default
       CLICKHOUSE_USER: ${CH_USER:-default}

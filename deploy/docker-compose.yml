@@ -11,11 +11,25 @@
 
 name: nexus
 
+# §112: потолок лога контейнера. Без него Docker пишет stdout/stderr драйвером
+# json-file БЕЗ ограничения, и файл обнуляется только пересозданием контейнера
+# (на бою nginx — 1.2 ГБ за 4 недели). Потолок = max-size × max-file, по
+# умолчанию 250 МБ на контейнер; переопределяется из .env. Применяется только
+# пересозданием контейнера (`up -d`), `restart` его не подхватывает. Якоря между
+# файлами не видны — блок повторён в каждом compose-файле со своими
+# контейнерами; расхождение значений ловит tests/deploy.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${DOCKER_LOG_MAX_SIZE:-50m}
+    max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+
 services:
 
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_USER: ${PG_USER:-nexus}
       POSTGRES_PASSWORD: ${PG_PASSWORD:-nexus}
@@ -34,6 +48,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *logging
     command:
       - redis-server
       - --appendonly
@@ -61,6 +76,7 @@ services:
     # Коррекция учёта памяти по jemalloc/cgroup: в 26.3 по умолчанию выключена.
     command: ["--", "--memory_worker_correct_memory_tracker=1"]
     restart: unless-stopped
+    logging: *logging
     environment:
       CLICKHOUSE_DB: nexus_default
       CLICKHOUSE_USER: ${CH_USER:-default}
@@ -101,6 +117,7 @@ services:
       dockerfile: deploy/docker/kafka.Dockerfile
     image: nexus-kafka:latest
     restart: unless-stopped
+    logging: *logging
     environment:
       # §75: /metrics агента на 7071 внутри сети (job `kafka-jmx` в prometheus.yml).
       KAFKA_OPTS: "-javaagent:/opt/jmx/agent.jar=7071:/opt/jmx/kafka.yml"
@@ -173,6 +190,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.55.0
     restart: unless-stopped
+    logging: *logging
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -193,6 +211,7 @@ services:
     profiles: ["stand"]
     image: rabbitmq:3.13-management-alpine
     restart: unless-stopped
+    logging: *logging
     environment:
       RABBITMQ_DEFAULT_USER: ${RMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RMQ_PASSWORD:-guest}
@@ -212,6 +231,7 @@ services:
       context: ..
       dockerfile: deploy/docker/receiver.Dockerfile
     restart: unless-stopped
+    logging: *logging
     env_file: ../.env
     depends_on:
       postgres: { condition: service_healthy }
@@ -232,6 +252,7 @@ services:
       context: ..
       dockerfile: deploy/docker/sender.Dockerfile
     restart: unless-stopped
+    logging: *logging
     env_file: ../.env
     depends_on:
       postgres:   { condition: service_healthy }
@@ -253,6 +274,7 @@ services:
       context: ..
       dockerfile: deploy/docker/web.Dockerfile
     restart: unless-stopped
+    logging: *logging
     env_file: ../.env
     depends_on:
       postgres: { condition: service_healthy }
@@ -280,6 +302,7 @@ services:
       context: ..
       dockerfile: deploy/docker/loadtest.Dockerfile
     restart: "no"
+    logging: *logging
     depends_on:
       receiver: { condition: service_healthy }
       sender:   { condition: service_healthy }
