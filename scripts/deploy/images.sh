@@ -129,7 +129,10 @@ cmd_rollback() {
 		echo "$PREFIX-$svc:latest → $version"
 	done
 
-	restart="$(compose_cmd) up -d --no-build --force-recreate $RESTART_SERVICES"
+	# --no-deps: откат меняет только образы приложения. Без него compose
+	# пересоздаёт и зависимости из depends_on, если их спецификация в файле
+	# разошлась с контейнером (§112) — внезапный простой Kafka и PostgreSQL.
+	restart="$(compose_cmd) up -d --no-build --no-deps --force-recreate $RESTART_SERVICES"
 	echo
 	if [ "$apply" -eq 1 ]; then
 		echo "+ $restart"
