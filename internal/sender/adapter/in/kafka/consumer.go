@@ -53,10 +53,11 @@ type ConsumerGroup struct {
 	logger    logging.Logger
 	topic     string
 	metrics   *metrics.Metrics // §31: nil-safe; nil → in-flight не пишется
+	stall     StallGuard       // §113.6: сторож зависшего reader'а
 
-	consumers []*kafkapf.Consumer
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	slots  []*readerSlot
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // ConsumerOption — функциональная опция конструктора ConsumerGroup.
@@ -65,6 +66,11 @@ type ConsumerOption func(*ConsumerGroup)
 // WithMetrics включает метрику nexus_kafka_in_flight (§31).
 func WithMetrics(m *metrics.Metrics) ConsumerOption {
 	return func(g *ConsumerGroup) { g.metrics = m }
+}
+
+// WithStallGuard включает сторожа зависшего reader'а (§113.6).
+func WithStallGuard(guard StallGuard) ConsumerOption {
+	return func(g *ConsumerGroup) { g.stall = guard }
 }
 
 func NewConsumerGroup(
@@ -96,19 +102,18 @@ func NewConsumerGroup(
 func (g *ConsumerGroup) Start(ctx context.Context) {
 	cctx, cancel := context.WithCancel(ctx)
 	g.cancel = cancel
-	instances := g.cfg.Kafka.Consumer.Instances
-	if instances <= 0 {
-		instances = 1
-	}
-	for i := 0; i < instances; i++ {
-		c := kafkapf.NewConsumer(g.cfg, g.topic)
-		g.consumers = append(g.consumers, c)
+	group := g.cfg.Kafka.ConsumerGroup
+	g.slots = newSlots(g.cfg.Kafka.Consumer.Instances, group, g.stall, func(clientID string) slotReader {
+		return kafkapf.NewConsumer(g.cfg, g.topic, kafkapf.WithClientID(clientID))
+	}, g.logger)
+	for i, s := range g.slots {
 		g.wg.Add(1)
-		go g.runOne(cctx, c, i)
+		go g.runOne(cctx, s, i)
 	}
+	startStallWatchdog(cctx, &g.wg, group, g.topic, g.stall, g.slots, g.logger)
 }
 
-func (g *ConsumerGroup) runOne(ctx context.Context, c *kafkapf.Consumer, idx int) {
+func (g *ConsumerGroup) runOne(ctx context.Context, c slotReader, idx int) {
 	defer g.wg.Done()
 	defer safego.Recover(g.logger, "sender.kafkaConsumer")
 	g.logger.Info("async consumer started",
@@ -214,8 +219,6 @@ func (g *ConsumerGroup) Stop() {
 	if g.cancel != nil {
 		g.cancel()
 	}
-	for _, c := range g.consumers {
-		_ = c.Close()
-	}
+	closeSlots(g.slots)
 	g.wg.Wait()
 }

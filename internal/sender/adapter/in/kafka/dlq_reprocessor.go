@@ -34,6 +34,16 @@ type DLQReprocessor struct {
 	metrics      *metrics.Metrics // nil-safe
 	logger       logging.Logger
 	topic        string
+	stall        StallGuard      // §113.6
+	passGuard    *passStallGuard // nil — сторож выключен
+}
+
+// DLQReprocessorOption — функциональная опция NewDLQReprocessor.
+type DLQReprocessorOption func(*DLQReprocessor)
+
+// WithDLQStallGuard включает сторожа зависшего reader'а (§113.6).
+func WithDLQStallGuard(guard StallGuard) DLQReprocessorOption {
+	return func(r *DLQReprocessor) { r.stall = guard }
 }
 
 // dlqProcessor — решение по одному DLQ-сообщению. Реализуется
@@ -51,6 +61,7 @@ func NewDLQReprocessor(
 	maxScan int,
 	m *metrics.Metrics,
 	logger logging.Logger,
+	opts ...DLQReprocessorOption,
 ) *DLQReprocessor {
 	if interval <= 0 {
 		interval = 5 * time.Minute
@@ -59,8 +70,7 @@ func NewDLQReprocessor(
 		maxScan = 1000
 	}
 	group := cfg.Kafka.DLQGroup()
-	return &DLQReprocessor{
-		consumer:     kafkapf.NewConsumerWithGroup(cfg, cfg.Kafka.DLQTopic, group),
+	r := &DLQReprocessor{
 		processor:    processor,
 		interval:     interval,
 		maxScan:      maxScan,
@@ -70,6 +80,15 @@ func NewDLQReprocessor(
 		logger:       logger,
 		topic:        cfg.Kafka.DLQTopic,
 	}
+	for _, o := range opts {
+		o(r)
+	}
+	slot := newReaderSlot(slotName(group, r.stall, 0), func(clientID string) slotReader {
+		return kafkapf.NewConsumerWithGroup(cfg, cfg.Kafka.DLQTopic, group, kafkapf.WithClientID(clientID))
+	}, r.stall.clk(), logger)
+	r.consumer = slot
+	r.passGuard = newPassStallGuard(group, r.topic, r.stall, slot, logger)
+	return r
 }
 
 // Run — блокирующий периодический цикл (§36.2): первый проход сразу, далее раз
@@ -83,15 +102,20 @@ func (r *DLQReprocessor) Run(ctx context.Context) {
 	tick := time.NewTicker(r.interval)
 	defer tick.Stop()
 
-	r.sweepOnce(ctx)
+	r.pass(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			r.sweepOnce(ctx)
+			r.pass(ctx)
 		}
 	}
+}
+
+// pass — проход и его итог для сторожа зависшего reader'а (§113.6).
+func (r *DLQReprocessor) pass(ctx context.Context) {
+	r.passGuard.PassDone(ctx, r.sweepOnce(ctx))
 }
 
 // sweepOnce — один проход: обрабатываем DLQ-сообщения (до maxScan), КАЖДОЕ
@@ -108,14 +132,16 @@ func (r *DLQReprocessor) Run(ctx context.Context) {
 // которая перечитается следующим проходом. По той же причине транзиентный сбой
 // повторяется на месте (§113.2): до §113 break без commit терял сообщение —
 // следующий проход читал X+1 и его commit перешагивал X.
-func (r *DLQReprocessor) sweepOnce(ctx context.Context) {
+//
+// Возвращает число обработанных (закоммиченных) сообщений.
+func (r *DLQReprocessor) sweepOnce(ctx context.Context) int {
 	start := time.Now()
 	seen := make(map[string]bool)
 	delivered := 0
 
 	for i := 0; i < r.maxScan; i++ {
 		if ctx.Err() != nil {
-			return
+			return delivered
 		}
 		// bounded-ожидание: пустой топик/конец бэклога → таймаут → конец прохода.
 		fetchCtx, cancel := context.WithTimeout(ctx, r.fetchTimeout)
@@ -127,7 +153,7 @@ func (r *DLQReprocessor) sweepOnce(ctx context.Context) {
 
 		hdrs := headersToMap(msg.Headers)
 		if !r.processInPlace(ctx, msg, hdrs) {
-			return // shutdown посреди повторов: без commit, перечитается после рестарта
+			return delivered // shutdown посреди повторов: без commit, перечитается после рестарта
 		}
 		if err := r.consumer.Commit(ctx, msg); err != nil {
 			r.logger.ErrorWithOp("dlq reprocess commit failed", err, "dlq.reprocess.commit",
@@ -154,6 +180,7 @@ func (r *DLQReprocessor) sweepOnce(ctx context.Context) {
 			r.logger.Str("topic", r.topic),
 			r.logger.Int("processed", delivered))
 	}
+	return delivered
 }
 
 // processInPlace обрабатывает DLQ-сообщение до финального исхода: Retry

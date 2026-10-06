@@ -136,6 +136,8 @@ type Metrics struct {
 	// §113.5: повторный перенос в хвост очереди паузы (у копии уже есть
 	// paused_since). Не запрос: в nexus_requests_total раздул бы consumed/outgoing.
 	PausedRequeuedTotal *prometheus.CounterVec // {team, node}
+	// §113.6: сторож пересоздал reader зависшего consumer'а.
+	KafkaConsumerRestartsTotal *prometheus.CounterVec // {group, reason=stalled|pass_idle}
 
 	// §74.3: состояние схемы PostgreSQL относительно кода сервиса.
 	PGSchemaVersion prometheus.Gauge // версия схемы в БД (0 = миграций не было)
@@ -435,6 +437,11 @@ func New(service string, opts ...Option) *Metrics {
 			Help:        "Number of nodes currently paused (their requests wait in the paused topic).",
 			ConstLabels: constLabels,
 		}),
+		KafkaConsumerRestartsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_kafka_consumer_restarts_total",
+			Help:        "Kafka readers recreated by the stall watchdog, by consumer group and reason.",
+			ConstLabels: constLabels,
+		}, []string{"group", "reason"}),
 		PausedRequeuedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name:        "nexus_paused_requeued_total",
 			Help:        "Paused-topic messages moved again to the tail of the paused queue while their node stays paused (not counted in nexus_requests_total).",
@@ -503,6 +510,7 @@ func New(service string, opts ...Option) *Metrics {
 		m.PausedSweepPassesTotal,
 		m.PausedNodes,
 		m.PausedRequeuedTotal,
+		m.KafkaConsumerRestartsTotal,
 		m.PGSchemaVersion,
 		m.PGSchemaAhead,
 	)
@@ -588,6 +596,11 @@ func (m *Metrics) IncIngressRejectDropped(cause string, n int) {
 // IncPausedSweepPass — решение планировщика очереди паузы на тике (§113.3).
 func (m *Metrics) IncPausedSweepPass(reason string) {
 	m.PausedSweepPassesTotal.WithLabelValues(reason).Inc()
+}
+
+// IncKafkaConsumerRestart — сторож пересоздал reader группы (§113.6).
+func (m *Metrics) IncKafkaConsumerRestart(group, reason string) {
+	m.KafkaConsumerRestartsTotal.WithLabelValues(group, reason).Inc()
 }
 
 // SetPausedNodes — число узлов на паузе (§113.3).

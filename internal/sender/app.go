@@ -393,7 +393,9 @@ func (a *App) startAsyncPipeline(
 	// партицию основного топика (в ней по хешу node_path лежат ДРУГИЕ узлы).
 	pausedRequeue := usecase.WithPausedRequeue(a.cfg.Kafka.PausedTopic)
 	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, cancelSet, nodeStatus, a.cfg.Kafka.DLQTopic, a.metrics, a.logger, pausedRequeue)
-	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger, kafkaadapter.WithMetrics(a.metrics))
+	guard := a.stallGuard()
+	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger,
+		kafkaadapter.WithMetrics(a.metrics), kafkaadapter.WithStallGuard(guard))
 	a.consumer.Start(ctx)
 
 	// §38: retry-консьюмер дренит nexus.logs.retry обратно в CH. Отдельная
@@ -404,7 +406,7 @@ func (a *App) startAsyncPipeline(
 		retryHandler := kafkaadapter.NewChLogRetryHandler(a.chWriter, a.metrics, a.logger)
 		a.retryConsumer = kafkaadapter.NewChLogRetryConsumer(
 			a.cfg, a.cfg.Kafka.RetryTopic, a.cfg.Kafka.ClogRetryGroup(),
-			retryHandler, a.logger)
+			retryHandler, a.logger, kafkaadapter.WithRetryStallGuard(guard))
 		a.retryConsumer.Start(ctx)
 	}
 
@@ -418,7 +420,7 @@ func (a *App) startAsyncPipeline(
 		a.dlqReproc = kafkaadapter.NewDLQReprocessor(
 			a.cfg, reprocUC,
 			time.Duration(a.cfg.Sender.Reprocessor.IntervalSec)*time.Second,
-			a.cfg.Sender.Reprocessor.MaxScan, a.metrics, a.logger)
+			a.cfg.Sender.Reprocessor.MaxScan, a.metrics, a.logger, kafkaadapter.WithDLQStallGuard(guard))
 		a.dlqReprocDone = safego.Go(a.logger, "sender.dlqReprocessor", func() {
 			a.dlqReproc.Run(ctx)
 		})
@@ -434,12 +436,25 @@ func (a *App) startAsyncPipeline(
 			a.cfg, asyncProc,
 			time.Duration(a.cfg.Sender.PausedSweep.IntervalSec)*time.Second,
 			a.cfg.Sender.PausedSweep.MaxScan, a.metrics, a.logger,
-			kafkaadapter.WithSweepPlanner(a.newPausedSweepPlanner(nodeReader)))
+			kafkaadapter.WithSweepPlanner(a.newPausedSweepPlanner(nodeReader)),
+			kafkaadapter.WithSweeperStallGuard(guard))
 		a.pausedSweepDone = safego.Go(a.logger, "sender.pausedSweep", func() {
 			a.pausedSweep.Run(ctx)
 		})
 	}
 
+}
+
+// stallGuard — сторож зависших reader'ов Sender'а (§113.6). client.id reader'ов
+// несёт имя реплики: участники двух реплик в одной группе не должны совпадать,
+// иначе сторож не отличит свои партиции от чужих.
+func (a *App) stallGuard() kafkaadapter.StallGuard {
+	return kafkaadapter.StallGuard{
+		Inspector:    a.kafkaOffsets,
+		After:        a.cfg.Kafka.Consumer.StallAfter(),
+		ClientPrefix: bootstrap.ReplicaName(),
+		Metrics:      a.metrics,
+	}
 }
 
 // newPausedSweepPlanner собирает планировщик прохода очереди паузы (§113.3):

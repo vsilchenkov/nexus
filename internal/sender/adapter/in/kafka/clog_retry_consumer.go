@@ -36,19 +36,32 @@ const (
 // передоставляет сообщение на том же reader'е (только при rebalance/restart).
 // Retry-in-place гарантирует, что батч доедет в CH сразу после восстановления.
 type ChLogRetryConsumer struct {
-	cfg       *config.Config
-	topic     string
-	groupID   string
-	handler   messageProcessor
-	logger    logging.Logger
-	consumers []*kafkapf.Consumer
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	cfg     *config.Config
+	topic   string
+	groupID string
+	handler messageProcessor
+	logger  logging.Logger
+	stall   StallGuard // §113.6: сторож зависшего reader'а
+	slots   []*readerSlot
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+}
+
+// ChLogRetryOption — функциональная опция NewChLogRetryConsumer.
+type ChLogRetryOption func(*ChLogRetryConsumer)
+
+// WithRetryStallGuard включает сторожа зависшего reader'а (§113.6).
+func WithRetryStallGuard(guard StallGuard) ChLogRetryOption {
+	return func(g *ChLogRetryConsumer) { g.stall = guard }
 }
 
 // NewChLogRetryConsumer создаёт consumer для retry-топика.
-func NewChLogRetryConsumer(cfg *config.Config, topic, groupID string, handler messageProcessor, logger logging.Logger) *ChLogRetryConsumer {
-	return &ChLogRetryConsumer{cfg: cfg, topic: topic, groupID: groupID, handler: handler, logger: logger}
+func NewChLogRetryConsumer(cfg *config.Config, topic, groupID string, handler messageProcessor, logger logging.Logger, opts ...ChLogRetryOption) *ChLogRetryConsumer {
+	g := &ChLogRetryConsumer{cfg: cfg, topic: topic, groupID: groupID, handler: handler, logger: logger}
+	for _, o := range opts {
+		o(g)
+	}
+	return g
 }
 
 // Start запускает Instances горутин. Возвращается сразу. Горутины завязаны на
@@ -58,19 +71,17 @@ func NewChLogRetryConsumer(cfg *config.Config, topic, groupID string, handler me
 func (g *ChLogRetryConsumer) Start(ctx context.Context) {
 	cctx, cancel := context.WithCancel(ctx)
 	g.cancel = cancel
-	instances := g.cfg.Kafka.Consumer.Instances
-	if instances <= 0 {
-		instances = 1
-	}
-	for i := 0; i < instances; i++ {
-		c := kafkapf.NewConsumerWithGroup(g.cfg, g.topic, g.groupID)
-		g.consumers = append(g.consumers, c)
+	g.slots = newSlots(g.cfg.Kafka.Consumer.Instances, g.groupID, g.stall, func(clientID string) slotReader {
+		return kafkapf.NewConsumerWithGroup(g.cfg, g.topic, g.groupID, kafkapf.WithClientID(clientID))
+	}, g.logger)
+	for i, s := range g.slots {
 		g.wg.Add(1)
-		go g.runOne(cctx, c, i)
+		go g.runOne(cctx, s, i)
 	}
+	startStallWatchdog(cctx, &g.wg, g.groupID, g.topic, g.stall, g.slots, g.logger)
 }
 
-func (g *ChLogRetryConsumer) runOne(ctx context.Context, c *kafkapf.Consumer, idx int) {
+func (g *ChLogRetryConsumer) runOne(ctx context.Context, c slotReader, idx int) {
 	defer g.wg.Done()
 	defer safego.Recover(g.logger, "sender.clogRetryConsumer")
 	g.logger.Info("clog-retry consumer started",
@@ -132,8 +143,6 @@ func (g *ChLogRetryConsumer) Stop() {
 	if g.cancel != nil {
 		g.cancel()
 	}
-	for _, c := range g.consumers {
-		_ = c.Close()
-	}
+	closeSlots(g.slots)
 	g.wg.Wait()
 }

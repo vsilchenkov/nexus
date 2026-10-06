@@ -117,6 +117,7 @@ kafka:
     max_poll_interval_ms: 300000
     isolation_level: read_committed
     instances: 8                # Число consumer-инстансов (горутин-readers) в этом процессе. Активны min(instances, partitions) — при instances < partitions часть партиций простаивает. Держи = topic.partitions при одной реплике Sender, либо дели партиции между репликами. Параметр общий для ВСЕХ групп Sender'а (async, dlq-reprocess, clog-retry).
+    stall_after_sec: 120        # §113.6: сторож зависшего reader'а Sender'а. Lag на партициях экземпляра есть, committed не двигается, а экземпляр ждёт в fetch дольше порога → reader пересоздаётся (без потерь, at-least-once). 0 — выключен.
 
 receiver:
   http_addr: :8080

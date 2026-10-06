@@ -61,7 +61,9 @@ type PausedSweeper struct {
 	logger       logging.Logger
 	topic        string
 	group        string
-	planner      sweepPlanner // §113.3: nil — проход на каждом тике
+	planner      sweepPlanner    // §113.3: nil — проход на каждом тике
+	stall        StallGuard      // §113.6
+	passGuard    *passStallGuard // nil — сторож выключен
 }
 
 // PausedSweeperOption — функциональная опция NewPausedSweeper.
@@ -70,6 +72,11 @@ type PausedSweeperOption func(*PausedSweeper)
 // WithSweepPlanner включает проход по событию (§113.3).
 func WithSweepPlanner(p sweepPlanner) PausedSweeperOption {
 	return func(s *PausedSweeper) { s.planner = p }
+}
+
+// WithSweeperStallGuard включает сторожа зависшего reader'а (§113.6).
+func WithSweeperStallGuard(guard StallGuard) PausedSweeperOption {
+	return func(s *PausedSweeper) { s.stall = guard }
 }
 
 // NewPausedSweeper создаёт sweeper. interval/maxScan ≤ 0 → дефолты (30с / 1000).
@@ -90,7 +97,6 @@ func NewPausedSweeper(
 	}
 	group := cfg.Kafka.PausedGroup()
 	s := &PausedSweeper{
-		consumer:     kafkapf.NewConsumerWithGroup(cfg, cfg.Kafka.PausedTopic, group),
 		processor:    processor,
 		interval:     interval,
 		maxScan:      maxScan,
@@ -104,6 +110,11 @@ func NewPausedSweeper(
 	for _, o := range opts {
 		o(s)
 	}
+	slot := newReaderSlot(slotName(group, s.stall, 0), func(clientID string) slotReader {
+		return kafkapf.NewConsumerWithGroup(cfg, cfg.Kafka.PausedTopic, group, kafkapf.WithClientID(clientID))
+	}, s.stall.clk(), logger)
+	s.consumer = slot
+	s.passGuard = newPassStallGuard(group, s.topic, s.stall, slot, logger)
 	return s
 }
 
@@ -134,14 +145,14 @@ func (s *PausedSweeper) Run(ctx context.Context) {
 // ни одного FetchMessage: инвариант «commit перед break» (4.37) не затронут, а
 // очередь узлов на паузе не переписывается вхолостую.
 func (s *PausedSweeper) tick(ctx context.Context) {
-	if s.planner == nil {
-		s.sweepOnce(ctx)
+	if s.planner != nil && !s.planner.Decide(ctx).Run {
 		return
 	}
-	if !s.planner.Decide(ctx).Run {
-		return
+	n := s.sweepOnce(ctx)
+	if s.planner != nil {
+		s.planner.PassDone(n)
 	}
-	s.planner.PassDone(s.sweepOnce(ctx))
+	s.passGuard.PassDone(ctx, n)
 }
 
 // sweepOnce — один проход: обрабатываем до maxScan сообщений, КАЖДОЕ прочитанное

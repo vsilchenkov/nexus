@@ -3441,11 +3441,10 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
 - **Зависание async-consumer'а Sender'а после рестарта Kafka** (найдено стендом перед 1.40.1, см.
   §112 «Стенд перед релизом»). kafka-go v0.4.51 после рестарта брокера иногда остаётся в
   consumer-группе (heartbeat идёт, партиции назначены), но `FetchMessage` больше не возвращается;
-  `nexus_kafka_lag` (из `Reader.Stats`) при этом 0, `nexus_kafka_in_flight` — 0. Лечится только
-  рестартом Sender'а; сейчас закрыто процедурой (DEPLOYMENT §9.1.7). Lag из брокера — сделано
-  (§113.5: зависание теперь видно по `nexus_kafka_lag`). Осталось (ТЗ §113.6): сторож прогресса
-  (лаг по брокеру > 0 и нет fetch N секунд → пересоздать reader); заодно проверить другие
-  reader'ы (clog-retry, dlq, paused) и обновление kafka-go.
+  `nexus_kafka_lag` (из `Reader.Stats`) при этом 0, `nexus_kafka_in_flight` — 0. **Закрыто §113:**
+  lag из брокера (зависание видно по `nexus_kafka_lag`) и сторож (Phase 113.7, см. 4.98) для всех
+  четырёх групп. Осталось: обновление kafka-go (может убрать первопричину) и воспроизведение
+  зависания на стенде — сторож проверен на имитации «стоящей» партиции, а не на живом зависании.
 
 0. **Горизонтальное масштабирование Receiver/Web (нулевой простой при обновлении)** — вынесено
    из §74 отдельным ТЗ. Сейчас у каждого сервиса один экземпляр, и `docker compose up` даёт
@@ -7439,7 +7438,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | §113.3 sweeper по событию | ✅ Phase 113.3–113.4 | планировщик [paused_sweep_planner.go](../internal/sender/usecase/paused_sweep_planner.go) (`Decide`, `PassDone`, триггеры) + [paused_sweep_round.go](../internal/sender/usecase/paused_sweep_round.go) (цель, завершение, застой, backstop по retention); гейт тика [paused_sweeper.go](../internal/sender/adapter/in/kafka/paused_sweeper.go) `tick`/`WithSweepPlanner`; офсеты delay-топика [kafkaoffsets/paused.go](../internal/sender/adapter/out/kafkaoffsets/paused.go); сборка `newPausedSweepPlanner` в [sender/app.go](../internal/sender/app.go); сигнал отмены [queuecancel/redis.go](../internal/platform/queuecancel/redis.go), отпечаток [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `NodesSnapshot`; конфиг `backstop_sec`/`continuous` + `validatePausedSweep`; метрики `nexus_paused_sweep_passes_total{reason}`, `nexus_paused_nodes`. Тесты: [paused_sweep_planner_test.go](../internal/sender/usecase/paused_sweep_planner_test.go), `TestPausedSweeper_SkippedTickDoesNotFetch`, [validate_paused_sweep_test.go](../internal/platform/config/validate_paused_sweep_test.go), integration [sender_paused_gate_test.go](../tests/integration/sender_paused_gate_test.go), [sender_nodes_snapshot_test.go](../tests/integration/sender_nodes_snapshot_test.go) |
 | §113.4 lag из брокера | ✅ Phase 113.2 (читатель офсетов), 113.5 (Sender, PromQL, алерты) | [platform/kafka/offsets.go](../internal/platform/kafka/offsets.go) `Offsets` (`Partitions`, `Watermarks`, `Committed`, `GroupPositions`, `TopicRetention`), `PartitionPosition.Lag`; Web [kafkaadmin](../internal/web/adapter/out/kafkaadmin/topics.go) переведён на него (`watermarks`, `committedOffsets`, `liveTailStart`); `KafkaSection.ClogRetryGroup()` в [config.go](../internal/platform/config/config.go). Sender: [kafkaoffsets/lag.go](../internal/sender/adapter/out/kafkaoffsets/lag.go) `LagReporter`, `lagTargets`/`reportEvery` в [sender/app.go](../internal/sender/app.go); цепочка `LagSnapshot`/`Snapshot`/`Stats` удалена. Web: [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) `WithKafkaMainGroup`/`kafkaLagQuery` (KPI «Очередь Kafka», `KafkaOverview`, ряд lag и через него `lagGrowthPerSec`). Алерты [prometheus.alerts.yml](../deploy/prometheus.alerts.yml) (`NexusKafkaLagHigh` без `-paused`/`-dlq-reprocess`, новый `NexusPausedBacklogStuck`) + тесты в [prometheus.alerts.test.yml](../deploy/prometheus.alerts.test.yml); Grafana [nexus.json](../deploy/grafana/nexus.json), [nexus-kafka.json](../deploy/grafana/nexus-kafka.json) (панель «Deferred queues»); DEPLOYMENT §9.1.8. Тесты [offsets_test.go](../internal/platform/kafka/offsets_test.go), [lag_test.go](../internal/sender/adapter/out/kafkaoffsets/lag_test.go), `TestClient_KafkaLag_MainGroupOnly`, integration [kafka_offsets_test.go](../tests/integration/kafka_offsets_test.go), `TestSender_Async_MultiInstanceSmoke` |
 | §113.5 честные счётчики | ✅ Phase 113.6 | Sender: `countPaused` в [async.go](../internal/sender/usecase/async.go) — повторный перенос (есть `paused_since`) → `IncPausedRequeued` (`nexus_paused_requeued_total{team,node}`, [node_labels.go](../internal/platform/metrics/node_labels.go)), первое откладывание — `IncRequest(…,"paused")`. Web [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go): матчер `senderOut` (`status!="paused"`) в `GlobalTotals`, `NodeThroughput`, `KafkaOverview` (consumed), ряд consumed; новый порт `KafkaNodeThroughput` (`method="requestAsync"`) для `ByNode` [kafka_bynode.go](../internal/web/usecase/kafka_bynode.go). Алерт `NexusNodeHighErrorRate`, Grafana `nexus.json`/`nexus-kafka.json`/`nexus-nodes.json`. Тесты `TestAsync_Paused_RequeueCountedSeparately`, `TestClient_PausedNotCountedAsOutgoing`, гарды [node_labels_test.go](../internal/platform/metrics/node_labels_test.go), фейк `asyncThroughput` в ByNode-тестах, promtool-тест размывания |
-| §113.6 сторож зависания consumer'а | ⛔ | — |
+| §113.6 сторож зависания consumer'а | ✅ Phase 113.7 | слот reader'а [reader_slot.go](../internal/sender/adapter/in/kafka/reader_slot.go) (`FetchMessage` с отметкой ожидания, `RequestRestart`, `Recreate`, client.id с поколением), сторож непрерывных групп [stall_watchdog.go](../internal/sender/adapter/in/kafka/stall_watchdog.go) (`StallGuard`, `Check`, `ownOrOrphanLag`), проходных — [pass_stall_guard.go](../internal/sender/adapter/in/kafka/pass_stall_guard.go), сборка [slot_pool.go](../internal/sender/adapter/in/kafka/slot_pool.go); опции `WithStallGuard`/`WithRetryStallGuard`/`WithDLQStallGuard`/`WithSweeperStallGuard`, `stallGuard()` в [sender/app.go](../internal/sender/app.go). Брокер: `kafkapf.WithClientID`, `Offsets.GroupAssignment` (DescribeGroups). Конфиг `kafka.consumer.stall_after_sec` (`*int`: нет ключа → 120, 0 — выкл) + `validateStallAfter`; метрика `nexus_kafka_consumer_restarts_total{group,reason}`. Тесты: [reader_slot_test.go](../internal/sender/adapter/in/kafka/reader_slot_test.go), [stall_watchdog_test.go](../internal/sender/adapter/in/kafka/stall_watchdog_test.go), [pass_stall_guard_test.go](../internal/sender/adapter/in/kafka/pass_stall_guard_test.go), [stall_after_test.go](../internal/platform/config/stall_after_test.go), `TestOffsets_GroupAssignment`, integration [sender_stall_watchdog_test.go](../tests/integration/sender_stall_watchdog_test.go) |
 | §113.7 страница Kafka | ⛔ | — |
 | §113.8 мелкие баги мониторинга | ⛔ | — |
 | §113.9 очередь sync-узла на паузе | ⛔ | — |
@@ -7502,6 +7501,21 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 - **Недоступный брокер не обнуляет lag.** `LagReporter` при ошибке не трогает ряд (последнее
   значение остаётся) и пишет Debug, а не Warn: падение Kafka видно по её собственным сигналам, Warn
   каждые 15 с был бы шумом. Частичный ответ (часть партиций без лидера) публикуется.
+- **Сторож решает по экземпляру, а не по группе (§113.6).** ТЗ сначала формулировало условие
+  «все экземпляры ждут в fetch», но оно ломается в двух боевых конфигурациях: при `instances: 8` на
+  4 партиции половина экземпляров законно простаивает без партиций, а на HA-стеке lag может стоять
+  на партиции ДРУГОЙ реплики (она занята долгой отправкой) — ждущие экземпляры этой реплики
+  перезапускались бы зря, и каждый перезапуск — ребаланс всей группы. Поэтому у reader'а свой
+  `client.id`, а сторож берёт назначение из `DescribeGroups`. Проверено integration-тестом:
+  kafka-go отдаёт `Dialer.ClientID` в JoinGroup, брокер показывает его у участника.
+- **Подмена reader'а — только внутри `FetchMessage` или между проходами.** Сторож из своей горутины
+  лишь отменяет ожидание (`RequestRestart`, и только если экземпляр ждёт); закрывает и создаёт reader
+  сам `FetchMessage`. Поэтому `Commit` всегда уходит в reader, выдавший сообщение. Сообщение,
+  пришедшее одновременно с запросом, снимает запрос: reader жив. Close старого reader'а ограничен 30
+  с — `Close` зависшего kafka-go reader'а может не вернуться никогда.
+- **Пауза перезапусков 5 мин — на группу в реплике**, плюс после перезапуска отсчёт «стоит ≥ порога»
+  начинается заново. Цена ошибочного срабатывания — ребаланс и повтор неподтверждённых сообщений
+  (at-least-once), не потеря.
 - **Повторный перенос — не запрос, первое откладывание — запрос (§113.5).** Признак повтора — заголовок
   `paused_since` у копии (его ставит только `pausedHeaders`). Сообщения из DLQ его не несут, и их
   переезд в очередь паузы считается первым откладыванием — это честно: из DLQ запрос до узла не

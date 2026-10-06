@@ -21,6 +21,8 @@ type fakeOffsetsAPI struct {
 	fetchErr  error
 	configs   *segkafka.DescribeConfigsResponse
 	configErr error
+	groups    *segkafka.DescribeGroupsResponse
+	groupsErr error
 
 	fetchReq *segkafka.OffsetFetchRequest
 }
@@ -40,6 +42,10 @@ func (f *fakeOffsetsAPI) OffsetFetch(_ context.Context, req *segkafka.OffsetFetc
 
 func (f *fakeOffsetsAPI) DescribeConfigs(context.Context, *segkafka.DescribeConfigsRequest) (*segkafka.DescribeConfigsResponse, error) {
 	return f.configs, f.configErr
+}
+
+func (f *fakeOffsetsAPI) DescribeGroups(context.Context, *segkafka.DescribeGroupsRequest) (*segkafka.DescribeGroupsResponse, error) {
+	return f.groups, f.groupsErr
 }
 
 func topicMeta(name string, parts ...int) *segkafka.MetadataResponse {
@@ -178,6 +184,59 @@ func TestOffsets_TopicRetention(t *testing.T) {
 			got, err := (&Offsets{api: tt.api}).TopicRetention(context.Background(), "t")
 			if tt.wantErr {
 				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestOffsets_GroupAssignment (§113.6): партиции топика по client.id участника;
+// чужие топики и участники без назначения (ребаланс) в карту не попадают,
+// ошибка группы — ошибка, а не «назначений нет».
+func TestOffsets_GroupAssignment(t *testing.T) {
+	t.Parallel()
+	member := func(client string, topics ...segkafka.GroupMemberTopic) segkafka.DescribeGroupsResponseMember {
+		return segkafka.DescribeGroupsResponseMember{ClientID: client,
+			MemberAssignments: segkafka.DescribeGroupsResponseAssignments{Topics: topics}}
+	}
+	tests := []struct {
+		name    string
+		resp    *segkafka.DescribeGroupsResponse
+		err     error
+		want    map[string][]int
+		wantErr bool
+	}{
+		{
+			name: "по client.id, только нужный топик",
+			resp: &segkafka.DescribeGroupsResponse{Groups: []segkafka.DescribeGroupsResponseGroup{{
+				GroupID: "g",
+				Members: []segkafka.DescribeGroupsResponseMember{
+					member("s1-0", segkafka.GroupMemberTopic{Topic: "t", Partitions: []int{0, 2}},
+						segkafka.GroupMemberTopic{Topic: "other", Partitions: []int{1}}),
+					member("s1-1", segkafka.GroupMemberTopic{Topic: "t", Partitions: []int{1}}),
+					member("s2-0"), // ребаланс: участник без назначения
+				},
+			}}},
+			want: map[string][]int{"s1-0": {0, 2}, "s1-1": {1}},
+		},
+		{
+			name: "ошибка группы",
+			resp: &segkafka.DescribeGroupsResponse{Groups: []segkafka.DescribeGroupsResponseGroup{{
+				GroupID: "g", Error: segkafka.NotCoordinatorForGroup}}},
+			wantErr: true,
+		},
+		{name: "группы нет в ответе", resp: &segkafka.DescribeGroupsResponse{}, wantErr: true},
+		{name: "брокер недоступен", err: errors.New("dial"), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			o := &Offsets{api: &fakeOffsetsAPI{groups: tt.resp, groupsErr: tt.err}}
+			got, err := o.GroupAssignment(context.Background(), "g", "t")
+			if tt.wantErr {
+				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)

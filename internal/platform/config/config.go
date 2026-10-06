@@ -275,6 +275,18 @@ type KafkaConsumerSection struct {
 	MaxPollIntervalMs      int    `yaml:"max_poll_interval_ms"`
 	IsolationLevel         string `yaml:"isolation_level"`
 	Instances              int    `yaml:"instances"`
+	// StallAfterSec — §113.6: порог сторожа зависшего reader'а Sender'а. Ключа
+	// нет → 120 (defaults), 0 — сторож выключен. Указатель: иначе «ключа нет» и
+	// «выключить» не различить.
+	StallAfterSec *int `yaml:"stall_after_sec"`
+}
+
+// StallAfter — порог сторожа зависшего reader'а (§113.6); 0 — выключен.
+func (k KafkaConsumerSection) StallAfter() time.Duration {
+	if k.StallAfterSec == nil {
+		return 0
+	}
+	return time.Duration(max(*k.StallAfterSec, 0)) * time.Second
 }
 
 type ReceiverSection struct {

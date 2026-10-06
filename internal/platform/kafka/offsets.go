@@ -17,6 +17,7 @@ type offsetsAPI interface {
 	ListOffsets(ctx context.Context, req *kafka.ListOffsetsRequest) (*kafka.ListOffsetsResponse, error)
 	OffsetFetch(ctx context.Context, req *kafka.OffsetFetchRequest) (*kafka.OffsetFetchResponse, error)
 	DescribeConfigs(ctx context.Context, req *kafka.DescribeConfigsRequest) (*kafka.DescribeConfigsResponse, error)
+	DescribeGroups(ctx context.Context, req *kafka.DescribeGroupsRequest) (*kafka.DescribeGroupsResponse, error)
 }
 
 // Offsets читает позиции топиков и consumer-групп прямо из брокера (§113.4):
@@ -202,6 +203,35 @@ func (o *Offsets) TopicRetention(ctx context.Context, topic string) (time.Durati
 		return retentionFromEntries(topic, r.ConfigEntries)
 	}
 	return 0, fmt.Errorf("kafka describe configs %s: topic not in response", topic)
+}
+
+// GroupAssignment возвращает партиции топика, назначенные участникам группы,
+// по client.id участника (§113.6). Сторож зависшего consumer'а сопоставляет
+// по нему партиции со своими reader'ами: client.id задаёт WithClientID. Группа
+// в ребалансе отдаёт участников без назначения — их в карте нет.
+func (o *Offsets) GroupAssignment(ctx context.Context, group, topic string) (map[string][]int, error) {
+	resp, err := o.api.DescribeGroups(ctx, &kafka.DescribeGroupsRequest{GroupIDs: []string{group}})
+	if err != nil {
+		return nil, fmt.Errorf("kafka describe group %s: %w", group, err)
+	}
+	out := map[string][]int{}
+	for _, g := range resp.Groups {
+		if g.GroupID != group {
+			continue
+		}
+		if g.Error != nil {
+			return nil, fmt.Errorf("kafka describe group %s: %w", group, g.Error)
+		}
+		for _, m := range g.Members {
+			for _, t := range m.MemberAssignments.Topics {
+				if t.Topic == topic && len(t.Partitions) > 0 {
+					out[m.ClientID] = append(out[m.ClientID], t.Partitions...)
+				}
+			}
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("kafka describe group %s: group not in response", group)
 }
 
 // retentionFromEntries находит retention.ms среди записей конфига топика.

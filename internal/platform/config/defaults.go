@@ -135,6 +135,11 @@ func applyDefaults(c *Config) {
 	if c.Kafka.ConsumerGroup == "" {
 		c.Kafka.ConsumerGroup = "nexus-sender"
 	}
+	if c.Kafka.Consumer.StallAfterSec == nil {
+		// §113.6: 2 минуты — дольше любой паузы ребаланса и выборки, но
+		// заметно короче ручной реакции на зависший consumer.
+		c.Kafka.Consumer.StallAfterSec = new(120)
+	}
 
 	if c.Receiver.HTTPAddr == "" {
 		c.Receiver.HTTPAddr = ":8080"

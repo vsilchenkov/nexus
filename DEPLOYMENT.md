@@ -2851,7 +2851,10 @@ Sender'а он уже переживает.
   рестарта брокера иногда зависает: остаётся в consumer-группе, но не читает `nexus.async`, и
   очередь копится до перезапуска Sender'а. На стенде так случилось в одном прогоне из двух.
   До §113 собственная метрика `nexus_kafka_lag` при этом показывала 0; с §113 она берётся из
-  брокера и растёт, как столбец `LAG` ниже. Сообщения не теряются: после `restart sender` (вход в группу — до минуты) очередь разбирается. Проверка по
+  брокера и растёт, как столбец `LAG` ниже. Сообщения не теряются: после `restart sender` (вход в
+  группу — до минуты) очередь разбирается. С §113 Sender восстанавливается и сам: сторож
+  пересоздаёт зависший reader через `kafka.consumer.stall_after_sec` (2 мин) + до 30 с (§9.1.8), и
+  `restart sender` остаётся страховкой — если `LAG` не начал убывать за 3 минуты. Проверка по
   брокеру — столбец `LAG` должен уйти в 0:
 
   ```bash
@@ -2898,9 +2901,17 @@ Sender'а он уже переживает.
 **Миграций нет.** Обновляются Sender и Web (порядок любой), а вместе с ними — правила алертов и
 дашборды Grafana.
 
-- **Новые ключи `config.yml`** (`sender.paused_sweep.backstop_sec`, `continuous`) — со значениями
-  по умолчанию, править не нужно; смысл и ограничение на `retention.ms` — в §4.3 у топика
-  `nexus.async.paused`.
+- **Новые ключи `config.yml`** (`sender.paused_sweep.backstop_sec`, `continuous`,
+  `kafka.consumer.stall_after_sec`) — со значениями по умолчанию, править не нужно; смысл и
+  ограничение на `retention.ms` — в §4.3 у топика `nexus.async.paused`.
+- **Сторож зависшего consumer'а** (`kafka.consumer.stall_after_sec`, 120 с; `0` — выключен). Если
+  на партиции reader'а Sender'а стоит lag, committed не двигается, а сам reader ждёт в fetch дольше
+  порога, reader пересоздаётся (без потерь, at-least-once): в логе Warn `kafka consumer stalled:
+  recreating reader` (у проходных reader'ов очереди паузы и DLQ — `kafka pass reader reads
+  nothing…`), метрика `nexus_kafka_consumer_restarts_total{group,reason}`. Рестарт Sender'а после
+  пересоздания Kafka (§9.1.7) — теперь страховка. Reader'ы получают `client.id`
+  `<группа>-<реплика>-<номер>-g<поколение>` — его видно в `kafka-consumer-groups.sh --describe
+  --members` (столбец `CLIENT-ID`); раньше у всех был общий client.id kafka-go.
 - **`nexus_kafka_lag` берётся из брокера** (`ListOffsets − OffsetFetch`), а не из статистики
   reader'а kafka-go. Метка `partition` вместо `-1` несёт реальный номер партиции: история до
   выката остаётся старыми рядами, графики за окно, захватившее выкат, покажут оба набора. Реплики

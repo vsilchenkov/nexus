@@ -126,6 +126,9 @@ func Validate(c *Config) error {
 	if err := validatePausedSweep(&c.Sender.PausedSweep, c.Kafka.Topic.RetentionMs); err != nil {
 		return err
 	}
+	if err := validateStallAfter(c.Kafka.Consumer); err != nil {
+		return err
+	}
 
 	// §64: границы те же, что у domain.Node.MaxBodySize — иначе форма подставит
 	// значение, которое не пройдёт валидацию при сохранении узла.
@@ -187,6 +190,15 @@ func validatePausedSweep(p *SenderPausedSweepConfig, retentionMs int64) error {
 	if limit := retentionMs / 4 / 1000; retentionMs > 0 && int64(p.BackstopSec) > limit {
 		return fmt.Errorf("sender.paused_sweep.backstop_sec=%d: must be <= kafka.topic.retention_ms/4 (%d s)",
 			p.BackstopSec, limit)
+	}
+	return nil
+}
+
+// validateStallAfter — порог сторожа зависшего reader'а (§113.6): 0 выключает
+// сторожа, отрицательное значение — опечатка.
+func validateStallAfter(k KafkaConsumerSection) error {
+	if k.StallAfterSec != nil && *k.StallAfterSec < 0 {
+		return fmt.Errorf("kafka.consumer.stall_after_sec=%d: must be >= 0 (0 disables the watchdog)", *k.StallAfterSec)
 	}
 	return nil
 }
