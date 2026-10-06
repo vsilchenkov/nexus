@@ -21,12 +21,38 @@ type KafkaAdmin interface {
 	Ping(ctx context.Context) ([]BrokerPing, error)
 }
 
+// KafkaGroupLagReader — суммарный lag consumer-группы по топику прямо из
+// брокера (§113.8): committed-офсеты группы против watermarks партиций.
+//
+// Отдельно от KafkaAdmin (ISP): карточке lag нужно одно число по одной группе,
+// а не обход всех топиков и групп кластера. Prometheus-метрика lag остаётся
+// запасным путём — она запаздывает на интервал публикации Sender'а и пропадает
+// вместе с ним.
+type KafkaGroupLagReader interface {
+	// GroupLag — Σ lag группы по партициям топика. Некоммиченная партиция
+	// считается от low watermark: так её и прочитают reader'ы Nexus.
+	GroupLag(ctx context.Context, group, topic string) (int64, error)
+}
+
+// Роли consumer-групп Nexus на экране Kafka (§113.8). Lag основной группы и
+// группы повтора записи логов — отставание обработки; lag paused- и DLQ-групп —
+// сообщения, которые ждут по замыслу (пауза узла, повтор по расписанию), и
+// тревогой не являются.
+const (
+	KafkaGroupRoleMain   = "main"
+	KafkaGroupRolePaused = "paused"
+	KafkaGroupRoleDLQ    = "dlq"
+	KafkaGroupRoleRetry  = "retry"
+)
+
 // TopicConsumerGroup — consumer-группа топика с суммарным lag и числом
-// участников (§4.3 spec).
+// участников (§4.3 spec). Role (§113.8) — роль группы Nexus (KafkaGroupRole*)
+// или пусто у посторонней группы; заполняет usecase по именам из конфига.
 type TopicConsumerGroup struct {
 	Group    string
 	LagTotal int64
 	Members  int
+	Role     string
 }
 
 // TopicInfo — метаданные одного топика (§4.3 spec). MessagesEstimate —

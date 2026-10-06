@@ -130,6 +130,18 @@ type NodeKeyResolver interface {
 	RefsByPaths(ctx context.Context, paths []string) ([]NodeKeyRef, error)
 }
 
+// PausedNodeLister — узлы на паузе во ВСЕХ командах со слогом команды (§113.8).
+//
+// Очередь паузы (`nexus.async.paused`) одна на инстанс, и экран Kafka называет,
+// чьи сообщения в ней ждут: строка «отложено N · узлов на паузе K» ведёт на
+// вкладку «Очередь» каждого. Без team-скоупа по той же причине, что и
+// NodeKeyResolver: экран админский и сквозной по командам.
+type PausedNodeLister interface {
+	// PausedNodes возвращает узлы со статусом paused, упорядоченные по слогу
+	// команды и пути. Ни одного — пустой срез, не nil.
+	PausedNodes(ctx context.Context) ([]NodeKeyRef, error)
+}
+
 // NodeCache — кеш для node-конфигов в Redis (§9.2: write-through, cache-aside).
 //
 // teamSlug обязателен во всех методах (§50): ключ кеша — "node:<team_slug>:<path>",

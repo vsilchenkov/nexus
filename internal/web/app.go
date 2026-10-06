@@ -674,12 +674,13 @@ func (a *App) Start(ctx context.Context) error {
 	// повтора (§96). Создаётся здесь, ДО replay: тому он нужен как источник тела.
 	var (
 		kafkaAdmin     webport.KafkaAdmin
+		kafkaGroupLag  webport.KafkaGroupLagReader // §113.8: lag карточки из брокера
 		asyncPeeker    webport.AsyncQueuePeeker
 		queueOriginals webport.AsyncOriginalReader
 	)
 	if a.cfg.Kafka.Brokers != "" {
 		kac := kafkaadmin.New(a.cfg.Kafka.Brokers, 5*time.Second, 30, a.logger)
-		kafkaAdmin, asyncPeeker, queueOriginals = kac, kac, kac
+		kafkaAdmin, kafkaGroupLag, asyncPeeker, queueOriginals = kac, kac, kac, kac
 	}
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
@@ -801,9 +802,15 @@ func (a *App) Start(ctx context.Context) error {
 	// метаданных (TTL 30с). Все источники опциональны — usecase деградирует.
 	// §98.2/§101.9: nodeRepo здесь — резолвер узлов по путям со слогом команды:
 	// строка top-узлов ведёт на журнал узла по точной паре меток (team, node).
+	// §113.8: текущий lag — основная группа из брокера (Prometheus — запасной
+	// путь), очередь узлов на паузе — отдельной строкой, роли групп — по именам
+	// из того же конфига, по которому их создаёт Sender.
 	kafkaUC := usecase.NewKafkaMonitorUsecase(
 		promMetrics, kafkaAdmin, rediscache.NewKafkaCacheRedis(a.redis, 30*time.Second),
 		nodeRepo, kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
+		usecase.WithKafkaGroups(kafkaGroupNames(&a.cfg.Kafka)),
+		usecase.WithKafkaGroupLag(kafkaGroupLag),
+		usecase.WithPausedNodes(nodeRepo),
 	)
 	kafkaHandler := httpadapter.NewKafkaHandler(kafkaUC, a.logger)
 
@@ -1052,6 +1059,14 @@ func queueSources(cfg *config.Config) []webport.QueueSource {
 		out = append(out, webport.QueueSource{Topic: cfg.Kafka.AsyncTopic, Group: cfg.Kafka.ConsumerGroup})
 	}
 	return out
+}
+
+// kafkaGroupNames — имена групп Nexus для экрана Kafka (§113.8).
+func kafkaGroupNames(k *config.KafkaSection) usecase.KafkaGroupNames {
+	return usecase.KafkaGroupNames{
+		Main: k.ConsumerGroup, Paused: k.PausedGroup(), DLQ: k.DLQGroup(), Retry: k.ClogRetryGroup(),
+		MainTopic: k.AsyncTopic, PausedTopic: k.PausedTopic,
+	}
 }
 
 func kafkaThresholds(c *config.KafkaAlertsSection) usecase.KafkaThresholds {

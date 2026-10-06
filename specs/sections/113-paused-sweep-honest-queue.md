@@ -172,9 +172,14 @@ Sender публикует `nexus_kafka_lag{topic,partition,group}` из брок
 ## 113.7 Страница «Мониторинг Kafka»
 
 - `/api/kafka/overview`: `summary.current_lag` — основная группа из брокера (кеш 30 с), при
-  недоступности Kafka — Prometheus; новые `summary.paused_backlog` (lag группы `-paused` из брокера)
-  и `paused_nodes[]` (`team`, `path`, `id` узлов на паузе по всем командам — экран admin-only).
-- `/api/kafka/topics`: у каждой consumer-группы `role` — `main` / `paused` / `dlq` / `retry`.
+  недоступности Kafka — Prometheus (`lag_from_broker` говорит, откуда значение); новые
+  `summary.paused_backlog` (lag группы `-paused` из брокера) и `paused_nodes[]` (`team`, `path`, `id`
+  узлов на паузе по всем командам — экран admin-only). Список узлов читается только при
+  `paused_backlog > 0`, отдаётся не длиннее 20 (`paused_nodes_total` — сколько всего);
+  `paused_nodes_available=false` — список не прочитан, и интерфейс не утверждает «узлов на паузе
+  нет», а показывает только число.
+- `/api/kafka/topics`: у каждой consumer-группы `role` — `main` / `paused` / `dlq` / `retry`
+  (у посторонней группы поля нет).
 - Карточка «Текущий lag» получает вторую строку **только когда `paused_backlog > 0`**:
 
 ```

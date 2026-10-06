@@ -31,7 +31,10 @@ type Client struct {
 	logger     logging.Logger
 }
 
-var _ port.KafkaAdmin = (*Client)(nil)
+var (
+	_ port.KafkaAdmin          = (*Client)(nil)
+	_ port.KafkaGroupLagReader = (*Client)(nil)
+)
 
 // New создаёт admin-клиент к брокерам (CSV host:port). warnPingMs — порог
 // «повышенной задержки» для §4.5 (0 → дефолт 30мс). Пустой brokers даст клиент

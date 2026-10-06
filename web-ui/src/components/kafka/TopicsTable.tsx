@@ -1,17 +1,44 @@
 import { useTranslation } from "react-i18next";
 
-import type { KafkaTopic } from "../../api/client";
+import type { KafkaTopic, KafkaTopicGroup } from "../../api/client";
 import { Card, Chip, Pill } from "../ui";
 import { fmtBytes, fmtNum } from "../../lib/format";
 
+// waitsByDesign — lag группы означает сообщения, которые ждут по замыслу, а не
+// отставание обработки (§113.8): очередь узлов на паузе и DLQ, разбираемая по
+// расписанию. До §113 очередь паузы красила топик в «растущий lag».
+function waitsByDesign(g: KafkaTopicGroup): boolean {
+  return g.role === "paused" || g.role === "dlq";
+}
+
 // topicTone — состояние топика: offline → err, under-replicated/растущий lag →
-// warn, иначе ok.
+// warn, иначе ok. Lag групп, ждущих по замыслу, в тон не входит.
 function topicHealth(tp: KafkaTopic): { tone: "ok" | "warn" | "err"; key: string } {
   if (tp.offline_partitions > 0) return { tone: "err", key: "offline" };
   if (tp.under_replicated > 0) return { tone: "warn", key: "under_replicated" };
-  const lag = tp.consumer_groups.reduce((s, g) => s + g.lag_total, 0);
+  const lag = tp.consumer_groups.reduce((s, g) => (waitsByDesign(g) ? s : s + g.lag_total), 0);
   if (lag > 1000) return { tone: "warn", key: "lag" };
   return { tone: "ok", key: "ok" };
+}
+
+// GroupChip — плашка consumer-группы. У групп, ждущих по замыслу, тон
+// нейтральный и вместо «lag» — что именно ждёт; подсказка объясняет почему.
+function GroupChip({ g }: { g: KafkaTopicGroup }) {
+  const { t } = useTranslation();
+  const n = g.lag_total.toLocaleString();
+  if (waitsByDesign(g)) {
+    const kind = g.role === "paused" ? "paused" : "dlq";
+    return (
+      <span title={t(`kafka.topics.role_hint.${kind}`)}>
+        <Chip tone="default">{t(`kafka.topics.role_waiting.${kind}`, { group: g.group, n })}</Chip>
+      </span>
+    );
+  }
+  return (
+    <Chip tone={g.lag_total > 1000 ? "warning" : g.lag_total > 0 ? "default" : "success"}>
+      {g.group} · lag {n}
+    </Chip>
+  );
 }
 
 // topicSize — ячейка «Размер» (§75). Источник размеров отдельный от Kafka Admin
@@ -74,9 +101,7 @@ export function TopicsTable({
                     ) : (
                       <div className="flex flex-wrap gap-1">
                         {tp.consumer_groups.map((g) => (
-                          <Chip key={g.group} tone={g.lag_total > 1000 ? "warning" : g.lag_total > 0 ? "default" : "success"}>
-                            {g.group} · lag {g.lag_total.toLocaleString()}
-                          </Chip>
+                          <GroupChip key={g.group} g={g} />
                         ))}
                       </div>
                     )}

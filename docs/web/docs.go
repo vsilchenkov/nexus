@@ -2068,7 +2068,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему периоду, broker_health и severity health-banner. Источники деградируют (флаги *_available). Admin-only, rate-limit 60/мин.",
+                "description": "KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему периоду, broker_health и severity health-banner. Источники деградируют (флаги *_available). current_lag (§113.8) — отставание основной группы из брокера (lag_from_broker=true), при его недоступности из Prometheus. paused_backlog — сообщения узлов на паузе, в lag не входят; при paused_backlog\u003e0 — список узлов на паузе (paused_nodes, не больше 20, всего paused_nodes_total). Admin-only, rate-limit 60/мин.",
                 "produces": [
                     "application/json"
                 ],
@@ -2213,7 +2213,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Партиции, RF, оценка числа сообщений, consumer-группы с lag, состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. Admin-only.",
+                "description": "Партиции, RF, оценка числа сообщений, consumer-группы с lag и ролью группы Nexus (§113.8: main/paused/dlq/retry), состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. Admin-only.",
                 "produces": [
                     "application/json"
                 ],
@@ -10447,6 +10447,25 @@ const docTemplate = `{
                 "kafka_available": {
                     "type": "boolean"
                 },
+                "lag_from_broker": {
+                    "description": "LagFromBroker (§113.8) — current_lag прочитан из брокера, а не из Prometheus.",
+                    "type": "boolean"
+                },
+                "paused_nodes": {
+                    "description": "PausedNodes (§113.8) — узлы на паузе, не больше 20; заполнен только при\nsummary.paused_backlog \u003e 0 и paused_nodes_available=true. Всегда массив.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.kafkaPausedNodeDTO"
+                    }
+                },
+                "paused_nodes_available": {
+                    "description": "PausedNodesAvailable (§113.8) — список узлов на паузе прочитан; false при\nпустой очереди паузы или ошибке PostgreSQL.",
+                    "type": "boolean"
+                },
+                "paused_nodes_total": {
+                    "description": "PausedNodesTotal (§113.8) — сколько узлов на паузе всего.",
+                    "type": "integer"
+                },
                 "period": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.kafkaPeriodDTO"
                 },
@@ -10455,6 +10474,20 @@ const docTemplate = `{
                 },
                 "summary": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.kafkaSummaryDTO"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.kafkaPausedNodeDTO": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "team": {
+                    "type": "string"
                 }
             }
         },
@@ -10516,6 +10549,10 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "in_flight_now": {
+                    "type": "integer"
+                },
+                "paused_backlog": {
+                    "description": "PausedBacklog (§113.8) — сообщения узлов на паузе в nexus.async.paused; в\ncurrent_lag не входят. 0 — очереди нет или брокер не ответил.",
                     "type": "integer"
                 },
                 "produced_total": {
@@ -10589,6 +10626,10 @@ const docTemplate = `{
                 },
                 "members": {
                     "type": "integer"
+                },
+                "role": {
+                    "description": "Role (§113.8) — main | paused | dlq | retry у групп Nexus; у посторонней\nгруппы поля нет.",
+                    "type": "string"
                 }
             }
         },

@@ -95,6 +95,22 @@ func (c *Client) topicConsumerGroups(ctx context.Context, topic string, parts []
 	return out
 }
 
+// GroupLag реализует port.KafkaGroupLagReader (§113.8): lag группы по топику
+// из брокера. Частичный ответ (недочитанная партиция) — ошибка: заниженный lag
+// на карточке хуже честного «из брокера не прочитано», после которого usecase
+// берёт значение из Prometheus.
+func (c *Client) GroupLag(ctx context.Context, group, topic string) (int64, error) {
+	pos, err := c.offsets.GroupPositions(ctx, group, topic)
+	if err != nil {
+		return 0, fmt.Errorf("group lag %s/%s: %w", group, topic, err)
+	}
+	var lag int64
+	for _, p := range pos {
+		lag += p.Lag()
+	}
+	return lag, nil
+}
+
 // groupLag — суммарный lag группы по топику и признак потребления топика
 // (есть ли committed offset). Некоммиченная партиция потребляющей группы
 // считается от low watermark (§113.4: так её и прочитают reader'ы Nexus; до

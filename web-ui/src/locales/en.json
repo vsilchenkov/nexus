@@ -318,6 +318,13 @@
       "of_total": "of total",
       "in_flight_hint": "between produce and consume"
     },
+    "paused": {
+      "backlog": "deferred: {{n}}",
+      "nodes": "paused nodes: {{n}}",
+      "more": "and {{n}} more",
+      "stuck": "deferred: {{n}} — no paused nodes, nobody drains the queue",
+      "hint": "Requests of paused nodes wait in nexus.async.paused and are delivered after the node is resumed. They are not consumer lag."
+    },
     "topics": {
       "title": "Topics",
       "name": "Topic",
@@ -334,6 +341,14 @@
         "under_replicated": "under-replicated",
         "lag": "growing lag",
         "offline": "offline partitions"
+      },
+      "role_waiting": {
+        "paused": "{{group}} · deferred {{n}}",
+        "dlq": "{{group}} · awaiting retry {{n}}"
+      },
+      "role_hint": {
+        "paused": "Requests of paused nodes: they wait by design and are delivered after resume, so they do not count as lag",
+        "dlq": "Failed deliveries waiting for scheduled reprocessing: they do not count as lag"
       }
     },
     "top_producers": {

@@ -35,6 +35,7 @@ var (
 	_ port.NodePathResolver = (*NodeRepoPg)(nil)
 	_ port.NodeBatchReader  = (*NodeRepoPg)(nil)
 	_ port.NodeKeyResolver  = (*NodeRepoPg)(nil)
+	_ port.PausedNodeLister = (*NodeRepoPg)(nil)
 )
 
 func NewNodeRepoPg(db DBTX, cipher *crypto.Cipher, logger logging.Logger) *NodeRepoPg {
@@ -204,6 +205,33 @@ func (r *NodeRepoPg) RefsByPaths(ctx context.Context, paths []string) ([]port.No
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("node refs by paths rows: %w", err)
+	}
+	return out, nil
+}
+
+// PausedNodes реализует port.PausedNodeLister (§113.8): узлы на паузе во всех
+// командах со слогом команды. Синтаксис совместим с PostgreSQL 12.
+func (r *NodeRepoPg) PausedNodes(ctx context.Context) ([]port.NodeKeyRef, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT n.id::text, t.slug, n.path
+		FROM nodes n
+		JOIN teams t ON t.id = n.team_id
+		WHERE n.status = $1
+		ORDER BY t.slug, n.path`, string(domain.NodeStatusPaused))
+	if err != nil {
+		return nil, fmt.Errorf("paused nodes: %w", err)
+	}
+	defer rows.Close()
+	out := []port.NodeKeyRef{}
+	for rows.Next() {
+		var ref port.NodeKeyRef
+		if err := rows.Scan(&ref.ID, &ref.Key.Team, &ref.Key.Path); err != nil {
+			return nil, fmt.Errorf("scan paused node: %w", err)
+		}
+		out = append(out, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("paused nodes rows: %w", err)
 	}
 	return out, nil
 }

@@ -23,13 +23,28 @@ type KafkaMonitorUsecase struct {
 	nodes  port.NodeKeyResolver
 	th     KafkaThresholds
 	logger logging.Logger
+
+	// §113.8: lag из брокера по основной группе, очередь паузы и роли групп.
+	// Все три необязательны (опции): без них экран ведёт себя как до §113.
+	groups      KafkaGroupNames
+	lagReader   port.KafkaGroupLagReader
+	pausedNodes port.PausedNodeLister
 }
 
-func NewKafkaMonitorUsecase(prom port.PromMetrics, admin port.KafkaAdmin, cache port.KafkaCache, nodes port.NodeKeyResolver, th KafkaThresholds, logger logging.Logger) *KafkaMonitorUsecase {
-	return &KafkaMonitorUsecase{prom: prom, admin: admin, cache: cache, nodes: nodes, th: th, logger: logger}
+func NewKafkaMonitorUsecase(prom port.PromMetrics, admin port.KafkaAdmin, cache port.KafkaCache, nodes port.NodeKeyResolver, th KafkaThresholds, logger logging.Logger, opts ...KafkaMonitorOption) *KafkaMonitorUsecase {
+	u := &KafkaMonitorUsecase{prom: prom, admin: admin, cache: cache, nodes: nodes, th: th, logger: logger}
+	for _, o := range opts {
+		o(u)
+	}
+	return u
 }
 
 // KafkaSummaryView — числовая сводка за период (§4.1 spec, поле summary).
+//
+// CurrentLag (§113.8) — отставание ОСНОВНОЙ группы: из брокера, а при его
+// недоступности из Prometheus. PausedBacklog — сообщения узлов на паузе в
+// `nexus.async.paused`: они ждут по замыслу и в lag не входят; 0 — очереди нет
+// или брокер не ответил.
 type KafkaSummaryView struct {
 	ProducedTotal  uint64
 	ConsumedTotal  uint64
@@ -37,6 +52,7 @@ type KafkaSummaryView struct {
 	FailedConsumed uint64
 	CurrentLag     uint64
 	InFlightNow    uint64
+	PausedBacklog  uint64
 }
 
 // KafkaOverviewResult — ответ §4.1: сводка, дельты, broker_health, health-banner.
@@ -51,6 +67,15 @@ type KafkaOverviewResult struct {
 	Health              HealthBanner
 	PrometheusAvailable bool
 	KafkaAvailable      bool
+
+	// §113.8: LagFromBroker — Summary.CurrentLag прочитан из брокера, а не из
+	// Prometheus. PausedNodes — узлы на паузе (не больше maxPausedNodesListed),
+	// PausedNodesTotal — сколько их всего; заполняются только при непустой
+	// очереди паузы и PausedNodesAvailable=true (список прочитан).
+	LagFromBroker        bool
+	PausedNodes          []port.NodeKeyRef
+	PausedNodesTotal     int
+	PausedNodesAvailable bool
 }
 
 // Overview — сводка экрана за период (since, until]. Деградирует поблочно.
@@ -59,6 +84,7 @@ func (u *KafkaMonitorUsecase) Overview(ctx context.Context, since, until time.Ti
 	if u.prom != nil {
 		u.fillPromOverview(ctx, since, until, &res)
 	}
+	u.fillBrokerLag(ctx, &res)
 	if u.admin != nil {
 		if bh, err := u.brokerHealth(ctx); err != nil {
 			u.logger.Warn("kafka broker health failed", u.logger.Err(err))
@@ -204,6 +230,7 @@ func (u *KafkaMonitorUsecase) Topics(ctx context.Context) KafkaTopicsResult {
 			_ = u.cache.Set(ctx, "topics", topics)
 		}
 	}
+	u.markGroupRoles(topics)
 	return KafkaTopicsResult{
 		Topics:         topics,
 		KafkaAvailable: true,
