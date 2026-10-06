@@ -67,6 +67,9 @@ type KafkaOverviewResult struct {
 	Health              HealthBanner
 	PrometheusAvailable bool
 	KafkaAvailable      bool
+	// ProduceP95ms — p95 публикации в Kafka за период, мс (Prometheus); вход
+	// health-баннера (§6 spec, причина produce_latency).
+	ProduceP95ms float64
 
 	// §113.8: LagFromBroker — Summary.CurrentLag прочитан из брокера, а не из
 	// Prometheus. PausedNodes — узлы на паузе (не больше maxPausedNodesListed),
@@ -97,6 +100,7 @@ func (u *KafkaMonitorUsecase) Overview(ctx context.Context, since, until time.Ti
 		currentLag:       int64(res.Summary.CurrentLag),
 		lagGrowthPerSec:  u.lagGrowthPerSec(ctx, until),
 		errorRate:        res.ErrorRate,
+		produceP95ms:     res.ProduceP95ms,
 		brokersTotal:     res.BrokerHealth.BrokersTotal,
 		brokersOnline:    res.BrokerHealth.BrokersOnline,
 		underReplicated:  res.BrokerHealth.UnderReplicatedPartitions,
@@ -122,6 +126,9 @@ func (u *KafkaMonitorUsecase) fillPromOverview(ctx context.Context, since, until
 		CurrentLag:     f2u(cur.CurrentLag),
 		InFlightNow:    f2u(cur.InFlight),
 	}
+	// §113.8: до §113 p95 публикации считался, но в health не передавался —
+	// пороги produce_p95_*_ms не срабатывали никогда.
+	res.ProduceP95ms = cur.ProduceP95ms
 	total := cur.Produced + cur.Consumed
 	failed := cur.FailedProduced + cur.FailedConsumed
 	if total > 0 {
@@ -139,27 +146,53 @@ func (u *KafkaMonitorUsecase) fillPromOverview(ctx context.Context, since, until
 	res.HasDelta = okP || okC
 }
 
-// lagGrowthPerSec оценивает прирост lag/сек за последние 5 минут (для триггера
-// «lag растёт», §6). Без Prometheus или при недостатке точек → 0.
+// lagGrowWindow / lagGrowStep / lagGrowMinSpan — окно, шаг и минимальное
+// покрытие ряда для триггера «lag растёт» (§6 spec): рост должен длиться все 5
+// минут, а не мелькнуть на двух соседних точках.
+const (
+	lagGrowWindow  = 5 * time.Minute
+	lagGrowStep    = 30 * time.Second
+	lagGrowMinSpan = lagGrowWindow - 2*lagGrowStep
+)
+
+// lagGrowthPerSec — средний прирост lag/сек за последние 5 минут, если lag всё
+// это время рос (триггер «lag растёт», §6). 0 — без Prometheus, при ошибке,
+// если ряд покрывает меньше lagGrowMinSpan (дыры в данных) или lag хоть раз
+// снижался.
+//
+// До §113 считалось (last−first)/время по двум крайним точкам: пила очереди,
+// которую разбирает consumer, при неудачной фазе давала «рост» и красный баннер
+// (§113.8).
 func (u *KafkaMonitorUsecase) lagGrowthPerSec(ctx context.Context, until time.Time) float64 {
 	if u.prom == nil {
 		return 0
 	}
-	const window = 5 * time.Minute
-	series, err := u.prom.KafkaTimeseries(ctx, until.Add(-window), until, 30*time.Second, []string{"lag"})
+	series, err := u.prom.KafkaTimeseries(ctx, until.Add(-lagGrowWindow), until, lagGrowStep, []string{"lag"})
 	if err != nil {
+		u.logger.Debug("kafka lag growth skipped: prometheus error",
+			u.logger.Str("op", "web.kafkaMonitor.lagGrowth"), u.logger.Err(err))
 		return 0
 	}
-	pts := series["lag"]
+	return steadyGrowthPerSec(series["lag"], lagGrowMinSpan)
+}
+
+// steadyGrowthPerSec — средний прирост в секунду по ряду, если ряд покрывает
+// не меньше minSpan и ни разу не убывает; иначе 0.
+func steadyGrowthPerSec(pts []port.KafkaPoint, minSpan time.Duration) float64 {
 	if len(pts) < 2 {
 		return 0
 	}
 	first, last := pts[0], pts[len(pts)-1]
-	secs := float64(last.TsMs-first.TsMs) / 1000
-	if secs <= 0 {
+	span := time.Duration(last.TsMs-first.TsMs) * time.Millisecond
+	if span < minSpan {
 		return 0
 	}
-	return (last.V - first.V) / secs
+	for i := 1; i < len(pts); i++ {
+		if pts[i].V < pts[i-1].V {
+			return 0
+		}
+	}
+	return (last.V - first.V) / span.Seconds()
 }
 
 // KafkaTimeseriesResult — ответ §4.2: ряды + выбранный шаг.

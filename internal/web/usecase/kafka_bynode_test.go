@@ -102,7 +102,7 @@ func TestKafkaByNode_SameNamePathsInTwoTeams(t *testing.T) {
 	assert.Equal(t, "messengers", first.Team)
 	assert.Equal(t, "id-messengers", first.NodeID)
 	assert.EqualValues(t, 1747, first.Failed)
-	assert.InDelta(t, 1747.0/8947.0, first.Rate, 1e-9)
+	assert.InDelta(t, 1747.0/7200.0, first.Rate, 1e-9) // §113.8: errors/out
 	assert.Equal(t, "webhook", second.Team)
 	assert.Equal(t, "id-webhook", second.NodeID)
 	assert.EqualValues(t, 8, second.Failed)
