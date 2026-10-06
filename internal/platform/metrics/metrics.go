@@ -289,7 +289,7 @@ func New(service string, opts ...Option) *Metrics {
 
 		KafkaLag: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        "nexus_kafka_lag",
-			Help:        "Kafka consumer lag in messages per topic/partition for the configured consumer group.",
+			Help:        "Kafka consumer lag in messages per topic/partition/group, read from the broker (log end offset minus committed offset); identical on every Sender replica.",
 			ConstLabels: constLabels,
 		}, []string{"topic", "partition", "group"}),
 

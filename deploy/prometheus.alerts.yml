@@ -65,7 +65,9 @@ groups:
 
       - alert: NexusKafkaLagHigh
         # >10k unprocessed сообщений на партицию для 5 минут — async очередь не успевает.
-        expr: max by (topic, partition) (nexus_kafka_lag) > 10000
+        # Lag из брокера (§113.4); очереди паузы и DLQ — отложенная работа, а не отставание
+        # Sender'а: узел на паузе неделями копит очередь законно (инцидент 06.10.2026).
+        expr: max by (topic, partition) (nexus_kafka_lag{group!~".*-(paused|dlq-reprocess)"}) > 10000
         for: 5m
         labels:
           severity: warning
@@ -73,6 +75,21 @@ groups:
         annotations:
           summary: "Kafka lag > 10k messages on {{ $labels.topic }}/{{ $labels.partition }}"
           description: "Sender-consumer is falling behind; check downstream upstream latency or scale consumer instances."
+
+      - alert: NexusPausedBacklogStuck
+        # §113.4: очередь паузы не пуста, а узлов на паузе нет — её никто не разбирает.
+        # После снятия паузы раунд прохода доставляет очередь за ~2 интервала; 30 минут —
+        # sweeper выключен, завис или реплики не видят сигналов (Redis/PostgreSQL).
+        expr: |
+          (sum(max by (group, topic, partition) (nexus_kafka_lag{group=~".*-paused"})) > 0)
+          and on() (max(nexus_paused_nodes) == 0)
+        for: 30m
+        labels:
+          severity: warning
+          service: sender
+        annotations:
+          summary: "Paused-node queue is not drained ({{ $value }} messages)"
+          description: "nexus.async.paused holds messages while no node is paused. Check sender.paused_sweep (enabled, logs 'paused sweep'), nexus_paused_sweep_passes_total and Redis/PostgreSQL reachability from Sender."
 
       # ----- ClickHouse health -----
 

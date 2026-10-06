@@ -143,3 +143,56 @@ tests:
             exp_annotations:
               summary: "DLQ messages dropped for node messengers/telegram (dropped)"
               description: "Async messages were permanently dropped from the DLQ; data loss for this node."
+
+  # §113.4: lag публикуется из брокера каждой репликой Sender'а — одинаковые
+  # значения, max по репликам. Очередь узла на паузе (группа -paused) законно
+  # копится неделями и не должна поднимать NexusKafkaLagHigh (инцидент 06.10.2026:
+  # баннер «Высокий lag» при здоровом основном потоке).
+  - name: "Kafka lag: очередь паузы не считается отставанием Sender'а"
+    interval: 1m
+    input_series:
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-1",group="nexus-sender",topic="nexus.async",partition="0"}'
+        values: '20000x15'
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-2",group="nexus-sender",topic="nexus.async",partition="0"}'
+        values: '20000x15'
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-1",group="nexus-sender-paused",topic="nexus.async.paused",partition="3"}'
+        values: '50000x15'
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-1",group="nexus-sender-dlq-reprocess",topic="nexus.async.dlq",partition="0"}'
+        values: '50000x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NexusKafkaLagHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender, topic: nexus.async, partition: "0" }
+            exp_annotations:
+              summary: "Kafka lag > 10k messages on nexus.async/0"
+              description: "Sender-consumer is falling behind; check downstream upstream latency or scale consumer instances."
+
+  # §113.4: очередь паузы не пуста, а узлов на паузе нет — её никто не разбирает.
+  # Пока узел на паузе (первые 20 минут), очередь законна; алерт — через 30 минут
+  # после того, как узлов на паузе не осталось.
+  - name: "Очередь паузы без узлов на паузе"
+    interval: 1m
+    input_series:
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-1",group="nexus-sender-paused",topic="nexus.async.paused",partition="3"}'
+        values: '960x60'
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-2",group="nexus-sender-paused",topic="nexus.async.paused",partition="3"}'
+        values: '960x60'
+      - series: 'nexus_paused_nodes{service="sender",instance="sender-1"}'
+        values: '1x19 0x40'
+      - series: 'nexus_paused_nodes{service="sender",instance="sender-2"}'
+        values: '1x19 0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: NexusPausedBacklogStuck
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: NexusPausedBacklogStuck
+        exp_alerts: []
+      - eval_time: 55m
+        alertname: NexusPausedBacklogStuck
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender }
+            exp_annotations:
+              summary: "Paused-node queue is not drained (960 messages)"
+              description: "nexus.async.paused holds messages while no node is paused. Check sender.paused_sweep (enabled, logs 'paused sweep'), nexus_paused_sweep_passes_total and Redis/PostgreSQL reachability from Sender."

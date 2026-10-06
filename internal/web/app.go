@@ -641,6 +641,7 @@ func (a *App) Start(ctx context.Context) error {
 			a.cfg.Prometheus.URL,
 			time.Duration(a.cfg.Prometheus.TimeoutMs)*time.Millisecond,
 			a.logger,
+			prometheusreader.WithKafkaMainGroup(a.cfg.Kafka.ConsumerGroup),
 		)
 		if err != nil {
 			a.logger.Warn("prometheus client init failed; panel metrics degraded", a.logger.Err(err))

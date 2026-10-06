@@ -40,8 +40,7 @@ func (c *fakeSweepConsumer) Commit(_ context.Context, msg kafka.Message) error {
 	return nil
 }
 
-func (c *fakeSweepConsumer) Close() error             { return nil }
-func (c *fakeSweepConsumer) Stats() kafka.ReaderStats { return kafka.ReaderStats{} }
+func (c *fakeSweepConsumer) Close() error { return nil }
 func (c *fakeSweepConsumer) committedOffsets() []int64 {
 	out := make([]int64, 0, len(c.committed))
 	for _, m := range c.committed {

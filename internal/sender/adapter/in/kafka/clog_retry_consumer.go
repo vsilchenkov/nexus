@@ -137,16 +137,3 @@ func (g *ChLogRetryConsumer) Stop() {
 	}
 	g.wg.Wait()
 }
-
-// Snapshot — lag по retry-топику (для Prometheus, как у основного consumer'а).
-func (g *ChLogRetryConsumer) Snapshot() []LagSnapshot {
-	out := make([]LagSnapshot, 0, len(g.consumers))
-	for _, c := range g.consumers {
-		s := c.Stats()
-		out = append(out, LagSnapshot{Topic: s.Topic, Partition: s.Partition, Lag: s.Lag})
-	}
-	return out
-}
-
-// Group — имя consumer-group (для меток метрик).
-func (g *ChLogRetryConsumer) Group() string { return g.groupID }

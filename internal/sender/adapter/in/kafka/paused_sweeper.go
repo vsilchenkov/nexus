@@ -27,7 +27,6 @@ type sweepConsumer interface {
 	FetchMessage(ctx context.Context) (kafka.Message, error)
 	Commit(ctx context.Context, msg kafka.Message) error
 	Close() error
-	Stats() kafka.ReaderStats
 }
 
 // PausedSweeper — периодический sweeper над delay-топиком nexus.async.paused
@@ -227,17 +226,3 @@ func (s *PausedSweeper) Stop() {
 		_ = s.consumer.Close()
 	}
 }
-
-// Snapshot — lag по delay-топику (для Prometheus, как у основного consumer'а).
-// Растущий lag означает, что бэклог паузы не разбирается (sweeper выключен или
-// узлы давно на паузе) — по нему строится алерт.
-func (s *PausedSweeper) Snapshot() []LagSnapshot {
-	if s.consumer == nil {
-		return nil
-	}
-	st := s.consumer.Stats()
-	return []LagSnapshot{{Topic: st.Topic, Partition: st.Partition, Lag: st.Lag}}
-}
-
-// Group — имя consumer-group (для меток метрик).
-func (s *PausedSweeper) Group() string { return s.group }

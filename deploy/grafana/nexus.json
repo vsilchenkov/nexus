@@ -133,7 +133,7 @@
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "targets": [
         {
-          "expr": "max by (topic, partition) (nexus_kafka_lag)",
+          "expr": "max by (topic, partition) (nexus_kafka_lag{group!~\".*-(paused|dlq-reprocess)\"})",
           "legendFormat": "{{topic}}/{{partition}}",
           "refId": "A"
         }
