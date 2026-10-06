@@ -391,7 +391,7 @@ func (u *ReplayUsecase) replayOne(
 	// записи, порождённые прошлыми повторами.
 	q.Set(domain.ReplayOfParam, logID)
 
-	async := orig.Type == domain.RootMethodRequestAsync && !opts.SyncOverride
+	async := replayViaAsync(node, orig) && !opts.SyncOverride
 
 	// §96.5: заголовки исходного запроса живут только в конверте — журнал их не
 	// хранит вовсе. Берём Content-Type и то, что узел пробрасывает дальше;
@@ -470,6 +470,31 @@ func (u *ReplayUsecase) replayOne(
 type replaySource struct {
 	original *port.AsyncOriginal
 	searched bool
+}
+
+// replayViaAsync — повторять ли запись через async-вход Receiver'а
+// (/requestAsync), §113.10.
+//
+// Внешний /requestAsync принимает только узлы root_method=requestAsync (§82.3,
+// ErrNodeNotAsyncIngress → 404 «node not found»). Async-запись sync-узла — это
+// запрос, принятый с 202 во время паузы (§3.6): на /requestAsync он получал
+// 404, а массовый повтор до §113 считал этот ответ успехом, отменял оригинал и
+// стирал записи — запросы пропадали молча. Через /request узел на паузе снова
+// ответит 202 и поставит запрос в очередь, а включённый — доставит синхронно.
+//
+// Pull-узел (RabbitMQAsync) тоже идёт через /request: на паузе он так же
+// отвечает 202. Включённый pull-узел не принимает повтор ни одним входом
+// (§82.3 и «node is RabbitMQAsync, not request») — это граница §113.10: повтор
+// честно считается неудачей, запись остаётся, но доставить её отсюда нельзя.
+func replayViaAsync(node *domain.Node, orig *domain.LogRecord) bool {
+	return orig.Type == domain.RootMethodRequestAsync && node.RootMethod == domain.RootMethodRequestAsync
+}
+
+// replayAccepted — шина приняла повтор (§113.10): 2xx от Receiver'а. Только
+// такой исход разрешает массовым повторам отменить оригинал и убрать запись
+// из «Неудачных доставок». Остальное — неудача повтора, запись остаётся.
+func replayAccepted(r *ReplayResult) bool {
+	return r != nil && r.StatusCode >= 200 && r.StatusCode < 300
 }
 
 // queueLookupSkew — запас назад от времени приёма записи при поиске конверта.
@@ -749,7 +774,8 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 			if env, ok := found[id]; ok {
 				src.original = &env
 			}
-			if _, rerr := u.replayOne(ctx, node, id, ReplayOptions{UseNodeAuth: true}, src); rerr != nil {
+			r, rerr := u.replayOne(ctx, node, id, ReplayOptions{UseNodeAuth: true}, src)
+			if rerr != nil {
 				// §96.4: конверта нет, копия обрезана — запись пропускается
 				// БЕЗ отмены оригинала и без очистки строк. Иначе операция
 				// уничтожала бы последний след полного тела (боевой инцидент).
@@ -765,6 +791,15 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 				res.Failed++
 				u.logger.Warn("replay-all: one message failed",
 					u.logger.Str("log_id", id), u.logger.Err(rerr))
+				continue
+			}
+			// §113.10: не-2xx — неудача повтора. Без отмены оригинала и без
+			// очистки: до §113 404 считался успехом, и запись пропадала.
+			if !replayAccepted(r) {
+				res.Failed++
+				u.logger.Warn("replay-all: receiver rejected replay, record kept",
+					u.logger.Str("log_id", id), u.logger.Str("node", node.Path),
+					u.logger.Int("status", r.StatusCode))
 				continue
 			}
 			// Успех → отменяем оригинал в DLQ: авто-репроцессор дропнет его по

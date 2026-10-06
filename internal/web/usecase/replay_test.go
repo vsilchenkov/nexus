@@ -1081,9 +1081,12 @@ func TestReplay_NewLogIDComesFromBus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			// §113.10: async-вход выбирается по root_method узла, поэтому он
+			// задан явно — async-узел, у которого бывают и sync-записи (§3.6).
 			node := &domain.Node{
 				ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled,
 				ClickHouseTable: "t.t", IncomingMethod: domain.HTTPMethodPOST,
+				RootMethod: domain.RootMethodRequestAsync,
 			}
 			log := &domain.LogRecord{
 				ID: "log1", Type: tt.recType, Request: `{"a":1}`,
