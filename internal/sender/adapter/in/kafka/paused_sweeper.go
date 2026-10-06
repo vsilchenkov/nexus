@@ -45,6 +45,7 @@ type PausedSweeper struct {
 	interval     time.Duration
 	maxScan      int
 	fetchTimeout time.Duration
+	retry        inPlaceRetry     // §113.2: повтор сообщения на месте при HandleRetry
 	metrics      *metrics.Metrics // nil-safe
 	logger       logging.Logger
 	topic        string
@@ -73,6 +74,7 @@ func NewPausedSweeper(
 		interval:     interval,
 		maxScan:      maxScan,
 		fetchTimeout: 2 * time.Second,
+		retry:        inPlaceRetry{min: passRetryMin, max: passRetryMax},
 		metrics:      m,
 		logger:       logger,
 		topic:        cfg.Kafka.PausedTopic,
@@ -111,7 +113,9 @@ func (s *PausedSweeper) Run(ctx context.Context) {
 // КЛЮЧЕВОЕ (грабли §36, поймано стендом): проверка wrap'а (seen[id]) и break —
 // СТРОГО ПОСЛЕ Commit прочитанного сообщения. kafka-go продвигает курсор за
 // каждое прочитанное; если прерваться, НЕ закоммитив его, коммит последующих
-// сообщений прокатит offset мимо незакоммиченного → потеря.
+// сообщений прокатит offset мимо незакоммиченного → потеря. По той же причине
+// транзиентный сбой обработки повторяется на месте, а не прерывает проход
+// (§113.2) — до §113 break без commit терял сообщение на следующем проходе.
 func (s *PausedSweeper) sweepOnce(ctx context.Context) {
 	seen := make(map[string]bool)
 	processed := 0
@@ -129,13 +133,8 @@ func (s *PausedSweeper) sweepOnce(ctx context.Context) {
 		}
 
 		hdrs := headersToMap(msg.Headers)
-		// Handle сам решает судьбу: узел всё ещё paused → перенос в хвост этого
-		// же топика (HandleRequeued), ожил → доставка (Ack/DLQed), отменён или
-		// disabled → drop (Ack). Retry — транзиентный сбой (PG/produce недоступны).
-		if s.processor.Handle(ctx, msg.Value, hdrs) == usecase.HandleRetry {
-			// Не коммитим: сообщение перечитается на следующем проходе после
-			// rebalance/рестарта. Прерываем проход, чтобы не прокатить offset мимо.
-			break
+		if !s.handleInPlace(ctx, msg, hdrs) {
+			return // shutdown посреди повторов: без commit, перечитается после рестарта
 		}
 		if err := s.consumer.Commit(ctx, msg); err != nil {
 			s.logger.ErrorWithOp("paused sweep commit failed", err, "kafka.pausedSweep.commit",
@@ -157,6 +156,26 @@ func (s *PausedSweeper) sweepOnce(ctx context.Context) {
 			s.logger.Str("topic", s.topic),
 			s.logger.Int("processed", processed))
 	}
+}
+
+// handleInPlace обрабатывает сообщение до финального исхода. Handle сам решает
+// судьбу: узел всё ещё paused → перенос в хвост этого же топика (Requeued),
+// ожил → доставка (Ack/DLQed), отменён или disabled → drop (Ack). Retry —
+// транзиентный сбой (PostgreSQL или produce недоступны) → повтор того же
+// сообщения (§113.2). false — ctx отменён раньше финального исхода.
+func (s *PausedSweeper) handleInPlace(ctx context.Context, msg kafka.Message, hdrs map[string]string) bool {
+	return s.retry.run(ctx, func() bool {
+		return s.processor.Handle(ctx, msg.Value, hdrs) != usecase.HandleRetry
+	}, func(attempt int, wait time.Duration) {
+		// §51.9: «залипание» прохода на одном сообщении иначе выглядит как молчание.
+		s.logger.Debug("paused sweep: retrying message in place",
+			s.logger.Str("topic", s.topic),
+			s.logger.Int("partition", msg.Partition),
+			s.logger.Any("offset", msg.Offset),
+			s.logger.Str("id", hdrs["id"]),
+			s.logger.Int("attempt", attempt),
+			s.logger.Str("wait", wait.String()))
+	})
 }
 
 // Stop корректно завершает consumer sweeper'а.

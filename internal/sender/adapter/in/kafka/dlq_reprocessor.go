@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	kafka "github.com/segmentio/kafka-go"
+
 	"nexus/internal/platform/config"
 	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/platform/logging"
@@ -23,14 +25,22 @@ import (
 // (republish) обрабатываются на СЛЕДУЮЩЕМ проходе, а не сразу — в одном проходе
 // каждый id трогаем один раз (§36.4).
 type DLQReprocessor struct {
-	consumer     *kafkapf.Consumer
-	processor    *usecase.DLQReprocessor
+	consumer     sweepConsumer
+	processor    dlqProcessor
 	interval     time.Duration
 	maxScan      int
 	fetchTimeout time.Duration
+	retry        inPlaceRetry     // §113.2: повтор сообщения на месте при ReprocessRetry
 	metrics      *metrics.Metrics // nil-safe
 	logger       logging.Logger
 	topic        string
+}
+
+// dlqProcessor — решение по одному DLQ-сообщению. Реализуется
+// *usecase.DLQReprocessor; объявлен здесь (CLAUDE.md §3), чтобы проход
+// покрывался юнитами без брокера.
+type dlqProcessor interface {
+	ProcessMessage(ctx context.Context, raw []byte, headers map[string]string) usecase.ReprocessResult
 }
 
 // NewDLQReprocessor создаёт sweeper. interval/maxScan ≤ 0 → дефолты (5 мин / 1000).
@@ -55,6 +65,7 @@ func NewDLQReprocessor(
 		interval:     interval,
 		maxScan:      maxScan,
 		fetchTimeout: 2 * time.Second,
+		retry:        inPlaceRetry{min: passRetryMin, max: passRetryMax},
 		metrics:      m,
 		logger:       logger,
 		topic:        cfg.Kafka.DLQTopic,
@@ -94,7 +105,9 @@ func (r *DLQReprocessor) Run(ctx context.Context) {
 // прочитанное; если прерваться, НЕ закоммитив его, коммит последующих сообщений
 // прокатит offset мимо незакоммиченного → потеря. Коммитя каждое прочитанное
 // перед break'ом, мы держим committed-offset = живой republish-копии у хвоста,
-// которая перечитается следующим проходом.
+// которая перечитается следующим проходом. По той же причине транзиентный сбой
+// повторяется на месте (§113.2): до §113 break без commit терял сообщение —
+// следующий проход читал X+1 и его commit перешагивал X.
 func (r *DLQReprocessor) sweepOnce(ctx context.Context) {
 	start := time.Now()
 	seen := make(map[string]bool)
@@ -113,11 +126,8 @@ func (r *DLQReprocessor) sweepOnce(ctx context.Context) {
 		}
 
 		hdrs := headersToMap(msg.Headers)
-		res := r.processor.ProcessMessage(ctx, msg.Value, hdrs)
-		if res == usecase.ReprocessRetry {
-			// Транзиентный сбой (republish не записался / временная ошибка чтения):
-			// не коммитим, перечит — на rebalance/рестарте (как у основного consumer'а).
-			break
+		if !r.processInPlace(ctx, msg, hdrs) {
+			return // shutdown посреди повторов: без commit, перечитается после рестарта
 		}
 		if err := r.consumer.Commit(ctx, msg); err != nil {
 			r.logger.ErrorWithOp("dlq reprocess commit failed", err, "dlq.reprocess.commit",
@@ -144,6 +154,23 @@ func (r *DLQReprocessor) sweepOnce(ctx context.Context) {
 			r.logger.Str("topic", r.topic),
 			r.logger.Int("processed", delivered))
 	}
+}
+
+// processInPlace обрабатывает DLQ-сообщение до финального исхода: Retry
+// (republish не записался / временная ошибка чтения узла) повторяется на месте
+// (§113.2). false — ctx отменён раньше финального исхода.
+func (r *DLQReprocessor) processInPlace(ctx context.Context, msg kafka.Message, hdrs map[string]string) bool {
+	return r.retry.run(ctx, func() bool {
+		return r.processor.ProcessMessage(ctx, msg.Value, hdrs) != usecase.ReprocessRetry
+	}, func(attempt int, wait time.Duration) {
+		r.logger.Debug("dlq reprocess: retrying message in place",
+			r.logger.Str("topic", r.topic),
+			r.logger.Int("partition", msg.Partition),
+			r.logger.Any("offset", msg.Offset),
+			r.logger.Str("id", hdrs["id"]),
+			r.logger.Int("attempt", attempt),
+			r.logger.Str("wait", wait.String()))
+	})
 }
 
 // Stop корректно завершает consumer DLQ-sweeper'а.

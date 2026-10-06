@@ -4391,6 +4391,15 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   (`warmupConsumer`): сначала доставляем сообщение enabled-узла и ждём его хита — это доказывает, что
   consumer активен, и только потом проверяем отсутствие доставки. Любой новый тест этого контура
   обязан начинаться с warmup.
+- **§113.2: то же правило для ВСЕХ reader'ов, включая проходные.** Sweeper паузы и DLQ-репроцессор
+  жили с `break` без commit на Retry и тем самым теряли сообщение (найдено при разборе боевого
+  инцидента 06.10.2026, см. 4.98). Повтор вынесен в общий хелпер
+  [retry_in_place.go](../internal/sender/adapter/in/kafka/retry_in_place.go) `inPlaceRetry.run`:
+  проходные reader'ы — backoff 1→30 с (сбой PG/Kafka может затянуться, долбить раз в секунду
+  незачем), основной consumer — постоянная 1 с (после восстановления зависимости поток не должен
+  ждать). Тест-фейк обязан моделировать «нет передоставки» (после Retry fetch отдаёт X+1) — старый
+  тест `RetryBreaksWithoutCommit` закреплял именно дефект: смотрел на один проход («не закоммитили —
+  значит не потеряли») и не проверял, что сделает следующий.
 
 ### 4.38 §3.6 delay-топик `nexus.async.paused`: изоляция paused-узлов
 
@@ -4409,7 +4418,10 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   максимальную задержку доставки после `unpause`.
 - **Инварианты прохода скопированы из DLQ-репроцессора (§36):** wrap-detect `seen[id]` (иначе бэклог
   крутится внутри одного прохода бесконечно) и **commit строго ДО break** (иначе коммит последующих
-  прокатывает offset мимо незакоммиченного — та же потеря, что в 4.37).
+  прокатывает offset мимо незакоммиченного — та же потеря, что в 4.37). До §113.2 оба проходных
+  reader'а нарушали этот инвариант на `HandleRetry`/`ReprocessRetry`: `break` без commit, следующий
+  проход читал X+1 (тот же reader X не передоставляет), commit X+1 перешагивал X. Теперь Retry
+  повторяется на месте (см. 4.37, последний пункт).
 - **`paused_since` — метка первого откладывания**, не затирается на кругах циркуляции: по ней виден
   возраст бэклога (нужно для баннера §3.6 «узел в паузе X дней»). `last_requeue_at` обновляется.
 - **Известные ограничения (приняты осознанно):**
@@ -7419,7 +7431,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §113 + правки §3.6/§15/§31/§34.4/§36.11/§69/§80.2 | ✅ Phase 113.0 | [sections/113-paused-sweep-honest-queue.md](sections/113-paused-sweep-honest-queue.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
-| §113.2 retry-in-place в проходных reader'ах | ⛔ | — |
+| §113.2 retry-in-place в проходных reader'ах | ✅ Phase 113.1 | общий хелпер [retry_in_place.go](../internal/sender/adapter/in/kafka/retry_in_place.go) (backoff 1→30 с, выход по ctx без commit), [paused_sweeper.go](../internal/sender/adapter/in/kafka/paused_sweeper.go) `handleInPlace`, [dlq_reprocessor.go](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) `processInPlace` (порт `dlqProcessor`), основной [consumer.go](../internal/sender/adapter/in/kafka/consumer.go) `processWithRetry` на том же хелпере (пауза постоянная 1 с); тесты `*_RetryInPlace_NoLoss`/`_CtxCancel` в [paused_sweeper_test.go](../internal/sender/adapter/in/kafka/paused_sweeper_test.go), [dlq_reprocessor_test.go](../internal/sender/adapter/in/kafka/dlq_reprocessor_test.go), [retry_in_place_test.go](../internal/sender/adapter/in/kafka/retry_in_place_test.go). См. 4.37 |
 | §113.3 sweeper по событию | ⛔ | — |
 | §113.4 lag из брокера | ⛔ | — |
 | §113.5 честные счётчики | ⛔ | — |

@@ -67,6 +67,7 @@ func newTestSweeper(c sweepConsumer, p messageProcessor, maxScan int) *PausedSwe
 		interval:     time.Hour,
 		maxScan:      maxScan,
 		fetchTimeout: time.Millisecond,
+		retry:        inPlaceRetry{min: time.Millisecond, max: time.Millisecond},
 		logger:       logging.NewNoop(),
 		topic:        "nexus.async.paused",
 		group:        "nexus-sender-paused",
@@ -102,18 +103,48 @@ func TestPausedSweeper_CommitsTerminalResults(t *testing.T) {
 	}
 }
 
-// TestPausedSweeper_RetryBreaksWithoutCommit: транзиентный сбой (PostgreSQL или
-// produce недоступны) — проход прерывается БЕЗ коммита. Коммитить нельзя: тогда
-// следующий проход не перечитает сообщение и оно потеряется.
-func TestPausedSweeper_RetryBreaksWithoutCommit(t *testing.T) {
+// TestPausedSweeper_RetryInPlace_NoLoss (§113.2): транзиентный сбой на X не даёт
+// закоммитить X+1 раньше финального исхода X. kafka-go не передоставляет X тому
+// же reader'у — следующий FetchMessage вернёт X+1, и его commit перенёс бы
+// committed offset за X. Фейк моделирует ровно это: fetch идёт дальше, а
+// следующий проход (второй sweepOnce) — следующий тик. До §113 проход прерывался
+// без commit, и X терялся.
+func TestPausedSweeper_RetryInPlace_NoLoss(t *testing.T) {
 	t.Parallel()
 
 	c := &fakeSweepConsumer{msgs: []kafka.Message{msgWithID(1, "a"), msgWithID(2, "b")}}
+	proc := newStubProcessor(usecase.HandleRetry, usecase.HandleRequeued)
+	s := newTestSweeper(c, proc, 10)
+
+	s.sweepOnce(context.Background())
+	s.sweepOnce(context.Background())
+
+	require.NotEmpty(t, c.committed)
+	assert.Equal(t, int64(1), c.committed[0].Offset, "первым закоммичен X, а не X+1")
+	assert.Equal(t, []int64{1, 2}, c.committedOffsets())
+	assert.Equal(t, 3, proc.calls, "X обработан дважды (Retry, затем финально), X+1 — один раз")
+}
+
+// TestPausedSweeper_RetryInPlace_CtxCancel: shutdown посреди повторов
+// прекращает проход без commit — процесс останавливается, и непрочитанное
+// никто не перешагнёт; после рестарта сообщение перечитается с committed offset.
+func TestPausedSweeper_RetryInPlace_CtxCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := &fakeSweepConsumer{msgs: []kafka.Message{msgWithID(1, "a"), msgWithID(2, "b")}}
 	proc := newStubProcessor(usecase.HandleRetry)
+	proc.onHandle = func(call int) {
+		if call == 2 {
+			cancel()
+		}
+	}
 
-	newTestSweeper(c, proc, 10).sweepOnce(context.Background())
+	newTestSweeper(c, proc, 10).sweepOnce(ctx)
 
-	assert.Equal(t, 1, proc.calls, "после Retry проход прерывается")
+	assert.Equal(t, 2, proc.calls, "повторяется то же сообщение, пока не отменят ctx")
+	assert.Equal(t, 1, c.fetched, "следующее сообщение не читается")
 	assert.Empty(t, c.committed, "необработанное сообщение не коммитим")
 }
 

@@ -177,24 +177,21 @@ func (g *ConsumerGroup) handleMessage(ctx context.Context, c messageCommitter, m
 // commit СЛЕДУЮЩЕГО сообщения той же партиции прокатывал committed offset мимо
 // него — и сообщение терялось навсегда. Retry-in-place сохраняет и сообщение, и
 // порядок партиции (ценой head-of-line blocking). Тот же приём, что у
-// ChLogRetryConsumer (§38).
+// ChLogRetryConsumer (§38) и проходных reader'ов (§113.2); пауза здесь
+// постоянная — основной поток не должен ждать дольше секунды после
+// восстановления зависимости.
 func (g *ConsumerGroup) processWithRetry(ctx context.Context, msg kafka.Message, hdrs map[string]string) bool {
-	for {
-		if g.processor.Handle(ctx, msg.Value, hdrs) != usecase.HandleRetry {
-			return true
-		}
+	retry := inPlaceRetry{min: asyncRetryPause, max: asyncRetryPause}
+	return retry.run(ctx, func() bool {
+		return g.processor.Handle(ctx, msg.Value, hdrs) != usecase.HandleRetry
+	}, func(int, time.Duration) {
 		// §51.9: повторная обработка того же offset'а — иначе «залипание»
 		// партиции на одном сообщении выглядит как молчание consumer'а.
 		g.logger.Debug("kafka: retrying message in place",
 			g.logger.Str("topic", g.topic),
 			g.logger.Int("partition", msg.Partition),
 			g.logger.Any("offset", msg.Offset))
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(asyncRetryPause):
-		}
-	}
+	})
 }
 
 // incInFlight/decInFlight — nil-safe изменение gauge сообщений «в полёте».
