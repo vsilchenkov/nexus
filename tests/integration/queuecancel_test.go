@@ -107,8 +107,10 @@ func TestQueueCancel_SignalInSameTx(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), after)
 
-	require.NoError(t, qc.Bump(ctx))
-	bumped, err := qc.Signal(ctx)
+	bumped, err := qc.Bump(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), bumped)
+	now, err := qc.Signal(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, bumped, now)
 }

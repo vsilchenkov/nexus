@@ -123,6 +123,9 @@ func Validate(c *Config) error {
 	if err := validateRDNS(&c.Sender.RDNS); err != nil {
 		return err
 	}
+	if err := validatePausedSweep(&c.Sender.PausedSweep, c.Kafka.Topic.RetentionMs); err != nil {
+		return err
+	}
 
 	// §64: границы те же, что у domain.Node.MaxBodySize — иначе форма подставит
 	// значение, которое не пройдёт валидацию при сохранении узла.
@@ -162,6 +165,28 @@ func validateRDNS(r *SenderRDNSConfig) error {
 		(len(sfx) > maxNetBIOSSuffixLen || !dnsSuffixPattern.MatchString(sfx)) {
 		return fmt.Errorf("sender.rdns.netbios.suffix=%q: must be a DNS suffix (labels of A-Z, a-z, 0-9, '-' joined by '.'), <= %d chars",
 			nb.Suffix, maxNetBIOSSuffixLen)
+	}
+	return nil
+}
+
+// validatePausedSweep — sender.paused_sweep (§113.3): interval ≤ backstop ≤
+// retention/4. Backstop меньше тика бессмыслен (раунд на каждом тике — это
+// continuous), а больше четверти retention опасен: сообщение на паузе, которое
+// переписывается раз в backstop, может протухнуть раньше, чем узел снимут с
+// паузы. retention_ms ≤ 0 (без ограничения по времени) верхнюю границу снимает.
+// Реальный retention топика может отличаться от конфига — его планировщик
+// читает из брокера и ограничивает backstop на лету.
+func validatePausedSweep(p *SenderPausedSweepConfig, retentionMs int64) error {
+	if p.IntervalSec < 1 {
+		return fmt.Errorf("sender.paused_sweep.interval_sec=%d: must be >= 1", p.IntervalSec)
+	}
+	if p.BackstopSec < p.IntervalSec {
+		return fmt.Errorf("sender.paused_sweep.backstop_sec=%d: must be >= interval_sec=%d",
+			p.BackstopSec, p.IntervalSec)
+	}
+	if limit := retentionMs / 4 / 1000; retentionMs > 0 && int64(p.BackstopSec) > limit {
+		return fmt.Errorf("sender.paused_sweep.backstop_sec=%d: must be <= kafka.topic.retention_ms/4 (%d s)",
+			p.BackstopSec, limit)
 	}
 	return nil
 }

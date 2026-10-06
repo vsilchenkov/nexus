@@ -128,6 +128,12 @@ type Metrics struct {
 	ReplayBodySourceTotal *prometheus.CounterVec // {team, node, source=queue|log|rejected}
 	DLQReprocessDuration  prometheus.Histogram   // длительность одного прохода sweeper'а (секунды)
 
+	// §113.3: решения планировщика прохода очереди паузы и число узлов на паузе.
+	// Рост reason!="skip" без действий людей — признак того, что очередь снова
+	// переписывается вхолостую (инцидент 06.10.2026).
+	PausedSweepPassesTotal *prometheus.CounterVec // {reason=skip|startup|nodes|signal|backstop|round|continuous}
+	PausedNodes            prometheus.Gauge
+
 	// §74.3: состояние схемы PostgreSQL относительно кода сервиса.
 	PGSchemaVersion prometheus.Gauge // версия схемы в БД (0 = миграций не было)
 	PGSchemaAhead   prometheus.Gauge // 1 = схема новее каталога миграций бинаря
@@ -415,6 +421,18 @@ func New(service string, opts ...Option) *Metrics {
 			Buckets:     []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60},
 		}),
 
+		// §113.3: решение планировщика очереди паузы на каждом тике.
+		PausedSweepPassesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_paused_sweep_passes_total",
+			Help:        "Paused-queue sweep planner decisions per tick by reason (skip means no pass).",
+			ConstLabels: constLabels,
+		}, []string{"reason"}),
+		PausedNodes: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name:        "nexus_paused_nodes",
+			Help:        "Number of nodes currently paused (their requests wait in the paused topic).",
+			ConstLabels: constLabels,
+		}),
+
 		// §74.3: версия схемы PostgreSQL, на которой работает сервис.
 		PGSchemaVersion: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name:        "nexus_pg_schema_version",
@@ -474,6 +492,8 @@ func New(service string, opts ...Option) *Metrics {
 		m.DLQReprocessTotal,
 		m.ReplayBodySourceTotal,
 		m.DLQReprocessDuration,
+		m.PausedSweepPassesTotal,
+		m.PausedNodes,
 		m.PGSchemaVersion,
 		m.PGSchemaAhead,
 	)
@@ -555,6 +575,14 @@ func (m *Metrics) IncIngressRejectDropped(cause string, n int) {
 	}
 	m.IngressRejectDroppedTotal.WithLabelValues(cause).Add(float64(n))
 }
+
+// IncPausedSweepPass — решение планировщика очереди паузы на тике (§113.3).
+func (m *Metrics) IncPausedSweepPass(reason string) {
+	m.PausedSweepPassesTotal.WithLabelValues(reason).Inc()
+}
+
+// SetPausedNodes — число узлов на паузе (§113.3).
+func (m *Metrics) SetPausedNodes(n int) { m.PausedNodes.Set(float64(n)) }
 
 // Registry возвращает собственный prometheus.Registry — для тестов или
 // дополнительных кастомных collectors.

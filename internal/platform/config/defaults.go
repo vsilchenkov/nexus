@@ -277,6 +277,11 @@ func applyDefaults(c *Config) {
 	if c.Sender.PausedSweep.MaxScan == 0 {
 		c.Sender.PausedSweep.MaxScan = 1000
 	}
+	if c.Sender.PausedSweep.BackstopSec == 0 {
+		// §113.3: 6 ч — очередь паузы 960 сообщений переписывается 4 раза в сутки
+		// вместо 2.8 млн; retention 7 дней это ограничение не трогает.
+		c.Sender.PausedSweep.BackstopSec = 21600
+	}
 	// §67: reverse-DNS резолв client_host включён по умолчанию (Disabled=false).
 	if c.Sender.RDNS.TimeoutMs == 0 {
 		c.Sender.RDNS.TimeoutMs = 2000

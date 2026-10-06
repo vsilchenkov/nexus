@@ -90,13 +90,16 @@ func (r *Redis) Signal(ctx context.Context) (int64, error) {
 	return v, nil
 }
 
-// Bump увеличивает счётчик-сигнал: все реплики Sender начнут раунд прохода
-// очереди паузы (§113.3 — старт процесса и страховочный проход).
-func (r *Redis) Bump(ctx context.Context) error {
-	if err := r.client.Incr(ctx, signalKey).Err(); err != nil {
-		return fmt.Errorf("queuecancel bump: %w", err)
+// Bump увеличивает счётчик-сигнал и возвращает новое значение: остальные
+// реплики Sender начнут раунд прохода очереди паузы (§113.3 — старт процесса и
+// страховочный проход), а сама реплика запоминает значение и не принимает
+// собственный инкремент за чужой сигнал.
+func (r *Redis) Bump(ctx context.Context) (int64, error) {
+	v, err := r.client.Incr(ctx, signalKey).Result()
+	if err != nil {
+		return 0, fmt.Errorf("queuecancel bump: %w", err)
 	}
-	return nil
+	return v, nil
 }
 
 // IsCancelled возвращает true, если сообщение с этим ID было отменено.

@@ -496,10 +496,21 @@ type SenderRDNSNetBIOSConfig struct {
 // партиции, мы вернули бы head-of-line blocking внутрь delay-топика (узел,
 // снявший паузу, ждал бы бэклог долго-paused соседа). IntervalSec задаёт и
 // максимальную задержку доставки после снятия паузы, и темп циркуляции.
+//
+// §113.3: тик interval_sec — это момент РЕШЕНИЯ, а не проход. Проход идёт, только
+// когда судьба сообщений могла измениться (узлы, отмена, старт) — иначе очередь
+// узла на паузе переписывалась бы каждые 30 с (бой 06.10.2026: 17 ГБ за 4 дня).
 type SenderPausedSweepConfig struct {
 	Disabled    bool `yaml:"disabled"`     // выключатель (default false → включён)
-	IntervalSec int  `yaml:"interval_sec"` // период прохода (default 30с)
+	IntervalSec int  `yaml:"interval_sec"` // период тика планировщика (default 30с)
 	MaxScan     int  `yaml:"max_scan"`     // cap сообщений за проход (default 1000)
+	// BackstopSec — страховочный раунд без события (§113.3, default 21600 = 6 ч).
+	// Эффективно min(значение, retention топика / 4): сообщение на паузе
+	// переписывается не реже раза в backstop и не должно протухнуть по retention.
+	BackstopSec int `yaml:"backstop_sec"`
+	// Continuous — аварийный выключатель планировщика (§113.3): проход на каждом
+	// тике, как до §113. Без отката кода, если раунды по событию подведут.
+	Continuous bool `yaml:"continuous"`
 }
 
 // SenderReprocessorConfig — глобальные параметры авто-репроцессора DLQ (§36).

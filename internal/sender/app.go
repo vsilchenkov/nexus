@@ -47,6 +47,7 @@ import (
 	"nexus/internal/sender/adapter/out/chlog"
 	"nexus/internal/sender/adapter/out/chlogretry"
 	"nexus/internal/sender/adapter/out/httpclient"
+	"nexus/internal/sender/adapter/out/kafkaoffsets"
 	"nexus/internal/sender/adapter/out/maskpg"
 	"nexus/internal/sender/adapter/out/nodepg"
 	"nexus/internal/sender/usecase"
@@ -430,12 +431,32 @@ func (a *App) startAsyncPipeline(
 		a.pausedSweep = kafkaadapter.NewPausedSweeper(
 			a.cfg, asyncProc,
 			time.Duration(a.cfg.Sender.PausedSweep.IntervalSec)*time.Second,
-			a.cfg.Sender.PausedSweep.MaxScan, a.metrics, a.logger)
+			a.cfg.Sender.PausedSweep.MaxScan, a.metrics, a.logger,
+			kafkaadapter.WithSweepPlanner(a.newPausedSweepPlanner(nodeReader)))
 		a.pausedSweepDone = safego.Go(a.logger, "sender.pausedSweep", func() {
 			a.pausedSweep.Run(ctx)
 		})
 	}
 
+}
+
+// newPausedSweepPlanner собирает планировщик прохода очереди паузы (§113.3):
+// отпечаток узлов из PG, сигнал отмены из Redis (без Redis триггер выключен),
+// офсеты и retention delay-топика из брокера.
+func (a *App) newPausedSweepPlanner(nodeReader *nodepg.Reader) *usecase.PausedSweepPlanner {
+	var signal usecase.PausedSweepSignaler
+	if a.redis != nil {
+		signal = queuecancel.New(a.redis)
+	}
+	offsets := kafkaoffsets.NewPausedTopic(
+		kafkapf.NewOffsetsForBrokers(a.cfg.Kafka.Brokers, 10*time.Second),
+		a.cfg.Kafka.PausedGroup(), a.cfg.Kafka.PausedTopic)
+	ps := a.cfg.Sender.PausedSweep
+	return usecase.NewPausedSweepPlanner(nodeReader, signal, offsets, usecase.PausedSweepPlannerConfig{
+		Backstop:          time.Duration(ps.BackstopSec) * time.Second,
+		FallbackRetention: time.Duration(a.cfg.Kafka.Topic.RetentionMs) * time.Millisecond,
+		Continuous:        ps.Continuous,
+	}, a.metrics, a.logger)
 }
 
 // startBackgroundJobs запускает периодические задачи, не связанные с очередями:

@@ -171,6 +171,8 @@ sender:
     disabled: false
     interval_sec: 5
     max_scan: 500
+    backstop_sec: 600   # §113.3: на dev-стенде страховочный раунд раз в 10 минут
+    continuous: false
   # §67: reverse-DNS client_host. На dev-стенде короткие TTL — быстрее видеть
   # обновления при ручных проверках.
   rdns:

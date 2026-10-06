@@ -147,7 +147,9 @@ func TestCancelBumpsSignal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), v)
 
-	require.NoError(t, cs.Bump(ctx))
+	bumped, err := cs.Bump(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), bumped, "Bump возвращает новое значение")
 	v, err = cs.Signal(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), v)
@@ -163,5 +165,6 @@ func TestSignal_RedisDown(t *testing.T) {
 
 	_, err := cs.Signal(context.Background())
 	assert.Error(t, err)
-	assert.Error(t, cs.Bump(context.Background()))
+	_, err = cs.Bump(context.Background())
+	assert.Error(t, err)
 }

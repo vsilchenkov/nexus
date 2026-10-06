@@ -4415,7 +4415,9 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   снявший паузу, ждёт за бэклогом долго-paused соседа (10k сообщений × 1 с ≈ 3 часа) — тот же
   head-of-line, просто переехавший в delay-топик. Пауза должна быть МЕЖДУ проходами: внутри прохода
   работаем на полной скорости, `interval_sec` (30 с) ограничивает темп циркуляции и задаёт
-  максимальную задержку доставки после `unpause`.
+  максимальную задержку доставки после `unpause`. **§113.3: тик — момент решения, а не проход:**
+  проход только по событию, иначе очередь узла на паузе переписывается каждые 30 с (бой
+  06.10.2026, 17 ГБ за 4 дня; см. 4.98).
 - **Инварианты прохода скопированы из DLQ-репроцессора (§36):** wrap-detect `seen[id]` (иначе бэклог
   крутится внутри одного прохода бесконечно) и **commit строго ДО break** (иначе коммит последующих
   прокатывает offset мимо незакоммиченного — та же потеря, что в 4.37). До §113.2 оба проходных
@@ -7432,7 +7434,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 |---|---|---|
 | ТЗ §113 + правки §3.6/§15/§31/§34.4/§36.11/§69/§80.2 | ✅ Phase 113.0 | [sections/113-paused-sweep-honest-queue.md](sections/113-paused-sweep-honest-queue.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
 | §113.2 retry-in-place в проходных reader'ах | ✅ Phase 113.1 | общий хелпер [retry_in_place.go](../internal/sender/adapter/in/kafka/retry_in_place.go) (backoff 1→30 с, выход по ctx без commit), [paused_sweeper.go](../internal/sender/adapter/in/kafka/paused_sweeper.go) `handleInPlace`, [dlq_reprocessor.go](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) `processInPlace` (порт `dlqProcessor`), основной [consumer.go](../internal/sender/adapter/in/kafka/consumer.go) `processWithRetry` на том же хелпере (пауза постоянная 1 с); тесты `*_RetryInPlace_NoLoss`/`_CtxCancel` в [paused_sweeper_test.go](../internal/sender/adapter/in/kafka/paused_sweeper_test.go), [dlq_reprocessor_test.go](../internal/sender/adapter/in/kafka/dlq_reprocessor_test.go), [retry_in_place_test.go](../internal/sender/adapter/in/kafka/retry_in_place_test.go). См. 4.37 |
-| §113.3 sweeper по событию | ◐ Phase 113.3: источники сигналов | сигнал отмены [queuecancel/redis.go](../internal/platform/queuecancel/redis.go) (`Cancel` — MULTI/EXEC с `INCR nexus:paused-sweep:signal`, `Signal`, `Bump`), отпечаток узлов [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `NodesSnapshot`; тесты [redis_test.go](../internal/platform/queuecancel/redis_test.go), integration [sender_nodes_snapshot_test.go](../tests/integration/sender_nodes_snapshot_test.go), `TestQueueCancel_SignalInSameTx`. Планировщик — ⛔ |
+| §113.3 sweeper по событию | ✅ Phase 113.3–113.4 | планировщик [paused_sweep_planner.go](../internal/sender/usecase/paused_sweep_planner.go) (`Decide`, `PassDone`, триггеры) + [paused_sweep_round.go](../internal/sender/usecase/paused_sweep_round.go) (цель, завершение, застой, backstop по retention); гейт тика [paused_sweeper.go](../internal/sender/adapter/in/kafka/paused_sweeper.go) `tick`/`WithSweepPlanner`; офсеты delay-топика [kafkaoffsets/paused.go](../internal/sender/adapter/out/kafkaoffsets/paused.go); сборка `newPausedSweepPlanner` в [sender/app.go](../internal/sender/app.go); сигнал отмены [queuecancel/redis.go](../internal/platform/queuecancel/redis.go), отпечаток [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `NodesSnapshot`; конфиг `backstop_sec`/`continuous` + `validatePausedSweep`; метрики `nexus_paused_sweep_passes_total{reason}`, `nexus_paused_nodes`. Тесты: [paused_sweep_planner_test.go](../internal/sender/usecase/paused_sweep_planner_test.go), `TestPausedSweeper_SkippedTickDoesNotFetch`, [validate_paused_sweep_test.go](../internal/platform/config/validate_paused_sweep_test.go), integration [sender_paused_gate_test.go](../tests/integration/sender_paused_gate_test.go), [sender_nodes_snapshot_test.go](../tests/integration/sender_nodes_snapshot_test.go) |
 | §113.4 lag из брокера | ◐ Phase 113.2: общий читатель офсетов | [platform/kafka/offsets.go](../internal/platform/kafka/offsets.go) `Offsets` (`Partitions`, `Watermarks`, `Committed`, `GroupPositions`, `TopicRetention`), `PartitionPosition.Lag`; Web [kafkaadmin](../internal/web/adapter/out/kafkaadmin/topics.go) переведён на него (`watermarks`, `committedOffsets`, `liveTailStart`); `KafkaSection.ClogRetryGroup()` в [config.go](../internal/platform/config/config.go); тесты [offsets_test.go](../internal/platform/kafka/offsets_test.go), integration [kafka_offsets_test.go](../tests/integration/kafka_offsets_test.go). Sender и PromQL — ⛔ |
 | §113.5 честные счётчики | ⛔ | — |
 | §113.6 сторож зависания consumer'а | ⛔ | — |
@@ -7468,5 +7470,26 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 - **Сигнал отмены пишется в той же транзакции, что и отметки.** Иначе планировщик мог бы увидеть
   новый сигнал, прогнать раунд до появления отметок — и следующего сигнала уже не было бы. Пачка из
   одних пустых id сигнал не двигает.
+- **Цель раунда снимается на тике ПОСЛЕ события, поэтому раунд — это два оборота очереди.** Первый
+  проход сразу переписывает очередь в хвост; цель на следующем тике уже включает эти копии. Так в
+  раунд попадают и копии, которые основной consumer записал в момент события (прочитал «пауза» до
+  снятия, записал после). Цена — ≈2×N перезаписей на событие вместо прежних 2880×N в сутки.
+- **Раунд общий для группы.** Каждая реплика читает только свои партиции, а конец раунда считается
+  по committed всей группы. Поэтому старт и backstop поднимают сигнал (`Bump`) — иначе раунд
+  стартовавшей реплики не закончился бы, пока соседняя не пройдёт свои партиции. Свой `Bump`
+  запоминается (`Bump` возвращает новое значение) — иначе на следующем тике он сбросил бы раунд как
+  чужой сигнал.
+- **Застой раунда считается только при холостой перезаписи (`PassDone`).** Первая версия бросала
+  раунд после 3 тиков без продвижения — integration-тест под нагрузкой Docker поймал: reader
+  несколько тиков ничего не читал, раунд бросался, и отмена (или снятие паузы!) ждала бы backstop
+  6 ч. Пустой проход ничего не переписывает, повторять его дёшево; бросать раунд имеет смысл,
+  только когда свои проходы переписывают сообщения, а чужие партиции стоят (реплика без Redis не
+  узнала о раунде).
+- **Раунд, доживший до backstop, не бросается, а перезапускается.** Его старт = `lastRoundAt`,
+  поэтому триггер backstop срабатывает в тот же тик, что и проверка возраста; отдельная ветка
+  «бросить по возрасту» была недостижимой и удалена — вместо неё Warn при перезапуске.
+- **Backstop ≤ retention/4 на лету.** Retention топика перечитывается у брокера раз в 10 минут:
+  оператор может понизить `retention.ms` командой `kafka-configs --alter` (например, освободить
+  диск после инцидента), и backstop обязан подстроиться без рестарта.
 - **Пропавший ответ OffsetFetch в peek-скане** раньше давал старт с offset 0 (нулевое значение карты).
   Теперь — `liveTailStart`: от `First`.

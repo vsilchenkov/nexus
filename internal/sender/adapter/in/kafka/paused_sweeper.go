@@ -13,6 +13,23 @@ import (
 	"nexus/internal/sender/usecase"
 )
 
+// sweepPlanner — решение «проход или пропуск» на тике и итог прохода.
+// Реализуется *usecase.PausedSweepPlanner.
+type sweepPlanner interface {
+	Decide(ctx context.Context) usecase.PausedSweepDecision
+	PassDone(processed int)
+}
+
+// sweepConsumer — то, что sweeper'у нужно от Kafka-reader'а. Реализуется
+// *kafkapf.Consumer; объявлен здесь (CLAUDE.md §3), чтобы логика прохода
+// покрывалась юнитами без брокера.
+type sweepConsumer interface {
+	FetchMessage(ctx context.Context) (kafka.Message, error)
+	Commit(ctx context.Context, msg kafka.Message) error
+	Close() error
+	Stats() kafka.ReaderStats
+}
+
 // PausedSweeper — периодический sweeper над delay-топиком nexus.async.paused
 // (§3.6). Отдельная consumer-группа "<group>-paused" читает топик независимо от
 // основного async-consumer'а.
@@ -29,16 +46,11 @@ import (
 // delay-топика — узел, снявший паузу, ждал бы бэклог долго-paused соседа.
 // Проход идёт на полной скорости, пауза — между проходами (interval), она же
 // задаёт максимальную задержку доставки после снятия паузы.
-// sweepConsumer — то, что sweeper'у нужно от Kafka-reader'а. Реализуется
-// *kafkapf.Consumer; объявлен здесь (CLAUDE.md §3), чтобы логика прохода
-// покрывалась юнитами без брокера.
-type sweepConsumer interface {
-	FetchMessage(ctx context.Context) (kafka.Message, error)
-	Commit(ctx context.Context, msg kafka.Message) error
-	Close() error
-	Stats() kafka.ReaderStats
-}
-
+//
+// §113.3: тик — момент решения, а не проход. Проход переписывает сообщения
+// узлов, всё ещё стоящих на паузе, поэтому планировщик пускает его только после
+// события (узлы, отмена, старт, страховка). Без планировщика (nil) — проход на
+// каждом тике, как до §113.
 type PausedSweeper struct {
 	consumer     sweepConsumer
 	processor    messageProcessor
@@ -50,6 +62,15 @@ type PausedSweeper struct {
 	logger       logging.Logger
 	topic        string
 	group        string
+	planner      sweepPlanner // §113.3: nil — проход на каждом тике
+}
+
+// PausedSweeperOption — функциональная опция NewPausedSweeper.
+type PausedSweeperOption func(*PausedSweeper)
+
+// WithSweepPlanner включает проход по событию (§113.3).
+func WithSweepPlanner(p sweepPlanner) PausedSweeperOption {
+	return func(s *PausedSweeper) { s.planner = p }
 }
 
 // NewPausedSweeper создаёт sweeper. interval/maxScan ≤ 0 → дефолты (30с / 1000).
@@ -60,6 +81,7 @@ func NewPausedSweeper(
 	maxScan int,
 	m *metrics.Metrics,
 	logger logging.Logger,
+	opts ...PausedSweeperOption,
 ) *PausedSweeper {
 	if interval <= 0 {
 		interval = 30 * time.Second
@@ -68,7 +90,7 @@ func NewPausedSweeper(
 		maxScan = 1000
 	}
 	group := cfg.Kafka.PausedGroup()
-	return &PausedSweeper{
+	s := &PausedSweeper{
 		consumer:     kafkapf.NewConsumerWithGroup(cfg, cfg.Kafka.PausedTopic, group),
 		processor:    processor,
 		interval:     interval,
@@ -80,6 +102,10 @@ func NewPausedSweeper(
 		topic:        cfg.Kafka.PausedTopic,
 		group:        group,
 	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Run — блокирующий периодический цикл: первый проход сразу, далее раз в
@@ -94,15 +120,29 @@ func (s *PausedSweeper) Run(ctx context.Context) {
 	tick := time.NewTicker(s.interval)
 	defer tick.Stop()
 
-	s.sweepOnce(ctx)
+	s.tick(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			s.sweepOnce(ctx)
+			s.tick(ctx)
 		}
 	}
+}
+
+// tick — решение планировщика и, если нужен, проход. Пропущенный тик не делает
+// ни одного FetchMessage: инвариант «commit перед break» (4.37) не затронут, а
+// очередь узлов на паузе не переписывается вхолостую.
+func (s *PausedSweeper) tick(ctx context.Context) {
+	if s.planner == nil {
+		s.sweepOnce(ctx)
+		return
+	}
+	if !s.planner.Decide(ctx).Run {
+		return
+	}
+	s.planner.PassDone(s.sweepOnce(ctx))
 }
 
 // sweepOnce — один проход: обрабатываем до maxScan сообщений, КАЖДОЕ прочитанное
@@ -116,13 +156,15 @@ func (s *PausedSweeper) Run(ctx context.Context) {
 // сообщений прокатит offset мимо незакоммиченного → потеря. По той же причине
 // транзиентный сбой обработки повторяется на месте, а не прерывает проход
 // (§113.2) — до §113 break без commit терял сообщение на следующем проходе.
-func (s *PausedSweeper) sweepOnce(ctx context.Context) {
+//
+// Возвращает число обработанных (закоммиченных) сообщений.
+func (s *PausedSweeper) sweepOnce(ctx context.Context) int {
 	seen := make(map[string]bool)
 	processed := 0
 
 	for i := 0; i < s.maxScan; i++ {
 		if ctx.Err() != nil {
-			return
+			return processed
 		}
 		// bounded-ожидание: пустой топик/конец бэклога → таймаут → конец прохода.
 		fetchCtx, cancel := context.WithTimeout(ctx, s.fetchTimeout)
@@ -134,7 +176,7 @@ func (s *PausedSweeper) sweepOnce(ctx context.Context) {
 
 		hdrs := headersToMap(msg.Headers)
 		if !s.handleInPlace(ctx, msg, hdrs) {
-			return // shutdown посреди повторов: без commit, перечитается после рестарта
+			return processed // shutdown посреди повторов: без commit, перечитается после рестарта
 		}
 		if err := s.consumer.Commit(ctx, msg); err != nil {
 			s.logger.ErrorWithOp("paused sweep commit failed", err, "kafka.pausedSweep.commit",
@@ -156,6 +198,7 @@ func (s *PausedSweeper) sweepOnce(ctx context.Context) {
 			s.logger.Str("topic", s.topic),
 			s.logger.Int("processed", processed))
 	}
+	return processed
 }
 
 // handleInPlace обрабатывает сообщение до финального исхода. Handle сам решает
