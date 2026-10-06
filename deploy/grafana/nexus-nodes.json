@@ -330,7 +330,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (team, node) (increase(nexus_requests_total{service=\"sender\",team=~\"$team\",node=~\"$node\"}[$__range]))",
+          "expr": "sum by (team, node) (increase(nexus_requests_total{service=\"sender\",status!=\"paused\",team=~\"$team\",node=~\"$node\"}[$__range]))",
           "instant": true,
           "format": "table",
           "refId": "A"
@@ -342,7 +342,7 @@
           "refId": "B"
         },
         {
-          "expr": "sum by (team, node) (increase(nexus_request_incomplete_total{service=\"sender\",team=~\"$team\",node=~\"$node\"}[$__range])) / sum by (team, node) (increase(nexus_requests_total{service=\"sender\",team=~\"$team\",node=~\"$node\"}[$__range]))",
+          "expr": "sum by (team, node) (increase(nexus_request_incomplete_total{service=\"sender\",team=~\"$team\",node=~\"$node\"}[$__range])) / sum by (team, node) (increase(nexus_requests_total{service=\"sender\",status!=\"paused\",team=~\"$team\",node=~\"$node\"}[$__range]))",
           "instant": true,
           "format": "table",
           "refId": "C"
@@ -392,7 +392,7 @@
       "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
       "targets": [
         {
-          "expr": "sum by (team, node) (rate(nexus_requests_total{service=\"sender\",team=~\"$team\",node=~\"$node\"}[5m]))",
+          "expr": "sum by (team, node) (rate(nexus_requests_total{service=\"sender\",status!=\"paused\",team=~\"$team\",node=~\"$node\"}[5m]))",
           "legendFormat": "{{team}}/{{node}}",
           "refId": "A"
         }

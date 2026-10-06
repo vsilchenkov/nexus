@@ -93,7 +93,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (service) (rate(nexus_requests_total{service=~\"$service\",status=~\"5..|0\"}[5m])) / sum by (service) (rate(nexus_requests_total{service=~\"$service\"}[5m]))",
+          "expr": "sum by (service) (rate(nexus_requests_total{service=~\"$service\",status=~\"5..|0\"}[5m])) / sum by (service) (rate(nexus_requests_total{service=~\"$service\",status!=\"paused\"}[5m]))",
           "legendFormat": "{{service}}",
           "refId": "A"
         }

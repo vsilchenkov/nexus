@@ -133,6 +133,9 @@ type Metrics struct {
 	// переписывается вхолостую (инцидент 06.10.2026).
 	PausedSweepPassesTotal *prometheus.CounterVec // {reason=skip|startup|nodes|signal|backstop|round|continuous}
 	PausedNodes            prometheus.Gauge
+	// §113.5: повторный перенос в хвост очереди паузы (у копии уже есть
+	// paused_since). Не запрос: в nexus_requests_total раздул бы consumed/outgoing.
+	PausedRequeuedTotal *prometheus.CounterVec // {team, node}
 
 	// §74.3: состояние схемы PostgreSQL относительно кода сервиса.
 	PGSchemaVersion prometheus.Gauge // версия схемы в БД (0 = миграций не было)
@@ -432,6 +435,11 @@ func New(service string, opts ...Option) *Metrics {
 			Help:        "Number of nodes currently paused (their requests wait in the paused topic).",
 			ConstLabels: constLabels,
 		}),
+		PausedRequeuedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_paused_requeued_total",
+			Help:        "Paused-topic messages moved again to the tail of the paused queue while their node stays paused (not counted in nexus_requests_total).",
+			ConstLabels: constLabels,
+		}, []string{"team", "node"}),
 
 		// §74.3: версия схемы PostgreSQL, на которой работает сервис.
 		PGSchemaVersion: prometheus.NewGauge(prometheus.GaugeOpts{
@@ -494,6 +502,7 @@ func New(service string, opts ...Option) *Metrics {
 		m.DLQReprocessDuration,
 		m.PausedSweepPassesTotal,
 		m.PausedNodes,
+		m.PausedRequeuedTotal,
 		m.PGSchemaVersion,
 		m.PGSchemaAhead,
 	)

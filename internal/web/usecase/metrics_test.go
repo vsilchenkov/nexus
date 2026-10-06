@@ -20,25 +20,28 @@ import (
 // --- fakes -----------------------------------------------------------------
 
 type fakeProm struct {
-	totals       port.GlobalTotals
-	totalsErr    error
-	totalsTeam   string // §101.9: слог, с которым спросили итоги
-	queue        float64
-	queueErr     error
-	throughput   map[port.NodeKey]port.NodeThroughput
-	thrErr       error
-	nodeErrs     map[port.NodeKey]float64
-	nodeErrErr   error
-	lastErrs     map[port.NodeKey]float64
-	lastErrsErr  error
-	series       map[port.NodeKey][]float64
-	seriesErr    error
-	kafkaOv      port.KafkaSummary
-	kafkaOvErr   error
-	kafkaSeries  map[string][]port.KafkaPoint
-	kafkaSerErr  error
-	topicSizes   map[string]int64
-	topicSizeErr error
+	totals     port.GlobalTotals
+	totalsErr  error
+	totalsTeam string // §101.9: слог, с которым спросили итоги
+	queue      float64
+	queueErr   error
+	throughput map[port.NodeKey]port.NodeThroughput
+	thrErr     error
+	// §113.5: async-срез для страницы Kafka — отдельное поле, чтобы тест ByNode
+	// краснел, если usecase снова возьмёт общий (sync + async) throughput.
+	asyncThroughput map[port.NodeKey]port.NodeThroughput
+	nodeErrs        map[port.NodeKey]float64
+	nodeErrErr      error
+	lastErrs        map[port.NodeKey]float64
+	lastErrsErr     error
+	series          map[port.NodeKey][]float64
+	seriesErr       error
+	kafkaOv         port.KafkaSummary
+	kafkaOvErr      error
+	kafkaSeries     map[string][]port.KafkaPoint
+	kafkaSerErr     error
+	topicSizes      map[string]int64
+	topicSizeErr    error
 }
 
 func (f *fakeProm) GlobalTotals(_ context.Context, _ time.Duration, team string) (port.GlobalTotals, error) {
@@ -48,6 +51,9 @@ func (f *fakeProm) GlobalTotals(_ context.Context, _ time.Duration, team string)
 func (f *fakeProm) KafkaQueue(_ context.Context) (float64, error) { return f.queue, f.queueErr }
 func (f *fakeProm) NodeThroughput(_ context.Context, _, _ time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
 	return f.throughput, f.thrErr
+}
+func (f *fakeProm) KafkaNodeThroughput(_ context.Context, _, _ time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
+	return f.asyncThroughput, f.thrErr
 }
 func (f *fakeProm) NodeErrors(_ context.Context, _ time.Duration) (map[port.NodeKey]float64, error) {
 	return f.nodeErrs, f.nodeErrErr

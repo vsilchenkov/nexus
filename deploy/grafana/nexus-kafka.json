@@ -159,7 +159,7 @@
           "refId": "A"
         },
         {
-          "expr": "sum(rate(nexus_requests_total{service=\"sender\",method=\"requestAsync\"}[5m]))",
+          "expr": "sum(rate(nexus_requests_total{service=\"sender\",method=\"requestAsync\",status!=\"paused\"}[5m]))",
           "legendFormat": "delivered attempts (sender)",
           "refId": "B"
         },

@@ -196,3 +196,23 @@ tests:
             exp_annotations:
               summary: "Paused-node queue is not drained (960 messages)"
               description: "nexus.async.paused holds messages while no node is paused. Check sender.paused_sweep (enabled, logs 'paused sweep'), nexus_paused_sweep_passes_total and Redis/PostgreSQL reachability from Sender."
+
+  # §113.5: откладывание из-за паузы — не вызов узла. До фильтра status!="paused"
+  # 10 отложенных на один реальный вызов размывали 100% ошибок до 9%, и алерт молчал.
+  - name: "error rate: откладывания паузы не размывают долю ошибок"
+    interval: 1m
+    input_series:
+      - series: 'nexus_requests_total{service="sender",method="requestAsync",team="edo",node="sbis",status="500"}'
+        values: '0+60x30'
+      - series: 'nexus_requests_total{service="sender",method="requestAsync",team="edo",node="sbis",status="paused"}'
+        values: '0+600x30'
+      - series: 'nexus_request_incomplete_total{service="sender",method="requestAsync",team="edo",node="sbis"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: NexusNodeHighErrorRate
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender, team: edo, node: sbis }
+            exp_annotations:
+              summary: "Node edo/sbis error rate > 20% for 10m"
+              description: "More than 20% of outbound requests to the node are non-2xx (traffic guard: >0.05 rps)."

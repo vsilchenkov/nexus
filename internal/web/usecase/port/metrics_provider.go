@@ -209,6 +209,10 @@ type PromMetrics interface {
 	// период (§28 Пункт 4): окно = until-since, запрос вычисляется на момент until.
 	NodeThroughput(ctx context.Context, since, until time.Time) (map[NodeKey]NodeThroughput, error)
 
+	// KafkaNodeThroughput — как NodeThroughput, но только async-трафик
+	// (method="requestAsync", §113.5): топ узлов страницы Kafka.
+	KafkaNodeThroughput(ctx context.Context, since, until time.Time) (map[NodeKey]NodeThroughput, error)
+
 	// NodeErrors — per-node число «незавершённых» вызовов (done=0) за окно
 	// из nexus_request_incomplete_total. Ключ — пара (team, node).
 	// Используется планировщиком Telegram-алертов (§22) вместо ClickHouse.

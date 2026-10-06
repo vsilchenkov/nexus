@@ -568,7 +568,9 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
     почему-то не доставляют снятую с паузы очередь. Цена — перезапись очереди каждые
     `interval_sec`.
   - Наблюдение: `nexus_paused_sweep_passes_total{reason}` (рост `reason!="skip"` без действий
-    людей — очередь снова переписывается вхолостую), `nexus_paused_nodes`.
+    людей — очередь снова переписывается вхолостую), `nexus_paused_nodes`,
+    `nexus_paused_requeued_total{team,node}` (повторные переносы в хвост очереди паузы; в
+    `nexus_requests_total` они больше не попадают).
 
   > **Смена retention/размера на УЖЕ существующем топике.** Nexus применяет `kafka.topic.*` из
   > `config.yml` **только при создании топика** (`CreateTopics`); `AlterConfigs` в коде нет, поэтому
@@ -2914,9 +2916,15 @@ Sender'а он уже переживает.
   docker compose restart prometheus
   curl -s http://localhost:9091/api/v1/rules | grep -c NexusPausedBacklogStuck   # не 0
   ```
-- **Дашборды нужно переимпортировать**: `deploy/grafana/nexus.json` и `nexus-kafka.json` (uid те
-  же — импорт обновит существующие). На `nexus-kafka.json` очереди паузы и DLQ вынесены на
-  отдельную панель «Deferred queues».
+- **Счётчики исходящих без откладываний паузы.** Повторный перенос сообщения в хвост очереди паузы
+  — теперь `nexus_paused_requeued_total`, а не `nexus_requests_total{status="paused"}`; первое
+  откладывание по-прежнему считается там. Панель, алерт `NexusNodeHighErrorRate` и дашборды
+  отбрасывают `status="paused"` из исходящих, поэтому и история до выката пересчитывается: на бою
+  «consumed» за дни инцидента упадёт примерно в 100 раз — это не потеря трафика. «Топ продюсеров»
+  на странице Kafka теперь только по async-трафику.
+- **Дашборды нужно переимпортировать**: `deploy/grafana/nexus.json`, `nexus-kafka.json` и
+  `nexus-nodes.json` (uid те же — импорт обновит существующие). На `nexus-kafka.json` очереди
+  паузы и DLQ вынесены на отдельную панель «Deferred queues».
 
 **Откат.** Схему откатывать не нужно. Прежний код публикует lag со старой меткой `partition="-1"`,
 а новые правила с ним работают (фильтр по `group` в нём есть); прежние правила с новым кодом снова

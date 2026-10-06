@@ -47,14 +47,14 @@ type KafkaByNodeResult struct {
 }
 
 // ByNode — топ-узлы по числу async-сообщений и по ошибкам за период
-// (since, until]. Источник — Prometheus (per-node throughput по паре меток team
-// и node, §101.9).
+// (since, until]. Источник — Prometheus (per-node async-throughput по паре меток
+// team и node, §101.9, §113.5).
 func (u *KafkaMonitorUsecase) ByNode(ctx context.Context, since, until time.Time) KafkaByNodeResult {
 	res := KafkaByNodeResult{TopProducers: []NodeProducer{}, TopFailures: []NodeFailure{}}
 	if u.prom == nil {
 		return res
 	}
-	m, err := u.prom.NodeThroughput(ctx, since, until)
+	m, err := u.prom.KafkaNodeThroughput(ctx, since, until)
 	if err != nil {
 		u.logger.Warn("kafka by-node throughput failed", u.logger.Err(err))
 		return res

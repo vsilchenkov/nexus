@@ -223,7 +223,7 @@ func TestKafkaTopics_SizesDegradeOnPromError(t *testing.T) {
 
 func TestKafkaByNode_TopProducersAndFailures(t *testing.T) {
 	t.Parallel()
-	prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+	prom := &fakeProm{asyncThroughput: map[port.NodeKey]port.NodeThroughput{
 		{Team: "fin", Path: "billing"}:    {Out: 800, Errors: 0},
 		{Team: "geo", Path: "geo/notify"}: {Out: 200, Errors: 0},
 		{Team: "old", Path: "old/legacy"}: {Out: 100, Errors: 50},
