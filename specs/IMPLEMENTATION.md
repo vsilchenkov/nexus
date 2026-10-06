@@ -7408,3 +7408,24 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 Попутно: `TestSend_SentCallOutlivesReadyWait` (`internal/platform/grpcsender`) однажды упал в
 полном параллельном прогоне `go test ./...` (`not sent within ready_wait 100ms`), в одиночку —
 10 из 10 зелёных. Тайминговый тест под нагрузкой, к §112 не относится.
+
+### 4.98 §113 — отложенные сообщения узлов на паузе, честные lag и метрики, очередь sync-узла
+
+Раздел [113-paused-sweep-honest-queue.md](sections/113-paused-sweep-honest-queue.md). Ветка
+`feature/paused-sweep-honest-queue` (от `dev`). Миграций нет. Повод — бой 06.10.2026: sweeper
+переписывал очередь sync-узла на паузе (~960 запросов) по 1000 сообщений каждые 30 с — 17 ГБ за 4
+дня; баннер «Высокий consumer lag» при lag 0 у основной группы.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §113 + правки §3.6/§15/§31/§34.4/§36.11/§69/§80.2 | ✅ Phase 113.0 | [sections/113-paused-sweep-honest-queue.md](sections/113-paused-sweep-honest-queue.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| §113.2 retry-in-place в проходных reader'ах | ⛔ | — |
+| §113.3 sweeper по событию | ⛔ | — |
+| §113.4 lag из брокера | ⛔ | — |
+| §113.5 честные счётчики | ⛔ | — |
+| §113.6 сторож зависания consumer'а | ⛔ | — |
+| §113.7 страница Kafka | ⛔ | — |
+| §113.8 мелкие баги мониторинга | ⛔ | — |
+| §113.9 очередь sync-узла на паузе | ⛔ | — |
+| §113.10 «Повторить все» без потерь | ⛔ | — |
+| §113.11 подтверждения смены статуса | ⛔ | — |
