@@ -400,7 +400,7 @@ func (a *App) startAsyncPipeline(
 	if a.cfg.Kafka.RetryTopic != "" {
 		retryHandler := kafkaadapter.NewChLogRetryHandler(a.chWriter, a.metrics, a.logger)
 		a.retryConsumer = kafkaadapter.NewChLogRetryConsumer(
-			a.cfg, a.cfg.Kafka.RetryTopic, a.cfg.Kafka.ConsumerGroup+"-clog-retry",
+			a.cfg, a.cfg.Kafka.RetryTopic, a.cfg.Kafka.ClogRetryGroup(),
 			retryHandler, a.logger)
 		a.retryConsumer.Start(ctx)
 	}

@@ -7433,7 +7433,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | ТЗ §113 + правки §3.6/§15/§31/§34.4/§36.11/§69/§80.2 | ✅ Phase 113.0 | [sections/113-paused-sweep-honest-queue.md](sections/113-paused-sweep-honest-queue.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
 | §113.2 retry-in-place в проходных reader'ах | ✅ Phase 113.1 | общий хелпер [retry_in_place.go](../internal/sender/adapter/in/kafka/retry_in_place.go) (backoff 1→30 с, выход по ctx без commit), [paused_sweeper.go](../internal/sender/adapter/in/kafka/paused_sweeper.go) `handleInPlace`, [dlq_reprocessor.go](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) `processInPlace` (порт `dlqProcessor`), основной [consumer.go](../internal/sender/adapter/in/kafka/consumer.go) `processWithRetry` на том же хелпере (пауза постоянная 1 с); тесты `*_RetryInPlace_NoLoss`/`_CtxCancel` в [paused_sweeper_test.go](../internal/sender/adapter/in/kafka/paused_sweeper_test.go), [dlq_reprocessor_test.go](../internal/sender/adapter/in/kafka/dlq_reprocessor_test.go), [retry_in_place_test.go](../internal/sender/adapter/in/kafka/retry_in_place_test.go). См. 4.37 |
 | §113.3 sweeper по событию | ⛔ | — |
-| §113.4 lag из брокера | ⛔ | — |
+| §113.4 lag из брокера | ◐ Phase 113.2: общий читатель офсетов | [platform/kafka/offsets.go](../internal/platform/kafka/offsets.go) `Offsets` (`Partitions`, `Watermarks`, `Committed`, `GroupPositions`, `TopicRetention`), `PartitionPosition.Lag`; Web [kafkaadmin](../internal/web/adapter/out/kafkaadmin/topics.go) переведён на него (`watermarks`, `committedOffsets`, `liveTailStart`); `KafkaSection.ClogRetryGroup()` в [config.go](../internal/platform/config/config.go); тесты [offsets_test.go](../internal/platform/kafka/offsets_test.go), integration [kafka_offsets_test.go](../tests/integration/kafka_offsets_test.go). Sender и PromQL — ⛔ |
 | §113.5 честные счётчики | ⛔ | — |
 | §113.6 сторож зависания consumer'а | ⛔ | — |
 | §113.7 страница Kafka | ⛔ | — |
@@ -7441,3 +7441,22 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | §113.9 очередь sync-узла на паузе | ⛔ | — |
 | §113.10 «Повторить все» без потерь | ⛔ | — |
 | §113.11 подтверждения смены статуса | ⛔ | — |
+
+**Неочевидности §113:**
+
+- **Офсеты — только из брокера, `kafkapf.Offsets` (§113.4).** `Reader.Stats().Lag` у kafka-go — это
+  HWM последнего полученного пакета минус позиция предвыборки этого reader'а, без номера партиции
+  (`partition=-1`). Он даёт пилу при перезаписи топика и остаётся нулём у зависшего reader'а, который
+  ничего не выбирает. Брокер знает и конец лога, и committed-офсет группы — одинаково для всех реплик.
+- **Семантика `PartitionPosition.Lag`:** `Last − max(committed, First)`, не меньше 0. Некоммиченная
+  партиция (`-1`) читается с `First`, потому что так настроены все reader'ы Nexus
+  (`StartOffset = FirstOffset`). Committed левее `First` (retention срезал хвост) — тоже с `First`.
+  Видимое изменение в Web: раньше некоммиченная партиция потребляющей группы давала lag 0 и прятала,
+  например, бэклог в партиции, добавленной через `--alter`.
+- **Ошибки не прячутся.** Методы возвращают прочитанное ВМЕСТЕ с `errors.Join` ошибок партиций;
+  `OffsetFetchResponse.Error` (ошибка группы целиком) — ошибка. Старый Web-код её игнорировал и
+  читал «группа ничего не коммитила». Integration-тест это и поймал: свежий брокер несколько секунд
+  отвечает `NOT_COORDINATOR` (16). Web остаётся best-effort (Warn + частичные данные), планировщик
+  §113.3 трактует ошибку как «неизвестно».
+- **Пропавший ответ OffsetFetch в peek-скане** раньше давал старт с offset 0 (нулевое значение карты).
+  Теперь — `liveTailStart`: от `First`.

@@ -111,25 +111,24 @@ func (c *Client) scanTopicForIDs(
 	if !ok {
 		return // топика нет (не сконфигурирован/не создан) — не ошибка поиска
 	}
-	first, last := c.partitionWatermarks(ctx, t)
+	parts := partitionIDs(t)
+	wm := c.watermarks(ctx, topic, parts)
 	var committed map[int]int64
 	if origin.group != "" {
-		committed = c.committedOffsets(ctx, origin.group, topic, partitionIDs(t))
+		committed = c.committedOffsets(ctx, origin.group, topic, parts)
 	}
 	for _, p := range t.Partitions {
 		if len(want) == 0 || *read >= capN {
 			return
 		}
-		hi, okHi := last[p.ID]
-		if !okHi || hi <= 0 {
+		w, okW := wm[p.ID]
+		hi := w.Last
+		if !okW || hi <= 0 {
 			continue
 		}
 		start := int64(-1) // -1 → позиционирование по времени
 		if origin.group != "" {
-			start = committed[p.ID]
-			if start < 0 {
-				start = first[p.ID] // группа не коммитила эту партицию
-			}
+			start = liveTailStart(w, committed, p.ID)
 			if start >= hi {
 				continue // живой хвост пуст
 			}

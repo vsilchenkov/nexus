@@ -230,6 +230,14 @@ const DLQGroupSuffix = "-dlq-reprocess"
 // DLQGroup возвращает имя consumer-group авто-репроцессора DLQ.
 func (k KafkaSection) DLQGroup() string { return k.ConsumerGroup + DLQGroupSuffix }
 
+// ClogRetryGroupSuffix — суффикс consumer-group повтора записи в ClickHouse
+// (§38). Группу вычисляют Sender (читает retry_topic) и Web (§113.8: роль
+// группы на экране Kafka).
+const ClogRetryGroupSuffix = "-clog-retry"
+
+// ClogRetryGroup возвращает имя consumer-group повтора записи в ClickHouse.
+func (k KafkaSection) ClogRetryGroup() string { return k.ConsumerGroup + ClogRetryGroupSuffix }
+
 type KafkaTopicSection struct {
 	Partitions        int    `yaml:"partitions"`
 	ReplicationFactor int    `yaml:"replication_factor"`
