@@ -125,7 +125,7 @@ func TestKafkaRateLimit_DisabledWhenZero(t *testing.T) {
 	assert.Equal(t, 0, lim.lastLim)
 }
 
-// stubGroupLag / stubPausedNodes — источники §113.8 для проверки формы ответа.
+// stubGroupLag / stubPausedNodes — источники §113.7 для проверки формы ответа.
 type stubGroupLag map[string]int64
 
 func (s stubGroupLag) GroupLag(_ context.Context, group, _ string) (int64, error) {
@@ -149,7 +149,7 @@ func kafkaOverviewJSON(t *testing.T, uc *usecase.KafkaMonitorUsecase) map[string
 	return body
 }
 
-// TestKafkaOverview_PausedBacklogJSON (§113.8): очередь паузы — в
+// TestKafkaOverview_PausedBacklogJSON (§113.7): очередь паузы — в
 // summary.paused_backlog, узлы — массивом со ссылочными полями.
 func TestKafkaOverview_PausedBacklogJSON(t *testing.T) {
 	t.Parallel()

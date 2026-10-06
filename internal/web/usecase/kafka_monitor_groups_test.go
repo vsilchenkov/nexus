@@ -45,7 +45,7 @@ func pausedRef(i int) port.NodeKeyRef {
 	return port.NodeKeyRef{ID: fmt.Sprintf("id-%d", i), Key: port.NodeKey{Team: "edo", Path: fmt.Sprintf("node-%d", i)}}
 }
 
-// TestKafkaOverview_BrokerLag (§113.8): текущий lag — основная группа из
+// TestKafkaOverview_BrokerLag (§113.7): текущий lag — основная группа из
 // брокера, Prometheus — запасной путь; очередь паузы — отдельным полем вместе
 // с узлами на паузе и в lag/health не входит.
 func TestKafkaOverview_BrokerLag(t *testing.T) {
@@ -156,7 +156,7 @@ func TestKafkaOverview_BrokerLagCached(t *testing.T) {
 	assert.EqualValues(t, 2, second.Summary.PausedBacklog)
 }
 
-// TestKafkaTopics_GroupRoles (§113.8): группам Nexus проставляются роли по
+// TestKafkaTopics_GroupRoles (§113.7): группам Nexus проставляются роли по
 // именам из конфига, в том числе у метаданных из кеша; посторонняя группа —
 // без роли.
 func TestKafkaTopics_GroupRoles(t *testing.T) {

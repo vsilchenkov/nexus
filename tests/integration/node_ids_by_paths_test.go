@@ -136,7 +136,7 @@ func TestNodeRepoRefsByPaths_E2E(t *testing.T) {
 	assert.Empty(t, empty)
 }
 
-// TestNodeRepoPausedNodes_E2E — §113.8: узлы на паузе во всех командах со
+// TestNodeRepoPausedNodes_E2E — §113.7: узлы на паузе во всех командах со
 // слогом команды, по порядку (слог, путь). Остальные статусы в список не
 // попадают. Синтаксис совместим с PostgreSQL 12.
 func TestNodeRepoPausedNodes_E2E(t *testing.T) {

@@ -304,6 +304,12 @@ export default function NodeSettings() {
   // при согласии, открыть диалог по уже сохранённым настройкам. Флаг переживает
   // async-сохранение и читается в save.onSuccess (там иначе идёт navigate).
   const syncAfterSaveRef = useRef(false);
+  // §113.11: проверка смены статуса читает очередь узла (до ~10 с на топик) и
+  // ждёт ответа в диалоге. Повторный клик в это время открыл бы второй диалог
+  // поверх первого — первый промис не разрешился бы никогда. Ref — защита от
+  // повторного входа, state — заблокированная кнопка.
+  const statusCheckRef = useRef(false);
+  const [statusChecking, setStatusChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // §28 Пункт 5: имя поля с ошибкой валидации (для inline-подсветки) из
   // ответа { error, code, field } бэкенда.
@@ -640,7 +646,15 @@ export default function NodeSettings() {
     }
     setError(null);
     setErrField(null);
-    if (!(await confirmStatusChange())) return false;
+    if (statusCheckRef.current) return false;
+    statusCheckRef.current = true;
+    setStatusChecking(true);
+    try {
+      if (!(await confirmStatusChange())) return false;
+    } finally {
+      statusCheckRef.current = false;
+      setStatusChecking(false);
+    }
     save.mutate();
     return true;
   }
@@ -779,7 +793,7 @@ export default function NodeSettings() {
           )}
           <Button
             variant="primary"
-            disabled={save.isPending || form.path.trim() === "" || foreignTeam}
+            disabled={save.isPending || statusChecking || form.path.trim() === "" || foreignTeam}
             onClick={submit}
           >
             <Save className="h-4 w-4" /> {t("common.save")}

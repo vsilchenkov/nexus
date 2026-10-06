@@ -311,6 +311,12 @@ func TestSteadyGrowthPerSec(t *testing.T) {
 		{name: "пила: концы выше начала, но был спад",
 			pts: lagSeries(0, 3000, 100, 3000, 100, 3000, 100, 3000, 100, 3000, 3000)},
 		{name: "дыра в данных — меньше 4 минут", pts: lagSeries(0, 3000, 6000)},
+		// Ревизия §113: крайние точки покрывают окно, но внутри пропуск 3 минуты
+		// (рестарт Sender'а) — спад мог прийтись на него, это не «рост».
+		{name: "разрыв внутри окна", pts: func() []port.KafkaPoint {
+			pts := lagSeries(0, 300, 600, 900, 1200, 1500, 1800, 2100, 2400, 2700, 3000)
+			return append(pts[:3], pts[9:]...)
+		}()},
 		{name: "одна точка", pts: lagSeries(5)},
 		{name: "пусто"},
 		{name: "убывает", pts: lagSeries(3000, 2700, 2400, 2100, 1800, 1500, 1200, 900, 600, 300, 0)},
@@ -318,7 +324,7 @@ func TestSteadyGrowthPerSec(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.InDelta(t, tt.want, steadyGrowthPerSec(tt.pts, lagGrowMinSpan), 1e-9)
+			assert.InDelta(t, tt.want, steadyGrowthPerSec(tt.pts, lagGrowMinSpan, 2*lagGrowStep), 1e-9)
 		})
 	}
 }

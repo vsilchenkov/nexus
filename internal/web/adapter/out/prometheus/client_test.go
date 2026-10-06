@@ -160,7 +160,7 @@ func TestClient_KafkaQueue(t *testing.T) {
 	require.EqualValues(t, 312, q)
 }
 
-// TestClient_KafkaLag_MainGroupOnly (§113.5): lag в KPI, сводке и ряде — только
+// TestClient_KafkaLag_MainGroupOnly (§113.4): lag в KPI, сводке и ряде — только
 // основная группа и max по репликам (каждая публикует lag брокера целиком).
 // Без опции — все группы, но тоже без удвоения репликами.
 func TestClient_KafkaLag_MainGroupOnly(t *testing.T) {

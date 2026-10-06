@@ -48,6 +48,20 @@ func defaultTrustedProxies() []string {
 // без единого ветвления по данным. Разбиение по секциям добавило бы уровней
 // косвенности, а забытый дефолт стало бы искать труднее — сейчас весь набор
 // виден одним поиском по файлу.
+// defaultPausedBackstopSec — страховочный раунд прохода очереди паузы по
+// умолчанию (§113.3): 6 ч — очередь паузы 960 сообщений переписывается 4 раза в
+// сутки вместо 2.8 млн; retention 7 дней это ограничение не трогает. При
+// retention короче суток — четверть retention (не меньше тика): ключа нет в
+// конфиге, значит, и отказывать в старте нечему (ревизия §113 — иначе такая
+// инсталляция после обновления не поднимала бы ни один из трёх сервисов).
+func defaultPausedBackstopSec(retentionMs int64, intervalSec int) int {
+	const def = 21600
+	if retentionMs <= 0 {
+		return def
+	}
+	return max(min(def, int(retentionMs/4/1000)), intervalSec)
+}
+
 func applyDefaults(c *Config) {
 	if c.Logging.Level == 0 {
 		c.Logging.Level = 4 // info
@@ -283,9 +297,8 @@ func applyDefaults(c *Config) {
 		c.Sender.PausedSweep.MaxScan = 1000
 	}
 	if c.Sender.PausedSweep.BackstopSec == 0 {
-		// §113.3: 6 ч — очередь паузы 960 сообщений переписывается 4 раза в сутки
-		// вместо 2.8 млн; retention 7 дней это ограничение не трогает.
-		c.Sender.PausedSweep.BackstopSec = 21600
+		c.Sender.PausedSweep.BackstopSec = defaultPausedBackstopSec(
+			c.Kafka.Topic.RetentionMs, c.Sender.PausedSweep.IntervalSec)
 	}
 	// §67: reverse-DNS резолв client_host включён по умолчанию (Disabled=false).
 	if c.Sender.RDNS.TimeoutMs == 0 {

@@ -664,9 +664,15 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	// §34.4/§36.11: cancel-set tombstones (Redis) — общий для очистки очереди и
 	// отмены оригиналов при «Повторить все сейчас». nil без Redis.
-	var queueCancel webport.QueueCancelWriter
+	// Сигнал прохода очереди паузы (§113.3) — тот же Redis-набор; переменные —
+	// интерфейсы, чтобы без Redis в usecase ушёл настоящий nil, а не typed-nil.
+	var (
+		queueCancel webport.QueueCancelWriter
+		sweepSignal webport.PausedSweepSignaler
+	)
 	if a.redis != nil {
-		queueCancel = queuecancel.New(a.redis)
+		qc := queuecancel.New(a.redis)
+		queueCancel, sweepSignal = qc, qc
 	}
 	dlqRetention := time.Duration(a.cfg.Kafka.Topic.RetentionMs) * time.Millisecond
 	// Один admin-клиент Kafka обслуживает три потребителя: экран мониторинга
@@ -674,7 +680,7 @@ func (a *App) Start(ctx context.Context) error {
 	// повтора (§96). Создаётся здесь, ДО replay: тому он нужен как источник тела.
 	var (
 		kafkaAdmin     webport.KafkaAdmin
-		kafkaGroupLag  webport.KafkaGroupLagReader // §113.8: lag карточки из брокера
+		kafkaGroupLag  webport.KafkaGroupLagReader // §113.7: lag карточки из брокера
 		asyncPeeker    webport.AsyncQueuePeeker
 		queueOriginals webport.AsyncOriginalReader
 	)
@@ -713,6 +719,7 @@ func (a *App) Start(ctx context.Context) error {
 			// §96.9: без счётчика источника тела не видно, кормится приёмник
 			// конвертом или журнальной копией.
 			usecase.WithReplayMetrics(a.metrics),
+			usecase.WithReplaySweepSignal(sweepSignal),
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
@@ -802,7 +809,7 @@ func (a *App) Start(ctx context.Context) error {
 	// метаданных (TTL 30с). Все источники опциональны — usecase деградирует.
 	// §98.2/§101.9: nodeRepo здесь — резолвер узлов по путям со слогом команды:
 	// строка top-узлов ведёт на журнал узла по точной паре меток (team, node).
-	// §113.8: текущий lag — основная группа из брокера (Prometheus — запасной
+	// §113.7: текущий lag — основная группа из брокера (Prometheus — запасной
 	// путь), очередь узлов на паузе — отдельной строкой, роли групп — по именам
 	// из того же конфига, по которому их создаёт Sender.
 	kafkaUC := usecase.NewKafkaMonitorUsecase(
@@ -824,6 +831,7 @@ func (a *App) Start(ctx context.Context) error {
 		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
 		a.cfg.Kafka.PausedGroup(), a.cfg.Kafka.PausedTopic,
 		dlqRetention, 0, a.logger,
+		usecase.WithQueueSweepSignal(sweepSignal),
 	)
 	asyncQueueHandler := httpadapter.NewAsyncQueueHandler(asyncQueueUC, a.logger)
 
@@ -1061,7 +1069,7 @@ func queueSources(cfg *config.Config) []webport.QueueSource {
 	return out
 }
 
-// kafkaGroupNames — имена групп Nexus для экрана Kafka (§113.8).
+// kafkaGroupNames — имена групп Nexus для экрана Kafka (§113.7).
 func kafkaGroupNames(k *config.KafkaSection) usecase.KafkaGroupNames {
 	return usecase.KafkaGroupNames{
 		Main: k.ConsumerGroup, Paused: k.PausedGroup(), DLQ: k.DLQGroup(), Retry: k.ClogRetryGroup(),

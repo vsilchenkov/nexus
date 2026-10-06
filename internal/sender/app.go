@@ -725,10 +725,11 @@ func (a *App) startAdminHTTP() error {
 }
 
 // lagTargets — группы Sender'а, чей lag публикуется (§113.4): основная,
-// повтор записи в ClickHouse (§38), DLQ-репроцессор (§36) и очередь паузы
-// (§3.6) — только запущенные. Lag паузы = объём отложенных сообщений; не
-// убывающий после снятия пауз — sweeper не работает (алерт
-// NexusPausedBacklogStuck).
+// повтор записи в ClickHouse (§38) и DLQ-репроцессор (§36) — только
+// запущенные; очередь паузы (§3.6) — всегда, когда задан её топик. Lag паузы =
+// объём отложенных сообщений. Пишет в топик consumer (handlePaused), а не
+// sweeper, поэтому при выключенном sweeper'е очередь копится и не разбирается
+// вовсе — именно тогда её lag нужнее всего (алерт NexusPausedBacklogStuck).
 func (a *App) lagTargets() []kafkaoffsets.LagTarget {
 	k := a.cfg.Kafka
 	targets := []kafkaoffsets.LagTarget{{Group: k.ConsumerGroup, Topic: k.AsyncTopic}}
@@ -738,7 +739,7 @@ func (a *App) lagTargets() []kafkaoffsets.LagTarget {
 	if a.dlqReproc != nil {
 		targets = append(targets, kafkaoffsets.LagTarget{Group: k.DLQGroup(), Topic: k.DLQTopic})
 	}
-	if a.pausedSweep != nil {
+	if k.PausedTopic != "" {
 		targets = append(targets, kafkaoffsets.LagTarget{Group: k.PausedGroup(), Topic: k.PausedTopic})
 	}
 	return targets

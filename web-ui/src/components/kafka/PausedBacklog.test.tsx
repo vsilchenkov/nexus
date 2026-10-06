@@ -50,7 +50,7 @@ function renderLine(ov: KafkaOverview) {
 
 const SBIS: KafkaPausedNode = { id: "n-1", team: "edo", path: "vika_dev-epd_sbis_pp" };
 
-describe("PausedBacklog — очередь узлов на паузе в карточке lag (§113.8)", () => {
+describe("PausedBacklog — очередь узлов на паузе в карточке lag (§113.7)", () => {
   it("пустая очередь — строки нет", () => {
     const { container } = renderLine(overview({ backlog: 0, nodes: [SBIS] }));
     expect(container).toBeEmptyDOMElement();

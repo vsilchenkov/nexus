@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -273,6 +274,25 @@ func TestReprocess_RepublishProduceFails_Retry(t *testing.T) {
 	h.dlq.err = assertSomeError() // republish не записался
 	got := h.proc.ProcessMessage(context.Background(), makeDLQEnvelope(t, "partner/echo", time.Now()), nil)
 	assert.Equal(t, ReprocessRetry, got, "republish не записался → Retry (не теряем сообщение)")
+}
+
+// TestReprocess_RepublishTooLarge_Commit — ревизия §113: брокер отверг перенос
+// как слишком большой. Повтор даст тот же ответ всегда, а с §113.2 Retry — это
+// повтор на месте: разбор DLQ реплики встал бы навсегда. Отпускаем сообщение.
+func TestReprocess_RepublishTooLarge_Commit(t *testing.T) {
+	t.Parallel()
+	for name, node := range map[string]*domain.Node{
+		"неудачная доставка": enabledNode(),
+		"узел на паузе":      func() *domain.Node { n := enabledNode(); n.Status = domain.NodeStatusPaused; return n }(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			h := newReprocessorForTest(t, node, nil, &port.HTTPResponse{StatusCode: 502}, nil, nil)
+			h.dlq.err = fmt.Errorf("write to nexus.async.dlq: %w", domain.ErrMessageTooLargeForTopic)
+			got := h.proc.ProcessMessage(context.Background(), makeDLQEnvelope(t, "partner/echo", time.Now()), nil)
+			assert.Equal(t, ReprocessCommit, got)
+		})
+	}
 }
 
 // TestReprocess_NowInjection — TTL считается через инъектируемый now.

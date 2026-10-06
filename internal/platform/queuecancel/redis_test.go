@@ -122,10 +122,10 @@ func TestRedisDownReturnsError(t *testing.T) {
 	assert.False(t, cancelled)
 }
 
-// TestCancelBumpsSignal (§113.3): каждая пачка отметок двигает сигнал —
-// планировщик очереди паузы узнаёт об отмене без ожидания страховочного прохода.
-// Пачка из одних пустых id сигнал не трогает: отменять нечего.
-func TestCancelBumpsSignal(t *testing.T) {
+// TestCancelDoesNotBumpSignal (ревизия §113): отметки сигнал не двигают — его
+// двигает Bump, один раз на операцию и только для узла на паузе. Иначе каждая
+// пачка отметок (у «Повторить все» — каждая запись) сбрасывала раунд прохода.
+func TestCancelDoesNotBumpSignal(t *testing.T) {
 	t.Parallel()
 
 	cs, _ := newCancelSet(t)
@@ -139,20 +139,14 @@ func TestCancelBumpsSignal(t *testing.T) {
 	require.NoError(t, err)
 	v, err = cs.Signal(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), v, "одна пачка — один инкремент")
-
-	_, err = cs.Cancel(ctx, []string{"", ""}, time.Hour)
-	require.NoError(t, err)
-	v, err = cs.Signal(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), v)
+	assert.Equal(t, int64(0), v, "отметки сигнал не двигают")
 
 	bumped, err := cs.Bump(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), bumped, "Bump возвращает новое значение")
+	assert.Equal(t, int64(1), bumped, "Bump возвращает новое значение")
 	v, err = cs.Signal(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), v)
+	assert.Equal(t, int64(1), v)
 }
 
 // TestSignal_RedisDown: недоступный Redis — ошибка, а не «сигнал 0», иначе

@@ -322,7 +322,7 @@
       "backlog": "deferred: {{n}}",
       "nodes": "paused nodes: {{n}}",
       "more": "and {{n}} more",
-      "stuck": "deferred: {{n}} — no paused nodes, nobody drains the queue",
+      "stuck": "deferred: {{n}}, no paused nodes — should drain within minutes; if it does not shrink, check the Sender",
       "hint": "Requests of paused nodes wait in nexus.async.paused and are delivered after the node is resumed. They are not consumer lag."
     },
     "topics": {

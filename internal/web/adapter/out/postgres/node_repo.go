@@ -209,7 +209,7 @@ func (r *NodeRepoPg) RefsByPaths(ctx context.Context, paths []string) ([]port.No
 	return out, nil
 }
 
-// PausedNodes реализует port.PausedNodeLister (§113.8): узлы на паузе во всех
+// PausedNodes реализует port.PausedNodeLister (§113.7): узлы на паузе во всех
 // командах со слогом команды. Синтаксис совместим с PostgreSQL 12.
 func (r *NodeRepoPg) PausedNodes(ctx context.Context) ([]port.NodeKeyRef, error) {
 	rows, err := r.db.Query(ctx, `

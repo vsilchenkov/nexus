@@ -26,7 +26,7 @@ function row(name: string): HTMLElement {
   return screen.getByText(name).closest("tr") as HTMLElement;
 }
 
-describe("TopicsTable — роли групп Nexus (§113.8)", () => {
+describe("TopicsTable — роли групп Nexus (§113.7)", () => {
   // Инцидент 06.10: очередь узла на паузе красила nexus.async.paused в
   // «растущий lag», хотя сообщения ждали по замыслу.
   it("lag очереди паузы и DLQ не делает топик «растущим lag»", () => {

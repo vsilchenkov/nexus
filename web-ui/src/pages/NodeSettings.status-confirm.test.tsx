@@ -160,6 +160,26 @@ describe("NodeSettings: выключение узла с очередью (§113
     expect(apiPut).not.toHaveBeenCalled();
   });
 
+  // Ревизия §113: пока список очереди грузится, кнопка заблокирована, а
+  // повторный вход игнорируется — иначе второй диалог лёг бы поверх первого и
+  // первый промис не разрешился бы никогда.
+  it("двойной клик во время чтения очереди — один диалог и одно сохранение", async () => {
+    nodeResp = { ...BASE, root_method: "requestAsync", status: "enabled" };
+    let release: (v: unknown) => void = () => {};
+    queue = () => new Promise((r) => (release = r));
+    await pickStatusAndSave("⏹ node.status.disabled");
+    await waitFor(() => expect(queueCalls()).toBe(1));
+    expect(save()).toBeDisabled();
+    fireEvent.click(save());
+
+    release({ items: [{ id: "a" }], capped: false, kafka_available: true });
+    expect(await screen.findByText("node.status_confirm.disable_queue_message:1")).toBeInTheDocument();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(queueCalls()).toBe(1);
+    fireEvent.click(screen.getByText("node.status_confirm.disable_action"));
+    await waitFor(() => expect(apiPut).toHaveBeenCalledTimes(1));
+  });
+
   it("включённый sync-узел: очереди нет — ни запроса, ни диалога", async () => {
     nodeResp = { ...BASE, root_method: "request", status: "enabled" };
     await pickStatusAndSave("⏹ node.status.disabled");

@@ -7,13 +7,13 @@ import (
 )
 
 // maxPausedNodesListed — сколько узлов на паузе отдаётся списком под карточкой
-// lag (§113.8). Число узлов приходит отдельно (PausedNodesTotal), поэтому
+// lag (§113.7). Число узлов приходит отдельно (PausedNodesTotal), поэтому
 // длинный хвост сводится к «и ещё N», а не раздувает ответ на каждом
 // автообновлении экрана.
 const maxPausedNodesListed = 20
 
 // KafkaGroupNames — имена consumer-групп Nexus и топиков, которые они читают
-// (§113.8). Берутся из конфига Web; пустое имя выключает то, что на нём
+// (§113.7). Берутся из конфига Web; пустое имя выключает то, что на нём
 // держится: без Main/MainTopic lag берётся только из Prometheus, без
 // Paused/PausedTopic строки очереди паузы нет.
 type KafkaGroupNames struct {
@@ -43,25 +43,25 @@ func (g KafkaGroupNames) role(group string) string {
 // KafkaMonitorOption — необязательная зависимость экрана Kafka.
 type KafkaMonitorOption func(*KafkaMonitorUsecase)
 
-// WithKafkaGroups задаёт имена групп Nexus (§113.8): по ним размечаются роли
+// WithKafkaGroups задаёт имена групп Nexus (§113.7): по ним размечаются роли
 // групп в таблице топиков и читается lag основной и paused-группы.
 func WithKafkaGroups(g KafkaGroupNames) KafkaMonitorOption {
 	return func(u *KafkaMonitorUsecase) { u.groups = g }
 }
 
-// WithKafkaGroupLag подключает чтение lag из брокера (§113.8). Без него
+// WithKafkaGroupLag подключает чтение lag из брокера (§113.7). Без него
 // текущий lag берётся из Prometheus, а очередь паузы не показывается.
 func WithKafkaGroupLag(r port.KafkaGroupLagReader) KafkaMonitorOption {
 	return func(u *KafkaMonitorUsecase) { u.lagReader = r }
 }
 
-// WithPausedNodes подключает список узлов на паузе (§113.8) для строки очереди
+// WithPausedNodes подключает список узлов на паузе (§113.7) для строки очереди
 // паузы под карточкой lag.
 func WithPausedNodes(l port.PausedNodeLister) KafkaMonitorOption {
 	return func(u *KafkaMonitorUsecase) { u.pausedNodes = l }
 }
 
-// fillBrokerLag (§113.8) заменяет текущий lag значением из брокера по основной
+// fillBrokerLag (§113.7) заменяет текущий lag значением из брокера по основной
 // группе и заполняет очередь паузы. Prometheus-значение, уже лежащее в
 // Summary.CurrentLag, остаётся запасным: оно запаздывает на интервал
 // публикации Sender'а, но живёт, когда брокер не ответил.
@@ -139,7 +139,7 @@ func (u *KafkaMonitorUsecase) fillPausedNodes(ctx context.Context, res *KafkaOve
 	}
 }
 
-// markGroupRoles проставляет группам топиков роли Nexus (§113.8). Роль
+// markGroupRoles проставляет группам топиков роли Nexus (§113.7). Роль
 // выводится из имени на каждый запрос, поэтому кешированные метаданные её не
 // искажают.
 func (u *KafkaMonitorUsecase) markGroupRoles(topics []port.TopicInfo) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -73,7 +74,10 @@ type ReplayUsecase struct {
 	audit      *AuditUsecase
 	cancel     port.QueueCancelWriter // §36.11: отмена оригиналов при «Повторить все» (nil без Redis)
 	cleaner    port.FailedLogsCleaner // §79.2: уборка строк done=0 после успешного повтора (nil без CH)
-	teams      ReplayTeamResolver     // §18: слаг команды узла для пути реинъекции (nil = без слага)
+	// sweepSignal — сигнал прохода очереди паузы после отмены оригиналов
+	// «Повторить все» у узла на паузе (§113.3). nil — страховочный проход.
+	sweepSignal port.PausedSweepSignaler
+	teams       ReplayTeamResolver // §18: слаг команды узла для пути реинъекции (nil = без слага)
 	// originals — §96: источник ПОЛНОГО тела для повтора (оригинальный конверт в
 	// очереди Kafka). nil без Kafka — тогда источником остаётся журнальная
 	// копия, и усечённая запись честно отклоняется.
@@ -101,6 +105,12 @@ type ReplayOption func(*ReplayUsecase)
 // сообщения уходят, но записи остаются в «Неудачных доставках» до очистки.
 func WithFailedCleaner(c port.FailedLogsCleaner) ReplayOption {
 	return func(u *ReplayUsecase) { u.cleaner = c }
+}
+
+// WithReplaySweepSignal подключает сигнал прохода очереди паузы (§113.3) — один
+// на операцию «Повторить все», после отмены оригиналов, и только у узла на паузе.
+func WithReplaySweepSignal(s port.PausedSweepSignaler) ReplayOption {
+	return func(u *ReplayUsecase) { u.sweepSignal = s }
 }
 
 // WithQueueOriginals подключает §96: тело для повтора берётся из оригинального
@@ -650,24 +660,38 @@ func replayHeaders(node *domain.Node, env *port.AsyncOriginal) map[string]string
 //
 //   - заголовок X-Nexus-Id — его Receiver ставит, когда отвечает по шаблону
 //     §83: тело там пишет оператор, и идентификатора в нём может не быть вовсе;
-//   - тело штатного async-ответа `{"result":true,"id":"<uuid>"}` (и 202 узла на
-//     паузе, §3.6) — собственная форма шины.
+//   - тело штатного async-ответа `{"result":true,"id":"<uuid>"}` и ответа узла
+//     на паузе `{"result":true,"id":"<uuid>","queued":true,"node_status":…}`
+//     со статусом 202 (§3.6) — собственная форма шины.
 //
-// Тело SYNC-ответа не разбирается никогда: это ответ ПРИЁМНИКА, и его
+// Тело остального SYNC-ответа не разбирается: это ответ ПРИЁМНИКА, и его
 // собственное поле `id` (заказ, документ, что угодно) уехало бы в аудит как
 // идентификатор записи журнала. По той же причине значение из тела обязано быть
 // валидным UUID — форма шины гарантирует именно его.
+//
+// Исключение для sync — ответ узла на паузе: с §113.10 повтор sync-узла идёт
+// через /request и при паузе получает 202 queued от самой шины, а не от
+// приёмника (до него запрос не дошёл). Отличаем его по всем признакам формы
+// сразу — 202, result, queued и node_status. Граница: приёмник, сам отвечающий
+// ровно такой формой с 202, будет принят за шину; другой отметки
+// «ответ проксирован» Receiver наружу не отдаёт.
 func replayedLogID(resp *port.DispatchResponse, async bool) string {
 	if id := resp.Headers["X-Nexus-Id"]; id != "" {
 		return id
 	}
-	if !async {
+	var ack struct {
+		Result     bool   `json:"result"`
+		ID         string `json:"id"`
+		Queued     bool   `json:"queued"`
+		NodeStatus string `json:"node_status"`
+	}
+	if !async && resp.StatusCode != http.StatusAccepted {
 		return ""
 	}
-	var ack struct {
-		ID string `json:"id"`
-	}
 	if err := json.Unmarshal(resp.Body, &ack); err != nil || ack.ID == "" {
+		return ""
+	}
+	if !async && (!ack.Result || !ack.Queued || ack.NodeStatus == "") {
 		return ""
 	}
 	if _, err := uuid.Parse(ack.ID); err != nil {
@@ -814,6 +838,9 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 			replayed = append(replayed, id)
 			res.Replayed++
 		}
+	}
+	if u.cancel != nil && len(replayed) > 0 {
+		signalPausedSweep(ctx, u.sweepSignal, node, u.logger)
 	}
 	res.Cleaned = u.cleanupReplayed(ctx, q, replayed)
 	u.audit.Log(ctx, actor, domain.ActionNodeReplay, "node", node.ID, map[string]any{

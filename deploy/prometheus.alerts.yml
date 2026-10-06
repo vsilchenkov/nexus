@@ -34,12 +34,13 @@ groups:
           description: "Prometheus cannot scrape /metrics for {{ $labels.instance }} for 2 minutes."
 
       - alert: NexusHighErrorRate
-        # >5% 5xx за 5 минут на синхронном пути — выше SLO §9.1.
+        # >5% 5xx за 5 минут на синхронном пути — выше SLO §9.1. Откладывание из-за
+        # паузы (status="paused", §113.5) — не вызов узла и в знаменатель не идёт.
         expr: |
           (
             sum by (service) (rate(nexus_requests_total{status=~"5..|0"}[5m]))
             /
-            sum by (service) (rate(nexus_requests_total[5m]))
+            sum by (service) (rate(nexus_requests_total{status!="paused"}[5m]))
           ) > 0.05
         for: 10m
         labels:
@@ -80,16 +81,18 @@ groups:
         # §113.4: очередь паузы не пуста, а узлов на паузе нет — её никто не разбирает.
         # После снятия паузы раунд прохода доставляет очередь за ~2 интервала; 30 минут —
         # sweeper выключен, завис или реплики не видят сигналов (Redis/PostgreSQL).
+        # unless, а не «== 0»: gauge публикует планировщик sweeper'а, и при выключенном
+        # sweeper'е его нет вовсе — с «== 0» алерт молчал бы ровно в этом случае.
         expr: |
           (sum(max by (group, topic, partition) (nexus_kafka_lag{group=~".*-paused"})) > 0)
-          and on() (max(nexus_paused_nodes) == 0)
+          unless on() (max(nexus_paused_nodes) > 0)
         for: 30m
         labels:
           severity: warning
           service: sender
         annotations:
           summary: "Paused-node queue is not drained ({{ $value }} messages)"
-          description: "nexus.async.paused holds messages while no node is paused. Check sender.paused_sweep (enabled, logs 'paused sweep'), nexus_paused_sweep_passes_total and Redis/PostgreSQL reachability from Sender."
+          description: "nexus.async.paused holds messages while no node is paused (or the sweeper is disabled and reports no paused nodes). Check sender.paused_sweep (enabled, logs 'paused sweep'), nexus_paused_sweep_passes_total and Redis/PostgreSQL reachability from Sender."
 
       # ----- ClickHouse health -----
 

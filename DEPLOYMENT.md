@@ -562,11 +562,16 @@ docker compose -f deploy/docker-compose.app.yml logs -f web receiver sender
     дефолте). Сообщение на паузе теперь переписывается не каждые 30 с, а раз в backstop, и
     при коротком retention протухнет, не дождавшись снятия паузы. Sender сам ограничивает backstop
     четвертью реального retention топика (читает его у брокера раз в 10 минут), а `Validate`
-    отклоняет `backstop_sec` больше `kafka.topic.retention_ms / 4`.
-  - **Аварийный выключатель:** `sender.paused_sweep.continuous: true` и рестарт Sender'а
-    возвращают проход на каждом тике (поведение до §113) без отката кода — если раунды по событию
-    почему-то не доставляют снятую с паузы очередь. Цена — перезапись очереди каждые
-    `interval_sec`.
+    отклоняет явно заданный `backstop_sec` больше `kafka.topic.retention_ms / 4`. Без ключа
+    `backstop_sec` значение по умолчанию подгоняется само: 6 ч, а при `retention_ms` меньше суток —
+    четверть retention. При `disabled: true` секция не проверяется вовсе — `Validate` общий для
+    трёх сервисов, и выключенный sweeper не мешает стартовать Receiver'у и Web.
+  - **Аварийный выключатель:** `PAUSED_SWEEP_CONTINUOUS=true` в `.env` и пересоздание Sender'а
+    (`docker compose up -d sender`; `restart` не перечитывает `.env`) возвращают проход на каждом
+    тике (поведение до §113) без отката кода — если раунды по событию почему-то не доставляют
+    снятую с паузы очередь. Цена — перезапись очереди каждые `interval_sec`. В `config.yml` ключ
+    `sender.paused_sweep.continuous` читает эту переменную; сам файл не правится — он приезжает с
+    тегом.
   - Наблюдение: `nexus_paused_sweep_passes_total{reason}` (рост `reason!="skip"` без действий
     людей — очередь снова переписывается вхолостую), `nexus_paused_nodes`,
     `nexus_paused_requeued_total{team,node}` (повторные переносы в хвост очереди паузы; в
@@ -2904,7 +2909,8 @@ Sender'а он уже переживает.
 - **Новые ключи `config.yml`** (`sender.paused_sweep.backstop_sec`, `continuous`,
   `kafka.consumer.stall_after_sec`) — со значениями по умолчанию, править не нужно; смысл и
   ограничение на `retention.ms` — в §4.3 у топика `nexus.async.paused`.
-- **Сторож зависшего consumer'а** (`kafka.consumer.stall_after_sec`, 120 с; `0` — выключен). Если
+- **Сторож зависшего consumer'а** (`kafka.consumer.stall_after_sec`, 120 с; `0` — выключен;
+  на бою задаётся `KAFKA_STALL_AFTER_SEC` в `.env`, затем `docker compose up -d sender`). Если
   на партиции reader'а Sender'а стоит lag, committed не двигается, а сам reader ждёт в fetch дольше
   порога, reader пересоздаётся (без потерь, at-least-once): в логе Warn `kafka consumer stalled:
   recreating reader` (у проходных reader'ов очереди паузы и DLQ — `kafka pass reader reads

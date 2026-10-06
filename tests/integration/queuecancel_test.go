@@ -82,10 +82,10 @@ func TestQueueCancel_DefaultTTL(t *testing.T) {
 	assert.Greater(t, ttl, 6*24*time.Hour)
 }
 
-// TestQueueCancel_SignalInSameTx (§113.3): пачка отметок отмены и инкремент
-// сигнала планировщика очереди паузы проходят одной транзакцией на настоящем
-// Redis; Bump двигает сигнал отдельно.
-func TestQueueCancel_SignalInSameTx(t *testing.T) {
+// TestQueueCancel_SignalOnlyByBump (§113.3, ревизия §113): на настоящем Redis
+// отметки отмены сигнал планировщика очереди паузы не двигают — его двигает
+// только Bump, который Web зовёт один раз на операцию у узла на паузе.
+func TestQueueCancel_SignalOnlyByBump(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
@@ -105,11 +105,11 @@ func TestQueueCancel_SignalInSameTx(t *testing.T) {
 	assert.True(t, got)
 	after, err := qc.Signal(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), after)
+	assert.Zero(t, after, "отметки сигнал не двигают — его двигает Bump (ревизия §113)")
 
 	bumped, err := qc.Bump(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), bumped)
+	assert.Equal(t, int64(1), bumped)
 	now, err := qc.Signal(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, bumped, now)

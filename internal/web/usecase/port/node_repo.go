@@ -130,7 +130,7 @@ type NodeKeyResolver interface {
 	RefsByPaths(ctx context.Context, paths []string) ([]NodeKeyRef, error)
 }
 
-// PausedNodeLister — узлы на паузе во ВСЕХ командах со слогом команды (§113.8).
+// PausedNodeLister — узлы на паузе во ВСЕХ командах со слогом команды (§113.7).
 //
 // Очередь паузы (`nexus.async.paused`) одна на инстанс, и экран Kafka называет,
 // чьи сообщения в ней ждут: строка «отложено N · узлов на паузе K» ведёт на

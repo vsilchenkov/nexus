@@ -24,7 +24,7 @@ type KafkaMonitorUsecase struct {
 	th     KafkaThresholds
 	logger logging.Logger
 
-	// §113.8: lag из брокера по основной группе, очередь паузы и роли групп.
+	// §113.7: lag из брокера по основной группе, очередь паузы и роли групп.
 	// Все три необязательны (опции): без них экран ведёт себя как до §113.
 	groups      KafkaGroupNames
 	lagReader   port.KafkaGroupLagReader
@@ -41,7 +41,7 @@ func NewKafkaMonitorUsecase(prom port.PromMetrics, admin port.KafkaAdmin, cache 
 
 // KafkaSummaryView — числовая сводка за период (§4.1 spec, поле summary).
 //
-// CurrentLag (§113.8) — отставание ОСНОВНОЙ группы: из брокера, а при его
+// CurrentLag (§113.7) — отставание ОСНОВНОЙ группы: из брокера, а при его
 // недоступности из Prometheus. PausedBacklog — сообщения узлов на паузе в
 // `nexus.async.paused`: они ждут по замыслу и в lag не входят; 0 — очереди нет
 // или брокер не ответил.
@@ -71,7 +71,7 @@ type KafkaOverviewResult struct {
 	// health-баннера (§6 spec, причина produce_latency).
 	ProduceP95ms float64
 
-	// §113.8: LagFromBroker — Summary.CurrentLag прочитан из брокера, а не из
+	// §113.7: LagFromBroker — Summary.CurrentLag прочитан из брокера, а не из
 	// Prometheus. PausedNodes — узлы на паузе (не больше maxPausedNodesListed),
 	// PausedNodesTotal — сколько их всего; заполняются только при непустой
 	// очереди паузы и PausedNodesAvailable=true (список прочитан).
@@ -173,12 +173,15 @@ func (u *KafkaMonitorUsecase) lagGrowthPerSec(ctx context.Context, until time.Ti
 			u.logger.Str("op", "web.kafkaMonitor.lagGrowth"), u.logger.Err(err))
 		return 0
 	}
-	return steadyGrowthPerSec(series["lag"], lagGrowMinSpan)
+	return steadyGrowthPerSec(series["lag"], lagGrowMinSpan, 2*lagGrowStep)
 }
 
 // steadyGrowthPerSec — средний прирост в секунду по ряду, если ряд покрывает
-// не меньше minSpan и ни разу не убывает; иначе 0.
-func steadyGrowthPerSec(pts []port.KafkaPoint, minSpan time.Duration) float64 {
+// не меньше minSpan без разрывов длиннее maxGap и ни разу не убывает; иначе 0.
+// Разрыв внутри ряда (рестарт Sender'а, пропуск скрейпа) — тоже «дыра в
+// данных» (ревизия §113): по крайним точкам его не видно, а спад мог прийтись
+// ровно на пропуск.
+func steadyGrowthPerSec(pts []port.KafkaPoint, minSpan, maxGap time.Duration) float64 {
 	if len(pts) < 2 {
 		return 0
 	}
@@ -189,6 +192,9 @@ func steadyGrowthPerSec(pts []port.KafkaPoint, minSpan time.Duration) float64 {
 	}
 	for i := 1; i < len(pts); i++ {
 		if pts[i].V < pts[i-1].V {
+			return 0
+		}
+		if time.Duration(pts[i].TsMs-pts[i-1].TsMs)*time.Millisecond > maxGap {
 			return 0
 		}
 	}

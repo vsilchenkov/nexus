@@ -58,7 +58,7 @@ func TestSender_Async_MultiInstanceSmoke(t *testing.T) {
 	}, 90*time.Second, 200*time.Millisecond,
 		"оба узла должны получить свои сообщения при нескольких инстансах consumer'а")
 
-	// §113.5: lag публикуется из брокера по реальным партициям, а не снимком
+	// §113.4: lag публикуется из брокера по реальным партициям, а не снимком
 	// reader'а на инстанс. Обе партиции видны, и после доставки группа догнала их.
 	offsets := kafkapf.NewOffsetsForBrokers(brokers, 10*time.Second)
 	pollUntil(t, 60*time.Second, func() bool {

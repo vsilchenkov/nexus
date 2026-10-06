@@ -178,8 +178,14 @@ func validateRDNS(r *SenderRDNSConfig) error {
 // переписывается раз в backstop, может протухнуть раньше, чем узел снимут с
 // паузы. retention_ms ≤ 0 (без ограничения по времени) верхнюю границу снимает.
 // Реальный retention топика может отличаться от конфига — его планировщик
-// читает из брокера и ограничивает backstop на лету.
+// читает из брокера и ограничивает backstop на лету. Выключенный sweeper не
+// проверяется: Validate общий для трёх сервисов, и неиспользуемая секция не
+// должна мешать им стартовать. Значение по умолчанию под короткий retention
+// подгоняет applyDefaults — ошибку даёт только явно заданный backstop_sec.
 func validatePausedSweep(p *SenderPausedSweepConfig, retentionMs int64) error {
+	if p.Disabled {
+		return nil
+	}
 	if p.IntervalSec < 1 {
 		return fmt.Errorf("sender.paused_sweep.interval_sec=%d: must be >= 1", p.IntervalSec)
 	}

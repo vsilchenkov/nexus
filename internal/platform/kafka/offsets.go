@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -151,6 +152,8 @@ func (o *Offsets) Committed(ctx context.Context, group, topic string, parts []in
 // GroupPositions — позиция группы во всех партициях топика: Metadata +
 // ListOffsets + OffsetFetch. Партиция попадает в ответ, только если известны и
 // её watermarks, и committed; любая недочитанная — ошибка рядом с ответом.
+// Партиция, которой брокер без ошибки не вернул в OffsetFetch, считается
+// некоммиченной (-1).
 func (o *Offsets) GroupPositions(ctx context.Context, group, topic string) ([]PartitionPosition, error) {
 	parts, err := o.Partitions(ctx, topic)
 	if err != nil {
@@ -158,7 +161,17 @@ func (o *Offsets) GroupPositions(ctx context.Context, group, topic string) ([]Pa
 	}
 	wm, wmErr := o.Watermarks(ctx, topic, parts)
 	committed, cErr := o.Committed(ctx, group, topic, parts)
-	return JoinPositions(parts, wm, committed), errors.Join(wmErr, cErr)
+	pos := JoinPositions(parts, wm, committed)
+	if cErr != nil {
+		// Отсутствие в карте при ошибке OffsetFetch — «не прочитано», а не «не
+		// коммитила»: с -1 lag партиции стал бы размером со весь лог (координатор
+		// группы грузится после рестарта брокера, а ListOffsets уже отвечает).
+		pos = slices.DeleteFunc(pos, func(p PartitionPosition) bool {
+			_, ok := committed[p.Partition]
+			return !ok
+		})
+	}
+	return pos, errors.Join(wmErr, cErr)
 }
 
 // JoinPositions сводит watermarks и committed-офсеты в позиции по партициям (в

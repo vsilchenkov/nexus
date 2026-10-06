@@ -478,7 +478,7 @@ export type KafkaOverview = {
     consumed_total: number;
     failed_produced: number;
     failed_consumed: number;
-    // §113.8: current_lag — только основная группа (из брокера, при его
+    // §113.7: current_lag — только основная группа (из брокера, при его
     // недоступности из Prometheus). paused_backlog — сообщения узлов на паузе
     // в nexus.async.paused: ждут по замыслу и в lag не входят.
     current_lag: number;
@@ -496,7 +496,7 @@ export type KafkaOverview = {
   health: { severity: KafkaSeverity; reason: string };
   prometheus_available: boolean;
   kafka_available: boolean;
-  // §113.8: узлы на паузе (не больше 20, всего — paused_nodes_total). Заполнены
+  // §113.7: узлы на паузе (не больше 20, всего — paused_nodes_total). Заполнены
   // только при paused_backlog > 0 и paused_nodes_available: при false список не
   // прочитан, и утверждать «узлов на паузе нет» нельзя.
   lag_from_broker: boolean;
@@ -511,7 +511,7 @@ export type KafkaTimeseries = {
   series: Record<string, KafkaPoint[]>;
   prometheus_available: boolean;
 };
-// §113.8: role — роль группы Nexus; у посторонней группы её нет. Lag paused- и
+// §113.7: role — роль группы Nexus; у посторонней группы её нет. Lag paused- и
 // dlq-групп — сообщения, ждущие по замыслу, а не отставание обработки.
 export type KafkaGroupRole = "main" | "paused" | "dlq" | "retry";
 export type KafkaTopicGroup = { group: string; lag_total: number; members: number; role?: KafkaGroupRole };

@@ -5,7 +5,7 @@ import { Card, Chip, Pill } from "../ui";
 import { fmtBytes, fmtNum } from "../../lib/format";
 
 // waitsByDesign — lag группы означает сообщения, которые ждут по замыслу, а не
-// отставание обработки (§113.8): очередь узлов на паузе и DLQ, разбираемая по
+// отставание обработки (§113.7): очередь узлов на паузе и DLQ, разбираемая по
 // расписанию. До §113 очередь паузы красила топик в «растущий lag».
 function waitsByDesign(g: KafkaTopicGroup): boolean {
   return g.role === "paused" || g.role === "dlq";

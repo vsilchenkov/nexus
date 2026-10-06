@@ -246,8 +246,9 @@ func TestSender_PausedGate_StatusRoundTripTriggersRound(t *testing.T) {
 }
 
 // TestSender_PausedGate_CancelSignalDropsQueue: «Очистить» во вкладке «Очередь»
-// ставит отметки отмены и поднимает сигнал — раунд снимает сообщения с очереди
-// без правки узла, и после снятия паузы они не доставляются.
+// ставит отметки отмены и поднимает сигнал (Web: Cancel, затем один Bump у узла
+// на паузе) — раунд снимает сообщения с очереди без правки узла, и после снятия
+// паузы они не доставляются.
 func TestSender_PausedGate_CancelSignalDropsQueue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
@@ -271,6 +272,8 @@ func TestSender_PausedGate_CancelSignalDropsQueue(t *testing.T) {
 		ids = append(ids, fmt.Sprintf("gate/purge-%d", i))
 	}
 	_, err := cancelSet.Cancel(ctx, ids, time.Hour)
+	require.NoError(t, err)
+	_, err = cancelSet.Bump(ctx)
 	require.NoError(t, err)
 
 	pollUntil(t, 30*time.Second, func() bool { return probe.lag(t, ctx) == 0 },

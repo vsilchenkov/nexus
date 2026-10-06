@@ -110,6 +110,29 @@ func TestOffsets_GroupPositions(t *testing.T) {
 	assert.Equal(t, map[string][]int{"nexus.async.paused": {0, 1, 2}}, api.fetchReq.Topics)
 }
 
+// TestOffsets_GroupPositions_FetchError (ревизия §113): ошибка OffsetFetch
+// целиком — партиции без committed в ответ не попадают. До правки они уходили с
+// -1, и LagReporter публиковал lag размером со весь лог после рестарта брокера.
+func TestOffsets_GroupPositions_FetchError(t *testing.T) {
+	t.Parallel()
+
+	api := &fakeOffsetsAPI{
+		meta: topicMeta("nexus.async", 0, 1),
+		offsets: &segkafka.ListOffsetsResponse{Topics: map[string][]segkafka.PartitionOffsets{
+			"nexus.async": {
+				{Partition: 0, FirstOffset: 0, LastOffset: 1_000_000},
+				{Partition: 1, FirstOffset: 0, LastOffset: 2_000_000},
+			},
+		}},
+		fetch: &segkafka.OffsetFetchResponse{Error: segkafka.GroupCoordinatorNotAvailable},
+	}
+
+	got, err := (&Offsets{api: api}).GroupPositions(context.Background(), "g", "nexus.async")
+
+	assert.ErrorIs(t, err, segkafka.GroupCoordinatorNotAvailable)
+	assert.Empty(t, got)
+}
+
 // TestOffsets_Committed_GroupError: ошибка группы целиком (координатор ещё
 // грузится) — ошибка, а не пустая карта «никто ничего не коммитил».
 func TestOffsets_Committed_GroupError(t *testing.T) {

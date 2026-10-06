@@ -231,7 +231,7 @@ const DLQGroupSuffix = "-dlq-reprocess"
 func (k KafkaSection) DLQGroup() string { return k.ConsumerGroup + DLQGroupSuffix }
 
 // ClogRetryGroupSuffix — суффикс consumer-group повтора записи в ClickHouse
-// (§38). Группу вычисляют Sender (читает retry_topic) и Web (§113.8: роль
+// (§38). Группу вычисляют Sender (читает retry_topic) и Web (§113.7: роль
 // группы на экране Kafka).
 const ClogRetryGroupSuffix = "-clog-retry"
 

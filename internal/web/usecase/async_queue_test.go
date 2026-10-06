@@ -234,7 +234,10 @@ func TestAsyncQueue_List_DeduplicatesCirculatingMessage(t *testing.T) {
 }
 
 // TestAsyncQueue_List_TopicFailureDegrades: недоступность одного топика не
-// должна ронять всю вкладку — показываем то, что удалось прочитать.
+// должна ронять всю вкладку — показываем то, что удалось прочитать. Но список
+// при этом неполон, и kafka_available=false (ревизия §113): до правки здесь
+// закреплялось true, и пустой список при упавшем брокере выглядел как «очередь
+// пуста» — форма выключала узел без подтверждения, удаляя очередь (§113.11).
 func TestAsyncQueue_List_TopicFailureDegrades(t *testing.T) {
 	t.Parallel()
 
@@ -244,7 +247,7 @@ func TestAsyncQueue_List_TopicFailureDegrades(t *testing.T) {
 	r, err := uc.List(context.Background(), "n1", "t1")
 	require.NoError(t, err)
 	assert.Empty(t, r.Items)
-	assert.True(t, r.KafkaAvailable)
+	assert.False(t, r.KafkaAvailable, "неполный список — не «пусто»")
 }
 
 // TestAsyncQueue_Purge_ScansBothTopics: бэклог paused-узла лежит в delay-топике,

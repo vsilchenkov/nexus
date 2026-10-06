@@ -35,7 +35,7 @@ var _ port.PromMetrics = (*Client)(nil)
 type Option func(*Client)
 
 // WithKafkaMainGroup ограничивает lag (KPI «Очередь Kafka», сводка и ряд
-// страницы Kafka) основной consumer-группой (§113.5). Очереди узлов на паузе,
+// страницы Kafka) основной consumer-группой (§113.4). Очереди узлов на паузе,
 // DLQ и повторов записи логов — отдельные группы, их отставание означает
 // отложенную работу, а не застрявший Sender, и показывается отдельно.
 func WithKafkaMainGroup(group string) Option {
@@ -47,7 +47,7 @@ func WithKafkaMainGroup(group string) Option {
 }
 
 // kafkaLagQuery — суммарный lag по селектору. Sender публикует lag из брокера
-// (§113.5), поэтому каждая реплика отдаёт одно и то же значение на партицию:
+// (§113.4), поэтому каждая реплика отдаёт одно и то же значение на партицию:
 // max по репликам вместо sum, иначе две реплики удвоили бы очередь.
 func kafkaLagQuery(selector string) string {
 	return fmt.Sprintf(`sum(max by (group, topic, partition) (nexus_kafka_lag%s))`, selector)
