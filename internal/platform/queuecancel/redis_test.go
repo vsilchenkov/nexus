@@ -2,6 +2,7 @@ package queuecancel_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,7 +78,13 @@ func TestCancelIsIdempotentAndSkipsEmptyIDs(t *testing.T) {
 	_, err := cs.Cancel(ctx, []string{"id-1", "", "id-1"}, time.Hour)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"qcancel:id-1"}, srv.Keys(),
+	var marks []string
+	for _, k := range srv.Keys() {
+		if strings.HasPrefix(k, "qcancel:") {
+			marks = append(marks, k)
+		}
+	}
+	assert.Equal(t, []string{"qcancel:id-1"}, marks,
 		"пустой ID не должен создавать ключ, повтор — дублировать его")
 }
 
@@ -113,4 +120,48 @@ func TestRedisDownReturnsError(t *testing.T) {
 	cancelled, err := cs.IsCancelled(ctx, "id-1")
 	assert.Error(t, err)
 	assert.False(t, cancelled)
+}
+
+// TestCancelBumpsSignal (§113.3): каждая пачка отметок двигает сигнал —
+// планировщик очереди паузы узнаёт об отмене без ожидания страховочного прохода.
+// Пачка из одних пустых id сигнал не трогает: отменять нечего.
+func TestCancelBumpsSignal(t *testing.T) {
+	t.Parallel()
+
+	cs, _ := newCancelSet(t)
+	ctx := context.Background()
+
+	v, err := cs.Signal(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), v, "ключа ещё нет — 0, не ошибка")
+
+	_, err = cs.Cancel(ctx, []string{"id-1", "id-2"}, time.Hour)
+	require.NoError(t, err)
+	v, err = cs.Signal(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), v, "одна пачка — один инкремент")
+
+	_, err = cs.Cancel(ctx, []string{"", ""}, time.Hour)
+	require.NoError(t, err)
+	v, err = cs.Signal(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), v)
+
+	require.NoError(t, cs.Bump(ctx))
+	v, err = cs.Signal(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), v)
+}
+
+// TestSignal_RedisDown: недоступный Redis — ошибка, а не «сигнал 0», иначе
+// планировщик принял бы падение Redis за смену значения.
+func TestSignal_RedisDown(t *testing.T) {
+	t.Parallel()
+
+	cs, srv := newCancelSet(t)
+	srv.Close()
+
+	_, err := cs.Signal(context.Background())
+	assert.Error(t, err)
+	assert.Error(t, cs.Bump(context.Background()))
 }

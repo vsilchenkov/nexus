@@ -81,3 +81,34 @@ func TestQueueCancel_DefaultTTL(t *testing.T) {
 	require.NoError(t, err)
 	assert.Greater(t, ttl, 6*24*time.Hour)
 }
+
+// TestQueueCancel_SignalInSameTx (§113.3): пачка отметок отмены и инкремент
+// сигнала планировщика очереди паузы проходят одной транзакцией на настоящем
+// Redis; Bump двигает сигнал отдельно.
+func TestQueueCancel_SignalInSameTx(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	client, cleanup := startRedis(t, ctx)
+	defer cleanup()
+
+	qc := queuecancel.New(client)
+
+	before, err := qc.Signal(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, before)
+
+	_, err = qc.Cancel(ctx, []string{"sig-1", "sig-2"}, time.Hour)
+	require.NoError(t, err)
+	got, err := qc.IsCancelled(ctx, "sig-2")
+	require.NoError(t, err)
+	assert.True(t, got)
+	after, err := qc.Signal(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), after)
+
+	require.NoError(t, qc.Bump(ctx))
+	bumped, err := qc.Signal(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), bumped)
+}

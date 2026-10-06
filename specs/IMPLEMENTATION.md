@@ -7432,7 +7432,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 |---|---|---|
 | ТЗ §113 + правки §3.6/§15/§31/§34.4/§36.11/§69/§80.2 | ✅ Phase 113.0 | [sections/113-paused-sweep-honest-queue.md](sections/113-paused-sweep-honest-queue.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
 | §113.2 retry-in-place в проходных reader'ах | ✅ Phase 113.1 | общий хелпер [retry_in_place.go](../internal/sender/adapter/in/kafka/retry_in_place.go) (backoff 1→30 с, выход по ctx без commit), [paused_sweeper.go](../internal/sender/adapter/in/kafka/paused_sweeper.go) `handleInPlace`, [dlq_reprocessor.go](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) `processInPlace` (порт `dlqProcessor`), основной [consumer.go](../internal/sender/adapter/in/kafka/consumer.go) `processWithRetry` на том же хелпере (пауза постоянная 1 с); тесты `*_RetryInPlace_NoLoss`/`_CtxCancel` в [paused_sweeper_test.go](../internal/sender/adapter/in/kafka/paused_sweeper_test.go), [dlq_reprocessor_test.go](../internal/sender/adapter/in/kafka/dlq_reprocessor_test.go), [retry_in_place_test.go](../internal/sender/adapter/in/kafka/retry_in_place_test.go). См. 4.37 |
-| §113.3 sweeper по событию | ⛔ | — |
+| §113.3 sweeper по событию | ◐ Phase 113.3: источники сигналов | сигнал отмены [queuecancel/redis.go](../internal/platform/queuecancel/redis.go) (`Cancel` — MULTI/EXEC с `INCR nexus:paused-sweep:signal`, `Signal`, `Bump`), отпечаток узлов [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `NodesSnapshot`; тесты [redis_test.go](../internal/platform/queuecancel/redis_test.go), integration [sender_nodes_snapshot_test.go](../tests/integration/sender_nodes_snapshot_test.go), `TestQueueCancel_SignalInSameTx`. Планировщик — ⛔ |
 | §113.4 lag из брокера | ◐ Phase 113.2: общий читатель офсетов | [platform/kafka/offsets.go](../internal/platform/kafka/offsets.go) `Offsets` (`Partitions`, `Watermarks`, `Committed`, `GroupPositions`, `TopicRetention`), `PartitionPosition.Lag`; Web [kafkaadmin](../internal/web/adapter/out/kafkaadmin/topics.go) переведён на него (`watermarks`, `committedOffsets`, `liveTailStart`); `KafkaSection.ClogRetryGroup()` в [config.go](../internal/platform/config/config.go); тесты [offsets_test.go](../internal/platform/kafka/offsets_test.go), integration [kafka_offsets_test.go](../tests/integration/kafka_offsets_test.go). Sender и PromQL — ⛔ |
 | §113.5 честные счётчики | ⛔ | — |
 | §113.6 сторож зависания consumer'а | ⛔ | — |
@@ -7458,5 +7458,15 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
   читал «группа ничего не коммитила». Integration-тест это и поймал: свежий брокер несколько секунд
   отвечает `NOT_COORDINATOR` (16). Web остаётся best-effort (Warn + частичные данные), планировщик
   §113.3 трактует ошибку как «неизвестно».
+- **Отпечаток узлов — `md5(string_agg(id:xmin))`, а не сравнение статусов (§113.3).** xmin меняется
+  при любом UPDATE строки, кто бы его ни сделал: Web, raw SQL, keyrotate, восстановление. Поэтому
+  виден и возврат статуса туда-обратно между двумя тиками (пауза снята и поставлена снова — очередь
+  надо прогнать, а статусы совпадают). `VACUUM FREEZE` xmin не переписывает (с PG 9.4 это бит в
+  infomask) — проверено integration-тестом. Периодических UPDATE по `nodes` в коде нет, иначе
+  отпечаток менялся бы на каждом тике и вернул бы перезапись очереди. **Добавляешь фоновый UPDATE
+  по `nodes` — исключи его колонки из отпечатка**, иначе инцидент 06.10 повторится.
+- **Сигнал отмены пишется в той же транзакции, что и отметки.** Иначе планировщик мог бы увидеть
+  новый сигнал, прогнать раунд до появления отметок — и следующего сигнала уже не было бы. Пачка из
+  одних пустых id сигнал не двигает.
 - **Пропавший ответ OffsetFetch в peek-скане** раньше давал старт с offset 0 (нулевое значение карты).
   Теперь — `liveTailStart`: от `First`.
