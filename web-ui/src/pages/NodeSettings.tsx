@@ -56,6 +56,13 @@ import { ShareNodeButton } from "../components/node/ShareNodeButton";
 import { AckHelpDialog } from "../components/node/AckHelpDialog";
 import { MoveNodeDialog } from "../components/node/MoveNodeDialog";
 import {
+  disableConfirm,
+  disablesQueue,
+  fetchQueueSnapshot,
+  pauseSyncConfirm,
+  pausesSyncNode,
+} from "../components/node/statusConfirm";
+import {
   Button,
   Card,
   CopyButton,
@@ -614,10 +621,11 @@ export default function NodeSettings() {
   const errCls = (name: string) => (errField === name ? "border-err" : "");
 
   // runSave — клиентская валидация лимитов (зеркало domain.Node.Validate) до
-  // запроса: те же i18n-коды node.validation.*, что возвращает backend. Куда
-  // перейти после успеха (navigate или открыть синхронизацию) решает
-  // save.onSuccess по syncAfterSaveRef. Возвращает false, если валидация не прошла.
-  function runSave(): boolean {
+  // запроса: те же i18n-коды node.validation.*, что возвращает backend. Затем
+  // подтверждение смены статуса (§113.11). Куда перейти после успеха (navigate
+  // или открыть синхронизацию) решает save.onSuccess по syncAfterSaveRef.
+  // Возвращает false, если валидация не прошла или смену статуса отменили.
+  async function runSave(): Promise<boolean> {
     const v = validateNodeForm(form, {
       // Оригинальные логины для правила «сменил логин — введи пароль заново»:
       // сервер не может пересобрать строку "login:password", не зная пароля.
@@ -632,12 +640,29 @@ export default function NodeSettings() {
     }
     setError(null);
     setErrField(null);
+    if (!(await confirmStatusChange())) return false;
     save.mutate();
     return true;
   }
 
+  // confirmStatusChange — §113.11: смена статуса в форме применяется на
+  // «Сохранить», поэтому спрашиваем здесь, а не на переключателе. Сравнение —
+  // с СОХРАНЁННЫМ узлом: очередь есть у того, что работает сейчас.
+  async function confirmStatusChange(): Promise<boolean> {
+    const saved = existing.data;
+    const from = isNew || !saved ? undefined : { root_method: saved.root_method, status: saved.status };
+    const to = { root_method: form.root_method, status: form.status };
+    if (pausesSyncNode(from, to)) return confirm(pauseSyncConfirm(t));
+    if (!id || !disablesQueue(from, to)) return true;
+    // Пустая очередь — выключать нечего терять, диалога нет. Неизвестная —
+    // спрашиваем: «не удалось прочитать» не значит «пусто».
+    const queue = await fetchQueueSnapshot(qc, id);
+    if (queue && queue.count === 0) return true;
+    return confirm(disableConfirm(queue, t));
+  }
+
   function submit() {
-    runSave();
+    void runSave();
   }
 
   // onSyncClick — §56: план синхронизации строится по СОХРАНЁННОМУ узлу (эндпоинт
@@ -652,7 +677,8 @@ export default function NodeSettings() {
       });
       if (!ok) return;
       syncAfterSaveRef.current = true;
-      if (!runSave()) syncAfterSaveRef.current = false; // валидация не прошла — откат
+      // Валидация не прошла или смену статуса отменили — откат.
+      if (!(await runSave())) syncAfterSaveRef.current = false;
       return;
     }
     setShowChSync(true);

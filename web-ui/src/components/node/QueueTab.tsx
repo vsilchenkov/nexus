@@ -17,6 +17,7 @@ import { useConfirm } from "../../lib/confirm";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
 import { BreakerCard } from "./BreakerCard";
 import { ReplayPeriodDialog } from "./ReplayPeriodDialog";
+import { disableConfirm, pauseSyncConfirm, pausesSyncNode, queueSnapshotOf } from "./statusConfirm";
 import { Link } from "react-router-dom";
 import { useNodeTabTo } from "../../lib/nodeTabLink";
 
@@ -363,7 +364,12 @@ export function QueueTab({
                   sm
                   variant="ghost"
                   disabled={setStatus.isPending}
-                  onClick={() => setStatus.mutate("paused")}
+                  onClick={async () => {
+                    // §113.11: sync-узел на паузе не отклоняет запросы, а копит их с 202.
+                    const to = { root_method: node.root_method, status: "paused" as const };
+                    if (pausesSyncNode(node, to) && !(await confirm(pauseSyncConfirm(t)))) return;
+                    setStatus.mutate("paused");
+                  }}
                 >
                   <Pause className="h-3.5 w-3.5" /> {t("queue.banner.pause")}
                 </Button>
@@ -374,15 +380,11 @@ export function QueueTab({
                   variant="ghost"
                   disabled={setStatus.isPending}
                   onClick={async () => {
-                    if (
-                      await confirm({
-                        title: t("queue.banner.disable"),
-                        message: t("queue.banner.disable_confirm"),
-                        confirmLabel: t("queue.banner.disable"),
-                        danger: true,
-                      })
-                    )
-                      setStatus.mutate("disabled");
+                    // Кнопка выключает узел одним кликом — спрашиваем всегда (как до
+                    // §113), а число ожидающих берём с плитки: «50+», «пусто» или
+                    // «неизвестно», если список не пришёл (§113.11).
+                    const queue = hasQueue ? queueSnapshotOf(pendingQ.data) : { count: 0, capped: false };
+                    if (await confirm(disableConfirm(queue, t))) setStatus.mutate("disabled");
                   }}
                 >
                   <Power className="h-3.5 w-3.5" /> {t("queue.banner.disable")}

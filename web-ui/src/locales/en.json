@@ -442,6 +442,16 @@
       "disabled": "Disabled",
       "paused": "Paused"
     },
+    "status_confirm": {
+      "pause_sync_title": "Pause the synchronous node?",
+      "pause_sync_message": "Requests will not be rejected: the caller gets 202 (queued) without the target's response, and requests pile up in the queue to be delivered after resume. To reject requests, disable the node.",
+      "pause_sync_action": "Pause",
+      "disable_title": "Disable the node?",
+      "disable_queue_message": "Waiting to be sent: {{waiting}}. Disabling deletes these messages undelivered — re-enabling will not bring them back.",
+      "disable_empty_message": "The node stops accepting requests. The queue is empty — nothing will be deleted.",
+      "disable_unknown_message": "The node stops accepting requests. The queue could not be read: any messages in it are deleted undelivered — re-enabling will not bring them back.",
+      "disable_action": "Disable"
+    },
     "actions": {
       "edit": "Edit",
       "copy": "Copy",
@@ -1247,7 +1257,6 @@
       "explain_sync": "A synchronous node answers the caller immediately; it has a queue only while paused (requests are accepted with 202 and wait for resume). Failed deliveries stay in the logs (with reason and body) and can be replayed. To stop delivery, pause the node (requests pile up) or disable it (requests are rejected); to remove the records from view, use “Clear failed”.",
       "pause": "Pause node",
       "disable": "Disable node",
-      "disable_confirm": "Disable the node? It stops accepting requests, and messages waiting in the queue are deleted undelivered — re-enabling will not bring them back.",
       "resume": "Resume node",
       "enable": "Enable node",
       "state_paused": "The node is paused — new requests pile up in the queue below and are not delivered. Resume to drain it, or purge it.",
