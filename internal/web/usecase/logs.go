@@ -269,10 +269,16 @@ func (u *LogsUsecase) CountLogs(ctx context.Context, nodeID, teamID string, q po
 // посторонний сервис, а сужение по несогласованной колонке молча теряло бы
 // записи.
 func (u *LogsUsecase) applyDateCreateAligned(q *port.LogQuery, n *domain.Node) {
+	setDateCreateAligned(q, n, u.logger)
+}
+
+// setDateCreateAligned — общая реализация applyDateCreateAligned для всех
+// читателей журнала узла (список, счётчик, выгрузка §115).
+func setDateCreateAligned(q *port.LogQuery, n *domain.Node, logger logging.Logger) {
 	q.DateCreateAligned = !n.ExternalTable
 	if n.ExternalTable {
-		u.logger.Debug("logs: date_create narrowing disabled for external table",
-			u.logger.Str("node_id", n.ID), u.logger.Str("table", n.ClickHouseTable))
+		logger.Debug("logs: date_create narrowing disabled for external table",
+			logger.Str("node_id", n.ID), logger.Str("table", n.ClickHouseTable))
 	}
 }
 
@@ -433,7 +439,18 @@ func (u *LogsUsecase) DateRange(ctx context.Context, nodeID, teamID string) (int
 // resolveNode — общий путь: получить узел, проверить team scope, убедиться
 // что у него настроен ClickHouseTable.
 func (u *LogsUsecase) resolveNode(ctx context.Context, nodeID, teamID string) (*domain.Node, error) {
-	n, err := u.nodes.Get(ctx, nodeID)
+	return resolveLogsNode(ctx, u.nodes, nodeID, teamID)
+}
+
+// logsNodeGetter — то, что читателям журнала нужно от репозитория узлов.
+type logsNodeGetter interface {
+	Get(ctx context.Context, id string) (*domain.Node, error)
+}
+
+// resolveLogsNode — общая реализация resolveNode для всех читателей журнала
+// узла (список, счётчик, выгрузка §115).
+func resolveLogsNode(ctx context.Context, nodes logsNodeGetter, nodeID, teamID string) (*domain.Node, error) {
+	n, err := nodes.Get(ctx, nodeID)
 	if err != nil {
 		return nil, err
 	}
