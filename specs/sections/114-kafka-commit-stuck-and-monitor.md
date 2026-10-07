@@ -183,3 +183,17 @@ lag посторонних групп без сохранённых позици
 Миграций нет: **откат — без отката схемы**. Меняются Sender и Web, порядок любой; правила
 Prometheus (`deploy/prometheus.alerts.yml`) — `docker compose restart prometheus`. Старый Web
 читает кеш по старым ключам, новый — по `v2:`; смешанный выкат реплик не мешает друг другу.
+
+## 114.9 Проверка под нагрузкой
+
+Нагрузочный тест (`cmd/loadtest`, CI job `loadtest`) проверяет то, чего не видят unit- и
+integration-тесты: поведение §114 при живом, но занятом брокере.
+
+- **Страница Kafka** (`--kafka-page-every`, в CI 10 с — как автообновление вкладки) опрашивается
+  всю нагрузку и слив бэклога. FAIL — хоть один ответ «брокер не ответил»
+  (`kafka_available=false` или reason `broker_unreachable`), overview дольше 5 с, ошибка запроса.
+- **Сторож** (`--sender-metrics-url`): прирост `nexus_kafka_consumer_restarts_total` и
+  `nexus_kafka_commit_errors_total` Sender'а за прогон — ноль. Несостоявшийся снимок `/metrics` —
+  тоже FAIL.
+- **Дубли** — `count() − uniqExact(ID)` по async/rmq-строкам ClickHouse, информативно (повторы
+  at-least-once нарушением не считаются).
