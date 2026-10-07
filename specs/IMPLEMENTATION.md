@@ -7710,3 +7710,19 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
   `broker_unreachable` в overview: это два независимых чтения с разными бюджетами (10 с и 3 с).
   Несостоявшийся снимок `/metrics` — провал проверки, а не «нарушений нет»: иначе опечатка в URL
   тихо выключала бы её.
+
+### 4.100 §115 — выгрузка логов узла в Excel и иконка вкладки
+
+Раздел [115-logs-excel-export.md](sections/115-logs-excel-export.md).
+Ветка `feature/logs-excel-export` (от `dev`). Миграций нет; новые ключи `config.yml` —
+`web.logs_export.*`. Выкат только Web.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §115 | ✅ Phase 115.0 | [sections/115-logs-excel-export.md](sections/115-logs-excel-export.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| §115.2 иконка вкладки | ⛔ | — |
+| §115.3 потоковый XLSX-writer | ⛔ | — |
+| §115.7 чтение ключей и строк из ClickHouse | ⛔ | — |
+| §115.6/§115.8/§115.9 usecase: лимиты, полнота, аудит | ⛔ | — |
+| §115.5 API, конфиг, маршруты | ⛔ | — |
+| §115.4 форма выгрузки (UI) | ⛔ | — |
