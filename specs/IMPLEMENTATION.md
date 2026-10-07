@@ -7538,7 +7538,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 - **Карточка lag читает брокер напрямую, Prometheus — запасной путь (§113.7).** `nexus_kafka_lag`
   публикует Sender раз в 15 с: значение запаздывает и пропадает вместе с Sender'ом — ровно тогда,
   когда lag интереснее всего. Поэтому `Overview` сначала кладёт Prometheus-значение, а затем
-  `fillBrokerLag` перезаписывает его брокерским (`lag_from_broker=true`); ошибка брокера оставляет
+  `fillBrokerLag` (с §114 — `applyBrokerView`) перезаписывает его брокерским (`lag_from_broker=true`); ошибка брокера оставляет
   Prometheus. Порог health сравнивается с итоговым значением (брокерским, если оно есть), а «рост
   lag» и график — из Prometheus: они про историю, а она там только main-группы (§113.5). Lag кешируется тем же `KafkaCache` (30 с), что и метаданные топиков:
   без кеша каждая открытая вкладка админа делала бы ListOffsets+OffsetFetch раз в 10 с.
@@ -7614,3 +7614,99 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
   (`scripts/ci/check_integration_coverage.py`) роняет `make test-integration` за секунду, если тест
   не попал ни в одну `test-int-*`: `TestKafkaOffsets*` и `TestNodesSnapshot*` попали в группы только
   на ревизии.
+
+### 4.99 §114 — отвергнутый commit, страница Kafka при недоступном брокере, lag сторонних групп
+
+Раздел [114-kafka-commit-stuck-and-monitor.md](sections/114-kafka-commit-stuck-and-monitor.md).
+Ветка `feature/kafka-commit-stuck-and-monitor` (от `dev`). Миграций, ключей `config.yml` и
+переменных `.env` нет. Повод — три границы ревизии §113.13.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §114 + отметки в §113.13 и §31.3 | ✅ Phase 114.0 | [sections/114-kafka-commit-stuck-and-monitor.md](sections/114-kafka-commit-stuck-and-monitor.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| §114.3 метрика ошибок commit и алерт | ✅ Phase 114.1 | Счётчик `nexus_kafka_commit_errors_total{group}` (`InitKafkaCommitErrors`/`IncKafkaCommitError`, [metrics.go](../internal/platform/metrics/metrics.go)); учёт в `readerSlot.Commit` ([reader_slot.go](../internal/sender/adapter/in/kafka/reader_slot.go)) — через слот идут commit'ы всех четырёх групп; `newReaderSlot(group, idx, guard, …)` берёт имя/часы/счётчик из `StallGuard` (поле `Commits`, в [sender/app.go](../internal/sender/app.go) — `a.metrics`). Алерт `NexusKafkaCommitFailing` ([prometheus.alerts.yml](../deploy/prometheus.alerts.yml)) + promtool-группа «Отвергнутые commit» ([prometheus.alerts.test.yml](../deploy/prometheus.alerts.test.yml)). Тесты `TestReaderSlot_CommitErrorCounted`, `TestKafkaCommitErrors`. DEPLOYMENT §9.1.9 — runbook |
+| §114.2 сторож не трогает дочитавший экземпляр | ✅ Phase 114.2 | Слот помнит `Offset+1` последнего полученного по партиции (`fetched`, `FetchedNext`, сброс в `Recreate`) — [reader_slot.go](../internal/sender/adapter/in/kafka/reader_slot.go); `readUpTo` (позиция ≥ `Last` снимка на всех стоящих партициях), `stallVictim`, `dropCaughtUp`, `reportCommitStuck` (Warn раз в 5 мин) — [stall_watchdog.go](../internal/sender/adapter/in/kafka/stall_watchdog.go); проходной сторож — то же правило + пауза `stallCooldown` между пересозданиями, `ownOrOrphanLagging` — [pass_stall_guard.go](../internal/sender/adapter/in/kafka/pass_stall_guard.go). Тесты: `TestStallWatchdog_CaughtUpNotRestarted`, `…_CaughtUpThenNewMessage`, строки «дочитал» в `TestPassStallGuard`, `TestPassStallGuard_Cooldown`, `TestReaderSlot_FetchedNext`; integration [sender_commit_rejected_test.go](../tests/integration/sender_commit_rejected_test.go) `TestSender_StallWatchdog_CommitRejectedNoRedelivery` (группа `test-int-sender`) |
+| §114.4–114.5 бюджет чтения брокера и честный статус (backend) | ✅ Phase 114.3 | Обобщённое чтение `readBroker[T]` (кеш `brokerRead{value, ok}` вместе с неудачей, singleflight, `WithoutCancel` + бюджет), `KafkaBrokerBudget` 3 с / 10 с, `WithKafkaBrokerBudget`, ключи `v2:topics`/`v2:brokers`/`v2:lag:<g>:<t>` — [kafka_broker_read.go](../internal/web/usecase/kafka_broker_read.go); `readBrokerView` (три чтения брокера параллельно с Prometheus), `applyBrokerView` (флаги и «брокер не ответил»), `lagConfigured`, `listPausedNodes` вместо `fillBrokerLag`/`fillPausedNodes` — [kafka_monitor_groups.go](../internal/web/usecase/kafka_monitor_groups.go); `Topics` через `readBroker` + `cloneTopics` — [kafka_monitor.go](../internal/web/usecase/kafka_monitor.go); `ReasonBrokerUnreachable` первым среди жёлтых — [kafka_health.go](../internal/web/usecase/kafka_health.go). Адаптер: `listGroupIDs` возвращает ошибку, `Topics` — ошибку при истёкшем ctx ([groups.go](../internal/web/adapter/out/kafkaadmin/groups.go), [topics.go](../internal/web/adapter/out/kafkaadmin/topics.go)), `pingBroker` через `ApiVersions` ([ping.go](../internal/web/adapter/out/kafkaadmin/ping.go)). DTO `paused_backlog_available` — [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go). Тесты [kafka_broker_read_test.go](../internal/web/usecase/kafka_broker_read_test.go) (`…_BrokerReadsParallel` на барьере, `…_BrokerHangsWithinBudget`, `…_AvailabilityFlags`, `…_FailureCached`, `TestKafkaTopics_ReadOutlivesCanceledRequest`), строки `broker_unreachable` в `TestEvaluateHealth`, `TestKafkaOverview_BrokerUnreachableJSON`; integration [kafka_admin_test.go](../tests/integration/kafka_admin_test.go) `TestKafkaAdmin_StoppedBrokerNotOnline` (группа `test-int-queue`) |
+| §114.5 UI недоступного брокера | ✅ Phase 114.4 | [PausedBacklog.tsx](../web-ui/src/components/kafka/PausedBacklog.tsx) — при `paused_backlog_available === false` приглушённое «отложено: —» с подсказкой (строка есть и при нуле); [TopicsTable.tsx](../web-ui/src/components/kafka/TopicsTable.tsx) — проп `kafkaAvailable`, «список топиков недоступен» вместо «Топиков нет» (страница передаёт `kafka_available ?? true`: пока ответа нет, «недоступен» не говорим); баннер — существующий [HealthBanner.tsx](../web-ui/src/components/kafka/HealthBanner.tsx) по reason `broker_unreachable`. Ключи `kafka.paused.unavailable(_hint)`, `kafka.topics.unavailable`, `kafka.health.broker_unreachable.{title,details}` в обеих локалях; тип `paused_backlog_available` в [client.ts](../web-ui/src/api/client.ts). Тесты: новый [HealthBanner.test.tsx](../web-ui/src/components/kafka/HealthBanner.test.tsx) (в том числе: у каждого reason бэкенда есть title/details в en и ru), блоки §114.5 в [PausedBacklog.test.tsx](../web-ui/src/components/kafka/PausedBacklog.test.tsx) и [TopicsTable.test.tsx](../web-ui/src/components/kafka/TopicsTable.test.tsx). Бандл пересобран |
+| §114.6 lag сторонних групп без commit | ✅ Phase 114.5 | Адаптер: `splitGroupLag` (части с commit / без commit, партиции без ответа OffsetFetch исключены) — [kafkaadmin/topics.go](../internal/web/adapter/out/kafkaadmin/topics.go); поля `LagUncommitted`, `UncommittedPartitions` в `port.TopicConsumerGroup` ([port/kafka_admin.go](../internal/web/usecase/port/kafka_admin.go)); `applyGroupRoles` (вместо `markGroupRoles`: у посторонней группы вычитает lag без commit и обнуляет вычтенную часть, у группы Nexus прячет счётчик) — [kafka_monitor_groups.go](../internal/web/usecase/kafka_monitor_groups.go); DTO `uncommitted_partitions,omitempty` через явный `topicGroupDTO` — [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go). UI: `GroupChip` «· без commit: N парт.» с подсказкой — [TopicsTable.tsx](../web-ui/src/components/kafka/TopicsTable.tsx), ключи `kafka.topics.uncommitted(_hint)`. Тесты `TestSplitGroupLag` ([topics_test.go](../internal/web/adapter/out/kafkaadmin/topics_test.go)), `TestKafkaTopics_ThirdPartyUncommitted` (с кешем и без; ответ адаптера не тронут), `TestKafkaTopics_UncommittedPartitionsJSON`, vitest «посторонняя группа без commit»; integration `TestKafkaAdmin_TopicsThirdPartyUncommitted` (настоящий брокер отвечает -1 по партиции без commit) |
+| Нагрузочный тест: страница Kafka и сторож под нагрузкой | ✅ Phase 114.L | Проба страницы Kafka — опрос `/api/kafka/overview` и `/api/kafka/topics` всю нагрузку и слив (`--kafka-page-every`), FAIL при ответе «брокер не ответил» или overview > 5 с — [cmd/loadtest/kafkapage.go](../cmd/loadtest/kafkapage.go); прирост `nexus_kafka_consumer_restarts_total`/`nexus_kafka_commit_errors_total` Sender'а за прогон (`--sender-metrics-url`, разбор text exposition) — [sendermetrics.go](../cmd/loadtest/sendermetrics.go); информативный `ch_duplicate_rows` (`count() − uniqExact(ID)`) — [noloss.go](../cmd/loadtest/noloss.go); unit [watch_test.go](../cmd/loadtest/watch_test.go). CI job `loadtest`: переменные `LOADTEST_KAFKA_PAGE_EVERY=10s`, `LOADTEST_SENDER_METRICS_URL=http://sender:9091/metrics`, JUnit-кейсы `kafka_page_available_under_load`, `kafka_page_overview_under_5s`, `sender_no_consumer_restarts`, `sender_no_commit_errors`, `ch_duplicate_rows_info` — [.gitlab-ci.yml](../.gitlab-ci.yml); `make loadtest KAFKA_PAGE_EVERY=… SENDER_METRICS_URL=…`; [TESTING.md](../TESTING.md). База до §114 (07.10, pipeline 11216, `dev` f5e83d05): 290 rps из 300, p95 84,2 мс, p99 124,6 мс, ошибок 0/34 819, no-loss 13 766/13 766 |
+| Ревизия перед сдачей | ✅ Phase 114.6 | Топика нет в кластере — `kafkapf.ErrTopicNotFound` из `Offsets.Partitions` ([offsets.go](../internal/platform/kafka/offsets.go)), `kafkaadmin.GroupLag` → lag 0 вместо «брокер не ответил» ([topics.go](../internal/web/adapter/out/kafkaadmin/topics.go)); integration `TestKafkaAdmin_MissingPausedTopicNotUnreachable`. Мёртвая проверка `resp.Error` в `listGroupIDs` убрана, граница описана ([groups.go](../internal/web/adapter/out/kafkaadmin/groups.go), §114.7). Текст баннера `broker_unreachable` и подсказки «отложено: —» — без утверждения, что не прочитано всё сразу (en/ru, godoc `ReasonBrokerUnreachable`). `readBroker`: Debug на неудаче из кеша, `op`/`duration_ms` в Warn. Runbook DEPLOYMENT §9.1.9 — строка `clog-retry commit failed`. Loadtest: опрос, прерванный самим `stop()`, не считается ошибкой страницы (`TestKafkaPageProbe_StopMidPoll`). |
+| Стендовый прогон (07.10.2026, стек `services`, Kafka 3.9.0) | ✅ | **A** — commit отвергнут (`max.message.bytes=10` у `__consumer_offsets`; `min.insync.replicas=2` на 3.9 commit НЕ отвергает): 10 ошибок `[28] Invalid Commit Offset Size`, через 2 мин Warn `kafka commit stuck … not restarting`, далее только Debug; перезапусков 0, echosrv 36/36 без повторов; после отката первый commit догнал позицию. **B** — `docker pause` Kafka: overview 3046 мс, topics 5006 мс (таймаут клиента 5 с), повтор в окне кеша 18/4 мс; баннер «Брокер Kafka ответил не на все запросы», «отложено: —» с подсказкой, «список топиков недоступен»; после `unpause` — healthy; бандл `index-C61sRuo6.js`. **C** — `debug-tool` с позицией только на партиции 0: «debug-tool · lag 17 · без commit: 1 парт.» (3 сообщения партиции без позиции в lag не вошли). |
+
+**Неочевидности §114:**
+
+- **Ряд ошибок commit создаётся нулём при старте слота (`InitKafkaCommitErrors`).** `increase()`
+  не видит первую ошибку ряда, который появился сразу со значением 1: ему не с чем сравнить.
+  Без нулевого ряда разовая ошибка терялась бы для графика, а алерт ждал бы вторую.
+- **Что не считается ошибкой commit:** отменённый ctx вызывающего (shutdown — проверяется
+  `ctx.Err()`, а не тип ошибки: kafka-go возвращает и `Canceled`, и `DeadlineExceeded`) и закрытый
+  reader (`io.ErrClosedPipe` из `CommitMessages` после `Close`). Логирование ошибки остаётся у
+  вызывающих (`ErrorWithOp` с топиком и партицией) — слот только считает.
+- **«Дочитал» — по позиции последнего ПОЛУЧЕННОГО сообщения, а не по committed (§114.2).** У
+  consumer'а, которому брокер отвергает commit, и у зависшего kafka-go reader'а одинаковые снимки
+  брокера: committed стоит, lag > 0, экземпляр ждёт в fetch. Различает их только то, что видит сам
+  экземпляр: получил ли он сообщения до high watermark. Позиция перезаписывается, а не берётся
+  максимум — после внутреннего ребаланса kafka-go перечитывает с committed, и «дочитал» по старой
+  позиции стало бы ложью. Ничья партиция дочитанной не считается никогда: застрявший ребаланс лечит
+  именно перезапуск.
+- **Почему ни одного перезапуска, а не «один за эпизод».** Отвергнутый commit чаще всего означает,
+  что `__consumer_offsets` не принимает запись (ISR < `min.insync.replicas`, диск). `SyncGroup`
+  пишет назначение туда же, поэтому вход нового участника — ребаланс, который не завершится, и
+  группа перестанет читать целиком. Без перезапуска доставка идёт, не сохраняются только позиции.
+  Решение пользователя (07.10.2026).
+- **Проверено на настоящем отказе брокера.** Integration-тест ставит `__consumer_offsets`
+  `min.insync.replicas=2` при RF=1 (`IncrementalAlterConfigs`): запись в `__consumer_offsets` с
+  acks=all не проходит, и брокер отвергает `OffsetCommit`. Heartbeat'ы при этом идут — группа жива.
+  **На стенде (apache/kafka 3.9.0) этот приём commit НЕ отвергает** — проверено 07.10.2026:
+  при топик-уровневом `min.insync.replicas=2` у `__consumer_offsets` позиции группы двигались, ошибок
+  0 (integration идёт на confluent-local 7.5 = Kafka 3.5, там отвергает). Отказ на 3.9
+  воспроизводится `max.message.bytes=10` у `__consumer_offsets`: запись позиции больше лимита —
+  `OffsetCommit` отвергнут, heartbeat'ы идут. Откат — `--alter --delete-config max.message.bytes`.
+- **Почему честный сигнал недоступности — lag, а не `broker_health` (§114.5).** kafka-go отдаёт
+  `Metadata` из кеша транспорта и после смерти брокера (устаревшие метаданные не сбрасываются при
+  ошибке обновления), поэтому `BrokerHealth` продолжает рапортовать «все брокеры онлайн». ListOffsets/
+  OffsetFetch и `ApiVersions` уходят на брокер всегда — их неудача и есть `broker_unreachable`. Без
+  настроенных групп Nexus (`kafka.consumer_group` пуст) недоступность видна только по `topics`.
+- **Неудача кешируется наравне с успехом (§114.4).** Иначе при мёртвом брокере каждое
+  автообновление каждой вкладки платило бы бюджет заново, а реплики Web — каждая свой. Цена — до
+  30 с «не ответил» после восстановления брокера. Ключи сменили префикс (`v2:`), потому что сменилась
+  форма значения: новый Web прочитал бы старый объект `BrokerHealth` как `brokerRead` без ошибки
+  (лишние поля JSON игнорируются) — с `ok=false`, то есть ложное «брокер не ответил» на 30 с.
+- **Чтение отвязано от отмены запроса (`WithoutCancel` + бюджет).** Singleflight отдаёт одно
+  чтение всем ждущим; с ctx первого пришедшего его закрытая вкладка обрывала бы чтение остальным и
+  клала в кеш ложную неудачу на 30 с. Ушедший запрос просто перестаёт ждать (`select` на
+  `ctx.Done()`). Значение singleflight общее — `Topics` правит копию (`cloneTopics`): роли и размеры
+  подмешиваются на каждый запрос.
+- **Истёкший бюджет обхода топиков — ошибка, а не «успех с дырами».** Watermarks/OffsetFetch по
+  отдельным топикам остаются best-effort, но при истёкшем ctx падают все разом — «успешный» обход
+  вернул бы топики без сообщений и групп. Integration-тест останавливает брокер посреди теста: на
+  старом коде ping давал «OK», а `Topics` — топики без групп; проверено красным.
+- **«Без commit» и «не ответил» — разные вещи (§114.6).** Брокер отвечает на `OffsetFetch` по
+  партиции, где группа позицию не сохраняла, значением `-1` без ошибки, а партиции с ошибкой в
+  карте нет совсем. До §114 `JoinPositions` превращал отсутствие в `-1`, и неполный ответ
+  раздувал lag до размера лога даже у групп Nexus. Теперь отсутствующая партиция не считается
+  никуда, а `-1` идёт в отдельную часть: группе Nexus — в lag (reader начнёт с `First`),
+  посторонней — только счётчиком партиций. Делит usecase, а не адаптер: роль группы знает только
+  он, а в кеше лежит сырой ответ адаптера с обеими частями.
+- **Код ошибки отдельного брокера на `ListGroups` kafka-go теряет (ревизия §114).** `Client.ListGroups`
+  рассылает запрос по всем брокерам (`Split`) и склеивает ответы (`listgroups.Response.Merge`) без
+  `ErrorCode`, поэтому `ListGroupsResponse.Error` всегда nil — проверка была мёртвой и убрана. Запросить
+  один брокер штатно нельзя: `Conn.listGroups` не экспортирован, `Transport.RoundTrip` снова разбивает
+  запрос. Видно только сбой запроса целиком; брокер с `COORDINATOR_LOAD_IN_PROGRESS` неотличим от
+  брокера без групп (граница §114.7).
+- **«Топика нет» — ответ брокера, а не его молчание (ревизия §114).** Кеш метаданных kafka-go на
+  неизвестный топик сам отвечает `UnknownTopicOrPartition` (`filterMetadataResponse`), автосоздания нет
+  (`AllowAutoTopicCreation=false`). `Offsets.Partitions` помечает этот случай `ErrTopicNotFound`, и
+  `GroupLag` отдаёт 0: иначе свежая установка до первого старта Sender'а показывала бы
+  `broker_unreachable` при живом брокере. Ловится только шаг метаданных — `UnknownTopicOrPartition`
+  отдельной партиции из `ListOffsets` (переезд лидера) lag не обнуляет.
+- **Web без Kafka невозможен** — `config.Validate` требует `kafka.brokers`, поэтому ветки
+  `admin == nil` в usecase достижимы только в тестах (отдельного «Kafka не настроена» в UI нет).
+- **Loadtest проверяет §114 там, где его не видят unit- и integration-тесты (§114.L).** Бюджет
+  чтения брокера 3 с выбран для мёртвого брокера; под нагрузкой брокер жив, но занят приёмом и
+  сливом бэклога, и ложное «не ответил» означало бы, что бюджет мал. Сторож при бэклоге в тысячи
+  сообщений не должен принимать занятый consumer за зависший — прирост рестартов за прогон обязан
+  быть нулём. Проба страницы считает и `kafka_available=false` в `topics`, и reason
+  `broker_unreachable` в overview: это два независимых чтения с разными бюджетами (10 с и 3 с).
+  Несостоявшийся снимок `/metrics` — провал проверки, а не «нарушений нет»: иначе опечатка в URL
+  тихо выключала бы её.

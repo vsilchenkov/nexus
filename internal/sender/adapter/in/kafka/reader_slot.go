@@ -2,7 +2,9 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -23,6 +25,13 @@ type slotReader interface {
 // readerFactory создаёт reader с заданным client.id.
 type readerFactory func(clientID string) slotReader
 
+// commitRecorder считает отвергнутые брокером commit'ы
+// (nexus_kafka_commit_errors_total, §114.3).
+type commitRecorder interface {
+	InitKafkaCommitErrors(group string)
+	IncKafkaCommitError(group string)
+}
+
 // slotCloseTimeout — сколько ждать Close старого reader'а при пересоздании.
 // Зависший kafka-go reader может не закрыться никогда; новый создаётся всё
 // равно, а старая горутина Close остаётся висеть (с Warn).
@@ -39,9 +48,11 @@ const slotCloseTimeout = 30 * time.Second
 // client.id = "<имя>-g<поколение>": новое поколение после каждого пересоздания,
 // иначе в DescribeGroups не отличить зависшего старого участника от нового.
 type readerSlot struct {
+	group     string
 	name      string
 	newReader readerFactory
 	clock     clock.Clock
+	commits   commitRecorder // nil — без метрики
 	logger    logging.Logger
 
 	mu           sync.Mutex
@@ -52,11 +63,20 @@ type readerSlot struct {
 	waitingSince time.Time
 	restartReq   bool
 	closed       bool
+	// fetched — партиция → позиция следующего сообщения (Offset+1 последнего
+	// полученного), §114.2. Перезаписывается, а не растёт: после внутреннего
+	// ребаланса kafka-go читает заново с committed. Сбрасывается в Recreate.
+	fetched map[int]int64
 }
 
-// newReaderSlot создаёт слот и его первый reader.
-func newReaderSlot(name string, newReader readerFactory, clk clock.Clock, logger logging.Logger) *readerSlot {
-	s := &readerSlot{name: name, newReader: newReader, clock: clk, logger: logger}
+// newReaderSlot создаёт слот idx группы и его первый reader. Имя (постоянная
+// часть client.id), часы и счётчик ошибок commit берутся из guard.
+func newReaderSlot(group string, idx int, guard StallGuard, newReader readerFactory, logger logging.Logger) *readerSlot {
+	s := &readerSlot{group: group, name: slotName(group, guard, idx), newReader: newReader,
+		clock: guard.clk(), commits: guard.Commits, logger: logger}
+	if s.commits != nil {
+		s.commits.InitKafkaCommitErrors(group)
+	}
 	s.gen = 1
 	s.clientID = s.clientIDFor(s.gen)
 	s.reader = newReader(s.clientID)
@@ -104,7 +124,11 @@ func (s *readerSlot) FetchMessage(ctx context.Context) (kafka.Message, error) {
 		}
 		r, fctx, cancel := s.beginFetch(ctx)
 		msg, err := r.FetchMessage(fctx)
-		restart := s.endFetch(err == nil)
+		var got *kafka.Message
+		if err == nil {
+			got = &msg
+		}
+		restart := s.endFetch(got)
 		cancel()
 		if err == nil || ctx.Err() != nil || !restart {
 			return msg, err
@@ -122,17 +146,34 @@ func (s *readerSlot) beginFetch(ctx context.Context) (slotReader, context.Contex
 	return s.reader, fctx, cancel
 }
 
-// endFetch снимает отметку ожидания. Пришло сообщение — reader жив, запрос
-// на перезапуск (гонка со сторожем) снимается. Возвращает, ждёт ли перезапуск.
-func (s *readerSlot) endFetch(gotMessage bool) bool {
+// endFetch снимает отметку ожидания. Пришло сообщение (msg != nil) — reader
+// жив: запрос на перезапуск (гонка со сторожем) снимается, позиция партиции
+// запоминается для сторожа (§114.2). Возвращает, ждёт ли перезапуск.
+func (s *readerSlot) endFetch(msg *kafka.Message) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cancelFetch = nil
 	s.waitingSince = time.Time{}
-	if gotMessage {
+	if msg != nil {
 		s.restartReq = false
+		if s.fetched == nil {
+			s.fetched = map[int]int64{}
+		}
+		s.fetched[msg.Partition] = msg.Offset + 1
 	}
 	return s.restartReq
+}
+
+// FetchedNext — позиция, с которой экземпляр прочитает партицию дальше
+// (Offset+1 последнего полученного сообщения); ok=false — из этой партиции
+// текущий reader ещё ничего не получал. Сторож сравнивает её с концом лога:
+// дочитавший экземпляр, у которого стоит только commit, не перезапускается
+// (§114.2).
+func (s *readerSlot) FetchedNext(partition int) (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next, ok := s.fetched[partition]
+	return next, ok
 }
 
 // applyRestart выполняет запрошенный перезапуск перед очередным fetch.
@@ -151,11 +192,20 @@ func (s *readerSlot) applyRestart(ctx context.Context) error {
 }
 
 // Commit подтверждает сообщение в текущем reader'е — том, что его выдал.
+//
+// Через слот идут commit'ы всех групп Sender'а, поэтому отказ брокера
+// считается здесь (§114.3). Штатное завершение — отменённый ctx (shutdown) и
+// закрытый reader (io.ErrClosedPipe) — ошибкой брокера не считается. Сама
+// ошибка возвращается вызывающему: он пишет ErrorWithOp с топиком и партицией.
 func (s *readerSlot) Commit(ctx context.Context, msg kafka.Message) error {
 	s.mu.Lock()
 	r := s.reader
 	s.mu.Unlock()
-	return r.Commit(ctx, msg)
+	err := r.Commit(ctx, msg)
+	if err != nil && s.commits != nil && ctx.Err() == nil && !errors.Is(err, io.ErrClosedPipe) {
+		s.commits.IncKafkaCommitError(s.group)
+	}
+	return err
 }
 
 // Recreate закрывает текущий reader и создаёт новый со следующим client.id.
@@ -181,6 +231,7 @@ func (s *readerSlot) Recreate(reason string) {
 	s.gen++
 	s.clientID = s.clientIDFor(s.gen)
 	s.reader = s.newReader(s.clientID)
+	s.fetched = nil // новый reader начнёт с committed
 	s.logger.Debug("kafka: reader recreated",
 		s.logger.Str("slot", s.name),
 		s.logger.Str("old_client_id", oldID),

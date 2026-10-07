@@ -188,6 +188,7 @@ export default function KafkaMonitor() {
       <TopicsTable
         topics={topicsQ.data?.topics ?? []}
         sizesAvailable={topicsQ.data?.sizes_available ?? false}
+        kafkaAvailable={topicsQ.data?.kafka_available ?? true}
       />
 
       {/* Топ-узлы (§5.7) */}

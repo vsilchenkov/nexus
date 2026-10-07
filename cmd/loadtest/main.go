@@ -74,6 +74,11 @@ type flags struct {
 	CHTable         string
 	CHFlushGrace    time.Duration
 	CHNoLossMaxWait time.Duration
+
+	// §114.L: страница Kafka и счётчики Sender'а под нагрузкой. Нули —
+	// проверки выключены (локальный `make loadtest` без Kafka в Web).
+	KafkaPageEvery   time.Duration
+	SenderMetricsURL string
 }
 
 func parseFlags() flags {
@@ -127,6 +132,10 @@ func parseFlags() flags {
 			"on an instance with instance.id use nexus_<id>_default.loadtest (§70.2)")
 	flag.DurationVar(&f.CHFlushGrace, "ch-flush-grace", 10*time.Second,
 		"Poll interval between CH row counts (also the initial settle before the first count; sender batch flush window)")
+	flag.DurationVar(&f.KafkaPageEvery, "kafka-page-every", 0,
+		"Poll /api/kafka/overview and /api/kafka/topics with this period during load and drain (0 = off)")
+	flag.StringVar(&f.SenderMetricsURL, "sender-metrics-url", "",
+		"Sender /metrics URL: consumer restarts and commit errors must not grow during the run (empty = off)")
 	flag.DurationVar(&f.CHNoLossMaxWait, "ch-noloss-max-wait", 120*time.Second,
 		"Max total wait for the async/rmq backlog to drain before declaring loss (§10.2). "+
 			"The check polls every --ch-flush-grace and exits early once rows>=expected (no loss) "+
@@ -136,7 +145,8 @@ func parseFlags() flags {
 }
 
 func main() {
-	defer safego.Recover(extlog.NewLogger(slog.New(slog.NewTextHandler(os.Stderr, nil))), "loadtest.main")
+	logger := extlog.NewLogger(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	defer safego.Recover(logger, "loadtest.main")
 
 	f := parseFlags()
 	if f.AdminPass == "" {
@@ -205,6 +215,11 @@ func main() {
 	rmqLoad := startRMQLoad(ctx, client, f, targetURL, rmqNodes)
 	defer rmqLoad.stop()
 
+	// §114.L: счётчики Sender'а — до нагрузки; страница Kafka опрашивается
+	// всю нагрузку и слив бэклога (именно тогда lag велик и брокер занят).
+	sender := watchSender(ctx, client.hc, f.SenderMetricsURL)
+	kafkaPage := startKafkaPageProbe(ctx, client.getJSON, f.KafkaPageEvery, logger)
+
 	report := runLoad(ctx, client, nodes, f)
 
 	// §10.2 no-loss: сверяем async/rmq-строки в CH-логе с числом отправленных.
@@ -215,6 +230,8 @@ func main() {
 		asyncSent = m.Sent
 	}
 	report.applyNoLoss(checkNoLoss(ctx, f, asyncSent+rmqLoad.published.Load()))
+	report.KafkaPage = kafkaPage.stop()
+	report.SenderMetrics = sender.finish(ctx)
 
 	report.print()
 	rmqLoad.report()
@@ -363,6 +380,13 @@ type report struct {
 	// NoLossInconclusive — rows<expected, но бэклог ещё дренировался на момент
 	// maxWait/отмены (не подтверждённая потеря). passed() трактует как WARN.
 	NoLossInconclusive bool `json:"no_loss_inconclusive"`
+	// CHDuplicateRows (§114.L) — строк сверх уникальных ID, информативно;
+	// -1 — не посчитано.
+	CHDuplicateRows int64 `json:"ch_duplicate_rows"`
+
+	// §114.L: nil — проверка выключена флагом.
+	KafkaPage     *kafkaPageReport     `json:"kafka_page,omitempty"`
+	SenderMetrics *senderMetricsReport `json:"sender_metrics,omitempty"`
 }
 
 // applyNoLoss переносит результат CH-сверки в отчёт.
@@ -375,6 +399,7 @@ func (rep *report) applyNoLoss(nl noLossResult) {
 	rep.NoLossExpected = nl.expected
 	rep.NoLoss = nl.ok
 	rep.NoLossInconclusive = nl.inconclusive
+	rep.CHDuplicateRows = nl.dupRows
 }
 
 // buildReport агрегирует per-mode накопители в отчёт (общий + по режимам).
@@ -433,6 +458,15 @@ func (rep *report) print() {
 			verdict = "inconclusive (backlog still draining at max-wait; raise --ch-noloss-max-wait)"
 		}
 		fmt.Printf("no-loss:      ch_rows=%d expected>=%d -> %s\n", rep.CHRows, rep.NoLossExpected, verdict)
+		fmt.Printf("duplicates:   ch_rows - unique ids = %d\n", rep.CHDuplicateRows)
+	}
+	if kp := rep.KafkaPage; kp != nil {
+		fmt.Printf("kafka page:   polls=%d overview p95=%.0f max=%.0f ms, topics p95=%.0f max=%.0f ms, unavailable=%d failures=%d\n",
+			kp.Polls, kp.OverviewP95Ms, kp.OverviewMaxMs, kp.TopicsP95Ms, kp.TopicsMaxMs, kp.Unavailable, kp.Failures)
+	}
+	if sm := rep.SenderMetrics; sm != nil {
+		fmt.Printf("sender:       consumer restarts +%.0f, commit errors +%.0f %s\n",
+			sm.RestartsDelta, sm.CommitErrorsDelta, sm.Error)
 	}
 	fmt.Println("==========================================")
 }
@@ -473,8 +507,27 @@ func (rep *report) passed(targetRPS int) bool {
 			return false
 		}
 	}
+	if problems := rep.watchProblems(); len(problems) > 0 {
+		for _, p := range problems {
+			fmt.Fprintf(os.Stderr, "FAIL: %s\n", p)
+		}
+		return false
+	}
 	fmt.Println("PASS: all criteria met")
 	return true
+}
+
+// watchProblems — нарушения проверок §114.L (страница Kafka, счётчики
+// Sender'а); выключенная проверка нарушений не даёт.
+func (rep *report) watchProblems() []string {
+	var out []string
+	if rep.KafkaPage != nil {
+		out = append(out, rep.KafkaPage.problems()...)
+	}
+	if rep.SenderMetrics != nil {
+		out = append(out, rep.SenderMetrics.problems()...)
+	}
+	return out
 }
 
 func runLoad(ctx context.Context, c *client, nodes []node, f flags) *report {

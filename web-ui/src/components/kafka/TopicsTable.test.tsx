@@ -33,6 +33,7 @@ describe("TopicsTable — роли групп Nexus (§113.7)", () => {
     render(
       <TopicsTable
         sizesAvailable
+        kafkaAvailable
         topics={[
           topic("nexus.async.paused", [{ group: "nexus-sender-paused", lag_total: 6_600_000, members: 1, role: "paused" }]),
           topic("nexus.async.dlq", [{ group: "nexus-sender-dlq-reprocess", lag_total: 5000, members: 1, role: "dlq" }]),
@@ -49,6 +50,7 @@ describe("TopicsTable — роли групп Nexus (§113.7)", () => {
     render(
       <TopicsTable
         sizesAvailable
+        kafkaAvailable
         topics={[topic("nexus.async.paused", [{ group: "nexus-sender-paused", lag_total: 960, members: 1, role: "paused" }])]}
       />,
     );
@@ -61,10 +63,52 @@ describe("TopicsTable — роли групп Nexus (§113.7)", () => {
     render(
       <TopicsTable
         sizesAvailable
+        kafkaAvailable
         topics={[topic("orders", [{ group: "debug-tool", lag_total: 2000, members: 1 }])]}
       />,
     );
     expect(screen.getByText(/^debug-tool · lag 2/)).toBeInTheDocument();
     expect(within(row("orders")).getByText("kafka.topics.state.lag")).toBeInTheDocument();
+  });
+});
+
+describe("TopicsTable — пустой список (§114.5)", () => {
+  it("брокер ответил, топиков нет — «Топиков нет»", () => {
+    render(<TopicsTable sizesAvailable kafkaAvailable topics={[]} />);
+    expect(screen.getByText("kafka.topics.empty")).toBeInTheDocument();
+  });
+
+  it("брокер не ответил — «список недоступен», а не «топиков нет»", () => {
+    render(<TopicsTable sizesAvailable={false} kafkaAvailable={false} topics={[]} />);
+    expect(screen.getByText("kafka.topics.unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("kafka.topics.empty")).toBeNull();
+  });
+});
+
+describe("TopicsTable — посторонняя группа без commit (§114.6)", () => {
+  it("число партиций без commit — на плашке, причина — в подсказке", () => {
+    render(
+      <TopicsTable
+        sizesAvailable
+        kafkaAvailable
+        topics={[topic("nexus.async", [{ group: "debug-tool", lag_total: 12, members: 0, uncommitted_partitions: 3 }])]}
+      />,
+    );
+    const chip = screen.getByText(/debug-tool · lag 12/);
+    expect(chip).toHaveTextContent("kafka.topics.uncommitted");
+    expect(chip.closest("span[title]")).toHaveAttribute("title", "kafka.topics.uncommitted_hint");
+  });
+
+  it("все партиции с commit — плашка как раньше, без подсказки", () => {
+    render(
+      <TopicsTable
+        sizesAvailable
+        kafkaAvailable
+        topics={[topic("nexus.async", [{ group: "debug-tool", lag_total: 12, members: 0 }])]}
+      />,
+    );
+    const chip = screen.getByText(/debug-tool · lag 12/);
+    expect(chip).not.toHaveTextContent("kafka.topics.uncommitted");
+    expect(chip.closest("span[title]")).toBeNull();
   });
 });

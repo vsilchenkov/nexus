@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +17,8 @@ import (
 )
 
 // fakeKafkaAdmin — конфигурируемый port.KafkaAdmin для тестов usecase.
+// Методы зовутся из горутин чтения брокера (§114.4), поэтому счётчики
+// атомарные, а wait — общий для обоих чтений хук «брокер завис».
 type fakeKafkaAdmin struct {
 	topics    []port.TopicInfo
 	topicsErr error
@@ -22,12 +26,28 @@ type fakeKafkaAdmin struct {
 	healthErr error
 	pings     []port.BrokerPing
 	pingErr   error
+
+	wait        func(context.Context) error // nil — ответ сразу
+	topicsCalls atomic.Int32
+	healthCalls atomic.Int32
 }
 
-func (f *fakeKafkaAdmin) Topics(context.Context) ([]port.TopicInfo, error) {
+func (f *fakeKafkaAdmin) Topics(ctx context.Context) ([]port.TopicInfo, error) {
+	f.topicsCalls.Add(1)
+	if f.wait != nil {
+		if err := f.wait(ctx); err != nil {
+			return nil, err
+		}
+	}
 	return f.topics, f.topicsErr
 }
-func (f *fakeKafkaAdmin) BrokerHealth(context.Context) (port.BrokerHealth, error) {
+func (f *fakeKafkaAdmin) BrokerHealth(ctx context.Context) (port.BrokerHealth, error) {
+	f.healthCalls.Add(1)
+	if f.wait != nil {
+		if err := f.wait(ctx); err != nil {
+			return port.BrokerHealth{}, err
+		}
+	}
 	return f.health, f.healthErr
 }
 func (f *fakeKafkaAdmin) Ping(context.Context) ([]port.BrokerPing, error) {
@@ -37,17 +57,26 @@ func (f *fakeKafkaAdmin) Ping(context.Context) ([]port.BrokerPing, error) {
 // memKafkaCache — in-memory port.KafkaCache без TTL: для тестов важно лишь то,
 // что второй вызов попадает в кеш. Значения гоняются через JSON, как в
 // Redis-адаптере, — иначе тест хранил бы указатель на тот же слайс и не заметил
-// бы, что в кеш уехали размеры.
-type memKafkaCache struct{ data map[string][]byte }
+// бы, что в кеш уехали размеры. Нечитаемое значение — промах, как в
+// Redis-адаптере. Под mutex: чтения брокера идут из горутин (§114.4).
+type memKafkaCache struct {
+	mu   sync.Mutex
+	data map[string][]byte
+}
 
 func newMemKafkaCache() *memKafkaCache { return &memKafkaCache{data: map[string][]byte{}} }
 
 func (c *memKafkaCache) Get(_ context.Context, key string, dst any) (bool, error) {
+	c.mu.Lock()
 	raw, ok := c.data[key]
+	c.mu.Unlock()
 	if !ok {
 		return false, nil
 	}
-	return true, json.Unmarshal(raw, dst)
+	if json.Unmarshal(raw, dst) != nil {
+		return false, nil //nolint:nilerr // повреждённый кеш = промах, как в Redis-адаптере
+	}
+	return true, nil
 }
 
 func (c *memKafkaCache) Set(_ context.Context, key string, val any) error {
@@ -55,8 +84,17 @@ func (c *memKafkaCache) Set(_ context.Context, key string, val any) error {
 	if err != nil {
 		return err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.data[key] = raw
 	return nil
+}
+
+func (c *memKafkaCache) has(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.data[key]
+	return ok
 }
 
 func kafkaWindow() (time.Time, time.Time) {

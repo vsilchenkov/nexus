@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,15 +19,26 @@ var testKafkaGroups = KafkaGroupNames{
 	Retry: "nexus-sender-clog-retry", MainTopic: "nexus.async", PausedTopic: "nexus.async.paused",
 }
 
-// fakeGroupLag — lag групп из «брокера» и счётчик обращений к нему.
+// fakeGroupLag — lag групп из «брокера» и счётчик обращений к нему. Группы
+// читаются параллельно (§114.4) — счётчик под mutex; wait — хук «брокер
+// завис», общий для всех групп.
 type fakeGroupLag struct {
 	lags  map[string]int64
 	errs  map[string]error
+	wait  func(context.Context) error
+	mu    sync.Mutex
 	calls int
 }
 
-func (f *fakeGroupLag) GroupLag(_ context.Context, group, _ string) (int64, error) {
+func (f *fakeGroupLag) GroupLag(ctx context.Context, group, _ string) (int64, error) {
+	f.mu.Lock()
 	f.calls++
+	f.mu.Unlock()
+	if f.wait != nil {
+		if err := f.wait(ctx); err != nil {
+			return 0, err
+		}
+	}
 	return f.lags[group], f.errs[group]
 }
 
@@ -186,6 +198,40 @@ func TestKafkaTopics_GroupRoles(t *testing.T) {
 			"nexus-sender-dlq-reprocess": port.KafkaGroupRoleDLQ,
 			"nexus-sender-clog-retry":    port.KafkaGroupRoleRetry,
 		}, roles, pass)
+	}
+}
+
+// uncommittedTopics — ответ адаптера (§114.6): у основной группы и у
+// посторонней часть lag приходится на партиции без commit.
+func uncommittedTopics() []port.TopicInfo {
+	return []port.TopicInfo{{Name: "nexus.async", ConsumerGroups: []port.TopicConsumerGroup{
+		{Group: "nexus-sender", LagTotal: 10, LagUncommitted: 4, UncommittedPartitions: 1},
+		{Group: "debug-tool", LagTotal: 15, LagUncommitted: 3, UncommittedPartitions: 3},
+	}}}
+}
+
+// TestKafkaTopics_ThirdPartyUncommitted (§114.6): у посторонней группы lag
+// партиций без commit вычитается и показывается числом партиций; у группы
+// Nexus он настоящий (reader начнёт с First) и остаётся в lag. Без кеша фейк
+// отдаёт один и тот же срез, поэтому второй проход проверяет и то, что правится
+// копия: иначе lag посторонней группы вычитался бы при каждом запросе.
+func TestKafkaTopics_ThirdPartyUncommitted(t *testing.T) {
+	t.Parallel()
+	for _, cache := range []port.KafkaCache{nil, newMemKafkaCache()} {
+		admin := &fakeKafkaAdmin{topics: uncommittedTopics()}
+		uc := NewKafkaMonitorUsecase(nil, admin, cache, nil, defaultTh(), logging.NewNoop(),
+			WithKafkaGroups(testKafkaGroups))
+		for pass := range 2 {
+			r := uc.Topics(context.Background())
+			require.Len(t, r.Topics, 1)
+			groups := r.Topics[0].ConsumerGroups
+			require.Len(t, groups, 2)
+			assert.EqualValues(t, 10, groups[0].LagTotal, "группа Nexus, проход %d", pass)
+			assert.Zero(t, groups[0].UncommittedPartitions, "группа Nexus, проход %d", pass)
+			assert.EqualValues(t, 12, groups[1].LagTotal, "посторонняя группа, проход %d", pass)
+			assert.Equal(t, 3, groups[1].UncommittedPartitions, "посторонняя группа, проход %d", pass)
+		}
+		assert.Equal(t, uncommittedTopics(), admin.topics, "ответ адаптера не тронут")
 	}
 }
 

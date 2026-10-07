@@ -23,6 +23,10 @@ function topicHealth(tp: KafkaTopic): { tone: "ok" | "warn" | "err"; key: string
 
 // GroupChip — плашка consumer-группы. У групп, ждущих по замыслу, тон
 // нейтральный и вместо «lag» — что именно ждёт; подсказка объясняет почему.
+//
+// §114.6: у посторонней группы партиции без commit в lag не входят — откуда
+// группа начнёт их читать, неизвестно. Их число — на плашке, с подсказкой,
+// иначе lag выглядел бы полным.
 function GroupChip({ g }: { g: KafkaTopicGroup }) {
   const { t } = useTranslation();
   const n = g.lag_total.toLocaleString();
@@ -34,11 +38,15 @@ function GroupChip({ g }: { g: KafkaTopicGroup }) {
       </span>
     );
   }
-  return (
+  const uncommitted = g.uncommitted_partitions ?? 0;
+  const chip = (
     <Chip tone={g.lag_total > 1000 ? "warning" : g.lag_total > 0 ? "default" : "success"}>
       {g.group} · lag {n}
+      {uncommitted > 0 && <> · {t("kafka.topics.uncommitted", { n: uncommitted })}</>}
     </Chip>
   );
+  if (uncommitted === 0) return chip;
+  return <span title={t("kafka.topics.uncommitted_hint", { n: uncommitted })}>{chip}</span>;
 }
 
 // topicSize — ячейка «Размер» (§75). Источник размеров отдельный от Kafka Admin
@@ -56,13 +64,17 @@ function topicSize(tp: KafkaTopic, sizesAvailable: boolean, hint: string) {
   );
 }
 
-// TopicsTable — таблица всех топиков кластера (§5.6 spec).
+// TopicsTable — таблица всех топиков кластера (§5.6 spec). kafkaAvailable=false
+// (§114.5) — брокер не ответил: пустой список означает «не прочитан», а не
+// «топиков нет».
 export function TopicsTable({
   topics,
   sizesAvailable,
+  kafkaAvailable,
 }: {
   topics: KafkaTopic[];
   sizesAvailable: boolean;
+  kafkaAvailable: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -115,7 +127,7 @@ export function TopicsTable({
             {topics.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-3 py-6 text-center text-fg-muted">
-                  {t("kafka.topics.empty")}
+                  {kafkaAvailable ? t("kafka.topics.empty") : t("kafka.topics.unavailable")}
                 </td>
               </tr>
             )}

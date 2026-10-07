@@ -2068,7 +2068,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему периоду, broker_health и severity health-banner. Источники деградируют (флаги *_available). current_lag (§113.7) — отставание основной группы из брокера (lag_from_broker=true), при его недоступности из Prometheus. paused_backlog — сообщения узлов на паузе, в lag не входят; при paused_backlog\u003e0 — список узлов на паузе (paused_nodes, не больше 20, всего paused_nodes_total). Admin-only, rate-limit 60/мин.",
+                "description": "KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему периоду, broker_health и severity health-banner. Источники деградируют (флаги *_available). current_lag (§113.7) — отставание основной группы из брокера (lag_from_broker=true), при его недоступности из Prometheus. paused_backlog — сообщения узлов на паузе, в lag не входят; при paused_backlog\u003e0 — список узлов на паузе (paused_nodes, не больше 20, всего paused_nodes_total). §114: каждое чтение брокера ограничено 3 с, неудача кешируется на 30 с; paused_backlog_available=false — очередь паузы не прочитана; kafka_available=false и health.reason=broker_unreachable — брокер не ответил. Admin-only, rate-limit 60/мин.",
                 "produces": [
                     "application/json"
                 ],
@@ -2213,7 +2213,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Партиции, RF, оценка числа сообщений, consumer-группы с lag и ролью группы Nexus (§113.7: main/paused/dlq/retry), состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. Admin-only.",
+                "description": "Партиции, RF, оценка числа сообщений, consumer-группы с lag и ролью группы Nexus (§113.7: main/paused/dlq/retry), состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. §114: обход брокера ограничен 10 с, неудача кешируется на 30 с; kafka_available=false — брокер не ответил (список топиков недоступен, а не пуст). Admin-only.",
                 "produces": [
                     "application/json"
                 ],
@@ -10445,10 +10445,15 @@ const docTemplate = `{
                     "$ref": "#/definitions/internal_web_adapter_in_http.kafkaHealthDTO"
                 },
                 "kafka_available": {
+                    "description": "KafkaAvailable (§114.5) — все чтения брокера удались (состояние брокеров,\nlag основной группы и очереди паузы).",
                     "type": "boolean"
                 },
                 "lag_from_broker": {
                     "description": "LagFromBroker (§113.7) — current_lag прочитан из брокера, а не из Prometheus.",
+                    "type": "boolean"
+                },
+                "paused_backlog_available": {
+                    "description": "PausedBacklogAvailable (§114.5) — summary.paused_backlog известен. false —\nочередь паузы настроена, но брокер не ответил: 0 не значит «пусто».",
                     "type": "boolean"
                 },
                 "paused_nodes": {
@@ -10630,6 +10635,10 @@ const docTemplate = `{
                 "role": {
                     "description": "Role (§113.7) — main | paused | dlq | retry у групп Nexus; у посторонней\nгруппы поля нет.",
                     "type": "string"
+                },
+                "uncommitted_partitions": {
+                    "description": "UncommittedPartitions (§114.6) — у посторонней группы: партиций топика\nбез сохранённой позиции; их lag в lag_total не входит. У групп Nexus поля\nнет — их lag без commit настоящий и уже в lag_total.",
+                    "type": "integer"
                 }
             }
         },

@@ -11,8 +11,8 @@ import (
 	"nexus/internal/web/usecase/port"
 )
 
-// Ping опрашивает каждый брокер Metadata-запросом и замеряет отклик (§4.5
-// spec). Брокеры пингуются параллельно; warn выставляется при задержке выше
+// Ping опрашивает каждый брокер ApiVersions-запросом и замеряет отклик (§4.5
+// spec, §114.4). Брокеры пингуются параллельно; warn выставляется при задержке выше
 // порога warnPingMs. Порядок результатов — как в конфиге брокеров.
 func (c *Client) Ping(ctx context.Context) ([]port.BrokerPing, error) {
 	res := make([]port.BrokerPing, len(c.brokers))
@@ -31,12 +31,19 @@ func (c *Client) Ping(ctx context.Context) ([]port.BrokerPing, error) {
 	return res, nil
 }
 
-// pingBroker подключается к одному брокеру и выполняет Metadata, измеряя
+// pingBroker подключается к одному брокеру и выполняет ApiVersions, измеряя
 // длительность. Ошибка → OK=false; задержка выше порога → warn.
+//
+// §114.4: не Metadata — её kafka-go отдаёт из кеша транспорта, и упавший
+// брокер отвечал «OK» с задержкой в доли миллисекунды. ApiVersions уходит на
+// брокер всегда.
 func (c *Client) pingBroker(ctx context.Context, addr string) port.BrokerPing {
 	kc := &kafka.Client{Addr: kafka.TCP(addr), Timeout: c.timeout}
 	start := time.Now()
-	_, err := kc.Metadata(ctx, &kafka.MetadataRequest{})
+	resp, err := kc.ApiVersions(ctx, &kafka.ApiVersionsRequest{})
+	if err == nil && resp.Error != nil {
+		err = resp.Error
+	}
 	elapsed := time.Since(start).Milliseconds()
 	bp := port.BrokerPing{Addr: addr, ElapsedMs: elapsed, OK: err == nil}
 	switch {

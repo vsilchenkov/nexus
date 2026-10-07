@@ -154,7 +154,24 @@ Loadtest exit'ится с кодом 1, если:
 - `p95 > 200 ms` (без учёта mock-задержки);
 - `error_rate >= 0.1%`.
 
-Это и есть критерий §10.2 для CI.
+Это и есть критерий §10.2 для CI. Плюс, если включены проверки §114.L (ниже), — любое их нарушение.
+
+### Страница Kafka и сторож Sender'а под нагрузкой (§114.L)
+
+Две проверки, выключенные по умолчанию (в CI job `loadtest` включены переменными
+`LOADTEST_KAFKA_PAGE_EVERY=10s` и `LOADTEST_SENDER_METRICS_URL=http://sender:9091/metrics`):
+
+| Флаг | Что делает | FAIL, если |
+| ---- | ---------- | ---------- |
+| `--kafka-page-every 10s` | всю нагрузку и слив бэклога опрашивает `/api/kafka/overview?range=1h` и `/api/kafka/topics` от имени админ-сессии loadtest'а (как автообновление открытой вкладки) | хоть один ответ сказал «брокер не ответил» (`kafka_available=false` или reason `broker_unreachable`) при живом брокере — бюджет чтения §114.4 не уложился под нагрузкой; overview дольше 5 с; ошибка запроса; ни одного опроса |
+| `--sender-metrics-url <url>` | снимает `/metrics` Sender'а до нагрузки и после no-loss сверки | вырос `nexus_kafka_consumer_restarts_total` (сторож принял занятый consumer за зависший) или `nexus_kafka_commit_errors_total`; снимок не снят |
+
+В `report.json` — блоки `kafka_page` (p95/max overview и topics, `unavailable`, `failures`) и
+`sender_metrics` (`restarts_delta`, `commit_errors_delta`, `error`). При no-loss сверке
+дополнительно считается `ch_duplicate_rows` = `count() − uniqExact(ID)` по async/rmq-строкам —
+информативно (повторы at-least-once нарушением не считаются), `-1` — не посчитано.
+Счётчики Sender'а суммируются по всем рядам; сброс счётчика (рестарт Sender'а за прогон)
+даёт прирост «всё после рестарта».
 
 ### RabbitMQAsync-нагрузка (§27.12)
 
@@ -173,7 +190,8 @@ go run ./cmd/loadtest \
 ### Что не покрыто текущим loadtest
 
 - Kafka consumer-lag в отчёте (§10.2 — опциональная диагностика, не acceptance-критерий;
-  «нет потерь» закрыто сверкой по числу строк CH). TODO.
+  «нет потерь» закрыто сверкой по числу строк CH). TODO. Косвенно его видит проба страницы
+  Kafka (§114.L): она проверяет, что lag читается из брокера в бюджет, но число не сохраняет.
 - Внутренний размер CH-буфера sender'а — извне ненаблюдаем; заменён фактической no-loss
   сверкой числа строк.
 

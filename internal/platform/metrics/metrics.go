@@ -138,6 +138,8 @@ type Metrics struct {
 	PausedRequeuedTotal *prometheus.CounterVec // {team, node}
 	// §113.6: сторож пересоздал reader зависшего consumer'а.
 	KafkaConsumerRestartsTotal *prometheus.CounterVec // {group, reason=stalled|pass_idle}
+	// §114.3: брокер отверг commit офсета (shutdown и закрытый reader не в счёт).
+	KafkaCommitErrorsTotal *prometheus.CounterVec // {group}
 
 	// §74.3: состояние схемы PostgreSQL относительно кода сервиса.
 	PGSchemaVersion prometheus.Gauge // версия схемы в БД (0 = миграций не было)
@@ -442,6 +444,11 @@ func New(service string, opts ...Option) *Metrics {
 			Help:        "Kafka readers recreated by the stall watchdog, by consumer group and reason.",
 			ConstLabels: constLabels,
 		}, []string{"group", "reason"}),
+		KafkaCommitErrorsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_kafka_commit_errors_total",
+			Help:        "Kafka offset commits rejected or failed, by consumer group (shutdown and closed readers are not counted).",
+			ConstLabels: constLabels,
+		}, []string{"group"}),
 		PausedRequeuedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name:        "nexus_paused_requeued_total",
 			Help:        "Paused-topic messages moved again to the tail of the paused queue while their node stays paused (not counted in nexus_requests_total).",
@@ -511,6 +518,7 @@ func New(service string, opts ...Option) *Metrics {
 		m.PausedNodes,
 		m.PausedRequeuedTotal,
 		m.KafkaConsumerRestartsTotal,
+		m.KafkaCommitErrorsTotal,
 		m.PGSchemaVersion,
 		m.PGSchemaAhead,
 	)
@@ -601,6 +609,18 @@ func (m *Metrics) IncPausedSweepPass(reason string) {
 // IncKafkaConsumerRestart — сторож пересоздал reader группы (§113.6).
 func (m *Metrics) IncKafkaConsumerRestart(group, reason string) {
 	m.KafkaConsumerRestartsTotal.WithLabelValues(group, reason).Inc()
+}
+
+// InitKafkaCommitErrors создаёт нулевой ряд ошибок commit группы (§114.3):
+// Grafana видит 0, а increase() в алерте замечает уже первую ошибку — ряд,
+// появившийся сразу с единицей, increase() не видит.
+func (m *Metrics) InitKafkaCommitErrors(group string) {
+	m.KafkaCommitErrorsTotal.WithLabelValues(group)
+}
+
+// IncKafkaCommitError — брокер отверг commit офсета группы (§114.3).
+func (m *Metrics) IncKafkaCommitError(group string) {
+	m.KafkaCommitErrorsTotal.WithLabelValues(group).Inc()
 }
 
 // SetPausedNodes — число узлов на паузе (§113.3).

@@ -83,9 +83,9 @@ func NewDLQReprocessor(
 	for _, o := range opts {
 		o(r)
 	}
-	slot := newReaderSlot(slotName(group, r.stall, 0), func(clientID string) slotReader {
+	slot := newReaderSlot(group, 0, r.stall, func(clientID string) slotReader {
 		return kafkapf.NewConsumerWithGroup(cfg, cfg.Kafka.DLQTopic, group, kafkapf.WithClientID(clientID))
-	}, r.stall.clk(), logger)
+	}, logger)
 	r.consumer = slot
 	r.passGuard = newPassStallGuard(group, r.topic, r.stall, slot, logger)
 	return r

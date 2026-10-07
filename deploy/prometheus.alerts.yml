@@ -94,6 +94,21 @@ groups:
           summary: "Paused-node queue is not drained ({{ $value }} messages)"
           description: "nexus.async.paused holds messages while no node is paused (or the sweeper is disabled and reports no paused nodes). Check sender.paused_sweep (enabled, logs 'paused sweep'), nexus_paused_sweep_passes_total and Redis/PostgreSQL reachability from Sender."
 
+      - alert: NexusKafkaCommitFailing
+        # §114.3: брокер отвергает commit офсетов группы. Доставка при этом идёт, а позиции
+        # не сохраняются: рестарт Sender'а повторит всё после последнего удачного commit, а
+        # при недоступном __consumer_offsets ещё и не войдёт в группу (ребаланс пишет туда же).
+        # for: 10m отсекает разовую ошибку (переезд координатора группы): increase() за 5
+        # минут держится выше нуля только при ошибках, идущих одна за другой.
+        expr: sum by (group) (increase(nexus_kafka_commit_errors_total[5m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: sender
+        annotations:
+          summary: "Kafka rejects offset commits of group {{ $labels.group }}"
+          description: "Messages are delivered but positions are not saved. Do NOT restart Sender: it would redeliver everything since the last good commit and may fail to rejoin the group. Check __consumer_offsets (kafka-topics --describe: ISR vs min.insync.replicas), broker disk and broker logs (DEPLOYMENT 9.1.9)."
+
       # ----- ClickHouse health -----
 
       - alert: NexusClickHouseErrors

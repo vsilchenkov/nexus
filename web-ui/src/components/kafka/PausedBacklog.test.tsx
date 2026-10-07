@@ -14,6 +14,7 @@ function overview(over: {
   nodes?: KafkaPausedNode[];
   total?: number;
   available?: boolean;
+  backlogAvailable?: boolean;
 }): KafkaOverview {
   const nodes = over.nodes ?? [];
   return {
@@ -33,6 +34,7 @@ function overview(over: {
     health: { severity: "ok", reason: "" },
     prometheus_available: true,
     kafka_available: true,
+    paused_backlog_available: over.backlogAvailable ?? true,
     lag_from_broker: true,
     paused_nodes: nodes,
     paused_nodes_total: over.total ?? nodes.length,
@@ -101,6 +103,20 @@ describe("PausedBacklog — очередь узлов на паузе в кар�
   it("список узлов недоступен — только число", () => {
     renderLine(overview({ backlog: 960, nodes: [], total: 0, available: false }));
     expect(screen.getByText("kafka.paused.backlog")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+});
+
+describe("PausedBacklog — брокер не ответил (§114.5)", () => {
+  // paused_backlog=0 при непрочитанной очереди не значит «пусто»: строка есть
+  // всегда, приглушённая, с подсказкой — а не пустота, как у пустой очереди.
+  it("очередь не прочитана — «отложено: —» с подсказкой, даже при нуле", () => {
+    renderLine(overview({ backlog: 0, backlogAvailable: false }));
+    const line = screen.getByText("kafka.paused.unavailable").closest("div") as HTMLElement;
+    expect(line).toHaveAttribute("title", "kafka.paused.unavailable_hint");
+    expect(line.className).toContain("text-fg-subtle");
+    expect(screen.queryByText("kafka.paused.backlog")).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
   });

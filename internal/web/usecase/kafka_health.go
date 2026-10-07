@@ -33,6 +33,11 @@ const (
 	ReasonLagGrowing        = "lag_growing"
 	ReasonUnderReplicated   = "under_replicated"
 	ReasonProduceLatency    = "produce_latency_high"
+	// ReasonBrokerUnreachable (§114.5) — хотя бы одно из чтений брокера (lag
+	// основной группы, очередь паузы, состояние брокеров) не уложилось в бюджет
+	// или упало. Остальные могли пройти: что именно не прочитано, говорят
+	// lag_from_broker и paused_backlog_available.
+	ReasonBrokerUnreachable = "broker_unreachable"
 )
 
 // HealthBanner — итог оценки состояния (§5.2 spec): severity + машинный reason.
@@ -53,6 +58,9 @@ type healthInput struct {
 	brokersOnline    int
 	underReplicated  int
 	offlinePartition int
+	// brokerUnreachable (§114.5) — хоть одно настроенное чтение брокера не
+	// удалось.
+	brokerUnreachable bool
 }
 
 // evaluateHealth определяет severity и причину по порогам (§6 spec).
@@ -76,7 +84,11 @@ func evaluateHealth(in healthInput, th KafkaThresholds) HealthBanner {
 		return HealthBanner{SeverityErr, ReasonProduceLatency}
 	}
 
+	// §114.5: недоступный брокер — первым среди жёлтых. Он обнуляет
+	// under-replicated и прочие сигналы из брокера, зелёный баннер был бы ложью.
 	switch {
+	case in.brokerUnreachable:
+		return HealthBanner{SeverityWarn, ReasonBrokerUnreachable}
 	case in.underReplicated >= 1:
 		return HealthBanner{SeverityWarn, ReasonUnderReplicated}
 	case brokersOffline >= 1:

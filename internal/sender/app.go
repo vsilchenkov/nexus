@@ -454,6 +454,7 @@ func (a *App) stallGuard() kafkaadapter.StallGuard {
 		After:        a.cfg.Kafka.Consumer.StallAfter(),
 		ClientPrefix: bootstrap.ReplicaName(),
 		Metrics:      a.metrics,
+		Commits:      a.metrics, // §114.3
 	}
 }
 
