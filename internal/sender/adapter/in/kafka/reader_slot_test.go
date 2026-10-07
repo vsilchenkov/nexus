@@ -3,6 +3,8 @@ package kafka
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -22,6 +24,7 @@ type blockingReader struct {
 	msgs      chan kafka.Message
 	mu        sync.Mutex
 	committed []kafka.Message
+	commitErr error // не nil — Commit отвергается (§114.3)
 	closed    bool
 }
 
@@ -41,6 +44,9 @@ func (r *blockingReader) FetchMessage(ctx context.Context) (kafka.Message, error
 func (r *blockingReader) Commit(_ context.Context, msg kafka.Message) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.commitErr != nil {
+		return r.commitErr
+	}
 	r.committed = append(r.committed, msg)
 	return nil
 }
@@ -88,7 +94,45 @@ func (l *readerLog) count() int {
 }
 
 func newTestSlot(log *readerLog) *readerSlot {
-	return newReaderSlot("nexus-sender-sender-1-0", log.factory, clock.NewFake(time.Unix(1000, 0)), logging.NewNoop())
+	return newTestSlotWith(log, nil)
+}
+
+// newTestSlotWith — слот группы nexus-sender реплики sender-1 со счётчиком
+// ошибок commit (nil — без метрики).
+func newTestSlotWith(log *readerLog, commits commitRecorder) *readerSlot {
+	guard := StallGuard{ClientPrefix: "sender-1", Clock: clock.NewFake(time.Unix(1000, 0)), Commits: commits}
+	return newReaderSlot("nexus-sender", 0, guard, log.factory, logging.NewNoop())
+}
+
+// commitTally — счётчик ошибок commit по группам; inits — какие ряды созданы.
+type commitTally struct {
+	mu     sync.Mutex
+	inits  map[string]bool
+	errors map[string]int
+}
+
+func (c *commitTally) InitKafkaCommitErrors(group string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.inits == nil {
+		c.inits = map[string]bool{}
+	}
+	c.inits[group] = true
+}
+
+func (c *commitTally) IncKafkaCommitError(group string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.errors == nil {
+		c.errors = map[string]int{}
+	}
+	c.errors[group]++
+}
+
+func (c *commitTally) count(group string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.errors[group]
 }
 
 // waitFetching ждёт, пока слот войдёт в FetchMessage.
@@ -195,4 +239,47 @@ func TestReaderSlot_ClosedSlotNotRecreated(t *testing.T) {
 	assert.False(t, s.RequestRestart())
 	s.Recreate("test")
 	assert.Equal(t, 1, log.count())
+}
+
+// TestReaderSlot_CommitErrorCounted (§114.3): отказ брокера считается в ряду
+// группы и возвращается вызывающему; штатное завершение (отменённый ctx,
+// закрытый reader) не считается. Ряд группы создаётся при создании слота.
+func TestReaderSlot_CommitErrorCounted(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		commitErr error
+		cancelCtx bool
+		want      int
+	}{
+		{name: "успешный commit", want: 0},
+		{name: "брокер отверг", commitErr: errors.New("[19] Not Enough Replicas"), want: 1},
+		{name: "закрытый reader", commitErr: fmt.Errorf("commit offset: %w", io.ErrClosedPipe), want: 0},
+		{name: "shutdown", commitErr: context.Canceled, cancelCtx: true, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			log := &readerLog{}
+			tally := &commitTally{}
+			s := newTestSlotWith(log, tally)
+			assert.True(t, tally.inits["nexus-sender"], "ряд группы создан нулём при старте")
+			assert.Equal(t, "nexus-sender-sender-1-0-g1", s.ClientID())
+
+			log.get(0).commitErr = tt.commitErr
+			ctx, cancel := context.WithCancel(context.Background())
+			if tt.cancelCtx {
+				cancel()
+			}
+			defer cancel()
+			err := s.Commit(ctx, kafka.Message{Partition: 2, Offset: 41})
+			if tt.commitErr != nil {
+				require.ErrorIs(t, err, tt.commitErr)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.want, tally.count("nexus-sender"))
+			require.NoError(t, s.Close())
+		})
+	}
 }

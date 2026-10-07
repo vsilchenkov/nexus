@@ -110,9 +110,9 @@ func NewPausedSweeper(
 	for _, o := range opts {
 		o(s)
 	}
-	slot := newReaderSlot(slotName(group, s.stall, 0), func(clientID string) slotReader {
+	slot := newReaderSlot(group, 0, s.stall, func(clientID string) slotReader {
 		return kafkapf.NewConsumerWithGroup(cfg, cfg.Kafka.PausedTopic, group, kafkapf.WithClientID(clientID))
-	}, s.stall.clk(), logger)
+	}, logger)
 	s.consumer = slot
 	s.passGuard = newPassStallGuard(group, s.topic, s.stall, slot, logger)
 	return s

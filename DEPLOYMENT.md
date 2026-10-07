@@ -2947,6 +2947,43 @@ Sender'а он уже переживает.
 а новые правила с ним работают (фильтр по `group` в нём есть); прежние правила с новым кодом снова
 поднимут `NexusKafkaLagHigh` на очередь паузы.
 
+### 9.1.9. Что изменится после обновления на §114
+
+**Миграций нет, ключей `config.yml` и переменных `.env` нет.** Обновляются Sender и Web (порядок
+любой) и правила алертов.
+
+- **Новая метрика `nexus_kafka_commit_errors_total{group}`** (Sender) — commit'ы офсетов, которые
+  брокер отверг. Ряд каждой группы появляется нулём сразу после старта.
+- **Новый алерт `NexusKafkaCommitFailing`** — ошибки commit группы идут дольше 10 минут. Prometheus
+  перечитывает правила только рестартом:
+
+  ```bash
+  docker compose restart prometheus
+  curl -s http://localhost:9091/api/v1/rules | grep -c NexusKafkaCommitFailing   # не 0
+  ```
+
+**Runbook: брокер отвергает commit (`NexusKafkaCommitFailing`, в логе Sender'а `commit offset
+failed` / `paused sweep commit failed` / `dlq reprocess commit failed`).**
+
+1. **Sender не перезапускать.** Доставка при этом идёт — не сохраняются только позиции. Рестарт
+   перечитает всё после последнего удачного commit (приёмники получат повторы), а если не пишется
+   `__consumer_offsets`, новый участник не войдёт в группу: ребаланс пишет туда же, и группа
+   остановится целиком.
+2. Проверить топик позиций — ISR против `min.insync.replicas`:
+
+   ```bash
+   # -e KAFKA_OPTS= — без JMX-агента брокера: иначе CLI упадёт на занятом порту агента
+   docker compose exec -e KAFKA_OPTS= kafka /opt/kafka/bin/kafka-topics.sh \
+     --bootstrap-server localhost:9092 --describe --topic __consumer_offsets | head -5
+   docker compose exec -e KAFKA_OPTS= kafka /opt/kafka/bin/kafka-configs.sh \
+     --bootstrap-server localhost:9092 --entity-type topics --entity-name __consumer_offsets --describe
+   ```
+
+   `Isr` короче `min.insync.replicas` — брокер отвечает `NOT_ENOUGH_REPLICAS`. Затем — место на
+   диске брокера (`df -h` тома Kafka) и лог брокера (`docker compose logs --tail=200 kafka`).
+3. После восстановления commit'ы возобновляются сами: позиции догоняют последнее доставленное,
+   алерт гаснет через ~5 минут. Рестарт Sender'а после этого не нужен.
+
 ### 9.2. Готовые образы из registry — больше не используется
 
 Раньше образы публиковались GoReleaser'ом в GitLab Container Registry по тегу `v*`, и прод

@@ -214,6 +214,31 @@ tests:
               summary: "Paused-node queue is not drained (500 messages)"
               description: "nexus.async.paused holds messages while no node is paused (or the sweeper is disabled and reports no paused nodes). Check sender.paused_sweep (enabled, logs 'paused sweep'), nexus_paused_sweep_passes_total and Redis/PostgreSQL reachability from Sender."
 
+  # §114.3: брокер отвергает commit постоянно — алерт через 10 минут, по группе
+  # (ошибки двух реплик складываются в один алерт). Разовая ошибка соседней
+  # группы (переезд координатора) алерт не зажигает: increase() за 5 минут
+  # опускается до нуля раньше, чем истекает for: 10m.
+  - name: "Отвергнутые commit: постоянные против разовой"
+    interval: 1m
+    input_series:
+      - series: 'nexus_kafka_commit_errors_total{service="sender",instance="sender-1",group="nexus-sender"}'
+        values: '0x5 0+3x30'
+      - series: 'nexus_kafka_commit_errors_total{service="sender",instance="sender-2",group="nexus-sender"}'
+        values: '0x5 0+2x30'
+      - series: 'nexus_kafka_commit_errors_total{service="sender",instance="sender-1",group="nexus-sender-clog-retry"}'
+        values: '0x5 1x30'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: NexusKafkaCommitFailing
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: NexusKafkaCommitFailing
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender, group: nexus-sender }
+            exp_annotations:
+              summary: "Kafka rejects offset commits of group nexus-sender"
+              description: "Messages are delivered but positions are not saved. Do NOT restart Sender: it would redeliver everything since the last good commit and may fail to rejoin the group. Check __consumer_offsets (kafka-topics --describe: ISR vs min.insync.replicas), broker disk and broker logs (DEPLOYMENT 9.1.9)."
+
   # Ревизия §113: SLO-алерт сервиса тоже не считает откладывания паузы вызовами.
   # 1 rps доставки с 10% 5xx и 2 rps откладываний: без фильтра 0.1/3 = 3.3% < 5%.
   - name: "NexusHighErrorRate: откладывания паузы не в знаменателе"

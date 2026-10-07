@@ -25,7 +25,7 @@ func newSlots(n int, group string, guard StallGuard, factory readerFactory, logg
 	n = max(n, 1)
 	out := make([]*readerSlot, 0, n)
 	for i := range n {
-		out = append(out, newReaderSlot(slotName(group, guard, i), factory, guard.clk(), logger))
+		out = append(out, newReaderSlot(group, i, guard, factory, logger))
 	}
 	return out
 }

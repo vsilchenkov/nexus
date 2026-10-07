@@ -46,7 +46,10 @@ type StallGuard struct {
 	// реплики): участники разных реплик в одной группе не должны совпадать.
 	ClientPrefix string
 	Metrics      restartRecorder // nil — без метрики
-	Clock        clock.Clock     // nil — системные часы
+	// Commits — счётчик отвергнутых commit'ов (§114.3). Слоты reader'ов
+	// считают их всегда, даже при выключенном стороже; nil — без метрики.
+	Commits commitRecorder
+	Clock   clock.Clock // nil — системные часы
 	// CheckEvery — период проверки непрерывной группы; ≤ 0 → 30 с. Меньше
 	// задают только integration-тесты.
 	CheckEvery time.Duration

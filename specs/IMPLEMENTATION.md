@@ -7624,9 +7624,19 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §114 + отметки в §113.13 и §31.3 | ✅ Phase 114.0 | [sections/114-kafka-commit-stuck-and-monitor.md](sections/114-kafka-commit-stuck-and-monitor.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
-| §114.3 метрика ошибок commit и алерт | ⛔ | — |
+| §114.3 метрика ошибок commit и алерт | ✅ Phase 114.1 | Счётчик `nexus_kafka_commit_errors_total{group}` (`InitKafkaCommitErrors`/`IncKafkaCommitError`, [metrics.go](../internal/platform/metrics/metrics.go)); учёт в `readerSlot.Commit` ([reader_slot.go](../internal/sender/adapter/in/kafka/reader_slot.go)) — через слот идут commit'ы всех четырёх групп; `newReaderSlot(group, idx, guard, …)` берёт имя/часы/счётчик из `StallGuard` (поле `Commits`, в [sender/app.go](../internal/sender/app.go) — `a.metrics`). Алерт `NexusKafkaCommitFailing` ([prometheus.alerts.yml](../deploy/prometheus.alerts.yml)) + promtool-группа «Отвергнутые commit» ([prometheus.alerts.test.yml](../deploy/prometheus.alerts.test.yml)). Тесты `TestReaderSlot_CommitErrorCounted`, `TestKafkaCommitErrors`. DEPLOYMENT §9.1.9 — runbook |
 | §114.2 сторож не трогает дочитавший экземпляр | ⛔ | — |
 | §114.4–114.5 бюджет чтения брокера и честный статус (backend) | ⛔ | — |
 | §114.5 UI недоступного брокера | ⛔ | — |
 | §114.6 lag сторонних групп без commit | ⛔ | — |
 | Нагрузочный тест: страница Kafka и сторож под нагрузкой | ⛔ | — |
+
+**Неочевидности §114:**
+
+- **Ряд ошибок commit создаётся нулём при старте слота (`InitKafkaCommitErrors`).** `increase()`
+  не видит первую ошибку ряда, который появился сразу со значением 1: ему не с чем сравнить.
+  Без нулевого ряда разовая ошибка терялась бы для графика, а алерт ждал бы вторую.
+- **Что не считается ошибкой commit:** отменённый ctx вызывающего (shutdown — проверяется
+  `ctx.Err()`, а не тип ошибки: kafka-go возвращает и `Canceled`, и `DeadlineExceeded`) и закрытый
+  reader (`io.ErrClosedPipe` из `CommitMessages` после `Close`). Логирование ошибки остаётся у
+  вызывающих (`ErrorWithOp` с топиком и партицией) — слот только считает.
