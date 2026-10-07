@@ -3005,8 +3005,11 @@ failed`).**
      --bootstrap-server localhost:9092 --entity-type topics --entity-name __consumer_offsets --describe
    ```
 
-   `Isr` короче `min.insync.replicas` — брокер отвечает `NOT_ENOUGH_REPLICAS`. Затем — место на
-   диске брокера (`df -h` тома Kafka) и лог брокера (`docker compose logs --tail=200 kafka`).
+   `Isr` короче `min.insync.replicas` — запись в топик позиций может не проходить (Kafka 3.5
+   отвергает commit с `NOT_ENOUGH_REPLICAS`; на 3.9 топик-уровневый `min.insync.replicas` commit не
+   блокировал — поэтому смотрите и остальное). Затем — место на диске брокера (`df -h` тома Kafka),
+   лог брокера (`docker compose logs --tail=200 kafka`) и текст ошибки в строке Sender'а
+   `commit offset failed`: код ответа брокера называет причину.
 3. После восстановления commit'ы возобновляются сами: позиции догоняют последнее доставленное,
    алерт гаснет через ~5 минут. Рестарт Sender'а после этого не нужен.
 
