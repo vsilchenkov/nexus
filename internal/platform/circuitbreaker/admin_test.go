@@ -252,18 +252,20 @@ func TestRecordFailure_ZeroPolicyFallsBackToGlobal(t *testing.T) {
 func TestAllow_UsesNodeCooldownFromState(t *testing.T) {
 	t.Parallel()
 
-	// Глобальный cooldown — час; у узла 50 мс.
+	// Глобальный cooldown — час; у узла 2 с. Не меньше: под нагрузкой CI между
+	// RecordFailure и первой проверкой проходило больше 50 мс, и предусловие
+	// «breaker открыт» не выполнялось (pipeline 11216).
 	b, _, srv := newAdmin(t, 1, time.Hour)
 	ctx := context.Background()
-	require.NoError(t, b.RecordFailure(ctx, "node/fast", domain.BreakerPolicy{Threshold: 1, Cooldown: 50 * time.Millisecond}))
+	require.NoError(t, b.RecordFailure(ctx, "node/fast", domain.BreakerPolicy{Threshold: 1, Cooldown: 2 * time.Second}))
 
 	ok, err := b.Allow(ctx, "node/fast")
 	require.NoError(t, err)
 	require.False(t, ok, "предусловие: breaker открыт")
 
-	// Сдвигаем момент открытия на 100 мс назад — cooldown узла истёк, глобальный нет.
+	// Сдвигаем момент открытия на 5 с назад — cooldown узла истёк, глобальный нет.
 	srv.HSet(circuitbreaker.Key("node/fast"), "opened_at",
-		strconv.FormatInt(time.Now().Add(-100*time.Millisecond).UnixNano(), 10))
+		strconv.FormatInt(time.Now().Add(-5*time.Second).UnixNano(), 10))
 
 	ok, err = b.Allow(ctx, "node/fast")
 	require.NoError(t, err)
@@ -276,14 +278,14 @@ func TestIsOpen_UsesNodeCooldownFromState(t *testing.T) {
 
 	b, _, srv := newAdmin(t, 1, time.Hour)
 	ctx := context.Background()
-	require.NoError(t, b.RecordFailure(ctx, "node/fast", domain.BreakerPolicy{Threshold: 1, Cooldown: 50 * time.Millisecond}))
+	require.NoError(t, b.RecordFailure(ctx, "node/fast", domain.BreakerPolicy{Threshold: 1, Cooldown: 2 * time.Second}))
 
 	open, err := b.IsOpen(ctx, "node/fast")
 	require.NoError(t, err)
 	require.True(t, open)
 
 	srv.HSet(circuitbreaker.Key("node/fast"), "opened_at",
-		strconv.FormatInt(time.Now().Add(-100*time.Millisecond).UnixNano(), 10))
+		strconv.FormatInt(time.Now().Add(-5*time.Second).UnixNano(), 10))
 
 	open, err = b.IsOpen(ctx, "node/fast")
 	require.NoError(t, err)
