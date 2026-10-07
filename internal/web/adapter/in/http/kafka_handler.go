@@ -113,7 +113,12 @@ type kafkaOverviewDTO struct {
 	BrokerHealth        kafkaBrokerHealthDTO `json:"broker_health"`
 	Health              kafkaHealthDTO       `json:"health"`
 	PrometheusAvailable bool                 `json:"prometheus_available"`
-	KafkaAvailable      bool                 `json:"kafka_available"`
+	// KafkaAvailable (§114.5) — все чтения брокера удались (состояние брокеров,
+	// lag основной группы и очереди паузы).
+	KafkaAvailable bool `json:"kafka_available"`
+	// PausedBacklogAvailable (§114.5) — summary.paused_backlog известен. false —
+	// очередь паузы настроена, но брокер не ответил: 0 не значит «пусто».
+	PausedBacklogAvailable bool `json:"paused_backlog_available"`
 	// LagFromBroker (§113.7) — current_lag прочитан из брокера, а не из Prometheus.
 	LagFromBroker bool `json:"lag_from_broker"`
 	// PausedNodes (§113.7) — узлы на паузе, не больше 20; заполнен только при
@@ -138,7 +143,7 @@ func pausedNodesDTO(refs []port.NodeKeyRef) []kafkaPausedNodeDTO {
 
 // Overview godoc
 // @Summary  Сводка экрана мониторинга Kafka за период (§4.1 spec).
-// @Description  KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему периоду, broker_health и severity health-banner. Источники деградируют (флаги *_available). current_lag (§113.7) — отставание основной группы из брокера (lag_from_broker=true), при его недоступности из Prometheus. paused_backlog — сообщения узлов на паузе, в lag не входят; при paused_backlog>0 — список узлов на паузе (paused_nodes, не больше 20, всего paused_nodes_total). Admin-only, rate-limit 60/мин.
+// @Description  KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему периоду, broker_health и severity health-banner. Источники деградируют (флаги *_available). current_lag (§113.7) — отставание основной группы из брокера (lag_from_broker=true), при его недоступности из Prometheus. paused_backlog — сообщения узлов на паузе, в lag не входят; при paused_backlog>0 — список узлов на паузе (paused_nodes, не больше 20, всего paused_nodes_total). §114: каждое чтение брокера ограничено 3 с, неудача кешируется на 30 с; paused_backlog_available=false — очередь паузы не прочитана; kafka_available=false и health.reason=broker_unreachable — брокер не ответил. Admin-only, rate-limit 60/мин.
 // @Tags     kafka
 // @Produce  json
 // @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
@@ -161,15 +166,16 @@ func (h *KafkaHandler) Overview(c *gin.Context) {
 		DeltaVsPrevious: kafkaDeltaDTO{
 			Produced: r.DeltaProduced, Consumed: r.DeltaConsumed, HasDelta: r.HasDelta,
 		},
-		ErrorRate:            r.ErrorRate,
-		BrokerHealth:         kafkaBrokerHealthDTO(r.BrokerHealth),
-		Health:               kafkaHealthDTO(r.Health),
-		PrometheusAvailable:  r.PrometheusAvailable,
-		KafkaAvailable:       r.KafkaAvailable,
-		LagFromBroker:        r.LagFromBroker,
-		PausedNodes:          pausedNodesDTO(r.PausedNodes),
-		PausedNodesTotal:     r.PausedNodesTotal,
-		PausedNodesAvailable: r.PausedNodesAvailable,
+		ErrorRate:              r.ErrorRate,
+		BrokerHealth:           kafkaBrokerHealthDTO(r.BrokerHealth),
+		Health:                 kafkaHealthDTO(r.Health),
+		PrometheusAvailable:    r.PrometheusAvailable,
+		KafkaAvailable:         r.KafkaAvailable,
+		PausedBacklogAvailable: r.PausedBacklogAvailable,
+		LagFromBroker:          r.LagFromBroker,
+		PausedNodes:            pausedNodesDTO(r.PausedNodes),
+		PausedNodesTotal:       r.PausedNodesTotal,
+		PausedNodesAvailable:   r.PausedNodesAvailable,
 	})
 }
 
@@ -269,7 +275,7 @@ type kafkaTopicDTO struct {
 
 // Topics godoc
 // @Summary  Список топиков кластера (§4.3 spec).
-// @Description  Партиции, RF, оценка числа сообщений, consumer-группы с lag и ролью группы Nexus (§113.7: main/paused/dlq/retry), состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. Admin-only.
+// @Description  Партиции, RF, оценка числа сообщений, consumer-группы с lag и ролью группы Nexus (§113.7: main/paused/dlq/retry), состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. §114: обход брокера ограничен 10 с, неудача кешируется на 30 с; kafka_available=false — брокер не ответил (список топиков недоступен, а не пуст). Admin-only.
 // @Tags     kafka
 // @Produce  json
 // @Success  200  {object}  KafkaTopicsResponse

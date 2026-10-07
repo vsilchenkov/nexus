@@ -79,6 +79,21 @@ func TestEvaluateHealth(t *testing.T) {
 			severity: SeverityWarn, reason: ReasonErrorRateHigh,
 		},
 		{
+			name:     "broker unreachable is warn (§114.5)",
+			in:       healthInput{currentLag: 10, brokerUnreachable: true},
+			severity: SeverityWarn, reason: ReasonBrokerUnreachable,
+		},
+		{
+			name:     "broker unreachable beats other warnings",
+			in:       healthInput{currentLag: 300, underReplicated: 1, brokerUnreachable: true, brokersTotal: 3, brokersOnline: 2},
+			severity: SeverityWarn, reason: ReasonBrokerUnreachable,
+		},
+		{
+			name:     "critical lag from prometheus beats broker unreachable",
+			in:       healthInput{currentLag: 1500, brokerUnreachable: true},
+			severity: SeverityErr, reason: ReasonLagHigh,
+		},
+		{
 			name:     "offline beats lag (most critical first)",
 			in:       healthInput{offlinePartition: 1, currentLag: 5000, brokersTotal: 3, brokersOnline: 3},
 			severity: SeverityErr, reason: ReasonOfflinePartitions,

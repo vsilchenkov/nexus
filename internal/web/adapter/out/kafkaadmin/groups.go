@@ -2,23 +2,28 @@ package kafkaadmin
 
 import (
 	"context"
+	"fmt"
 
 	kafka "github.com/segmentio/kafka-go"
 )
 
-// listGroupIDs возвращает ID всех consumer-групп кластера. Ошибка — best-effort:
-// логируется, возвращается пустой список (топики покажутся без групп).
-func (c *Client) listGroupIDs(ctx context.Context) []string {
+// listGroupIDs возвращает ID всех consumer-групп кластера. Ошибка — ошибка
+// Topics (§114.4): до §114 она глоталась, топики показывались без групп, и
+// такой ответ кешировался как нормальный — lag всех групп пропадал с экрана
+// на весь TTL, хотя брокер просто не ответил.
+func (c *Client) listGroupIDs(ctx context.Context) ([]string, error) {
 	resp, err := c.kc.ListGroups(ctx, &kafka.ListGroupsRequest{})
 	if err != nil {
-		c.logger.Warn("kafka list groups failed", c.logger.Str("op", "web.kafkaAdmin.listGroups"), c.logger.Err(err))
-		return nil
+		return nil, fmt.Errorf("kafka list groups: %w", err)
+	}
+	if resp.Error != nil {
+		return nil, fmt.Errorf("kafka list groups: %w", resp.Error)
 	}
 	ids := make([]string, 0, len(resp.Groups))
 	for _, g := range resp.Groups {
 		ids = append(ids, g.GroupID)
 	}
-	return ids
+	return ids, nil
 }
 
 // describeMembers возвращает число участников по каждой группе. Best-effort:

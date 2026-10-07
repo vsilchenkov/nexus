@@ -17,7 +17,7 @@ type KafkaAdmin interface {
 	// BrokerHealth — агрегат состояния кластера для health-banner (§4.1 spec):
 	// число брокеров online/всего, under-replicated и offline партиции.
 	BrokerHealth(ctx context.Context) (BrokerHealth, error)
-	// Ping — отклик каждого брокера на Metadata-запрос (§4.5 spec).
+	// Ping — отклик каждого брокера на ApiVersions-запрос (§4.5 spec, §114.4).
 	Ping(ctx context.Context) ([]BrokerPing, error)
 }
 

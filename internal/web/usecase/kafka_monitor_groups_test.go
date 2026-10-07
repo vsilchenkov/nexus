@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,15 +19,26 @@ var testKafkaGroups = KafkaGroupNames{
 	Retry: "nexus-sender-clog-retry", MainTopic: "nexus.async", PausedTopic: "nexus.async.paused",
 }
 
-// fakeGroupLag — lag групп из «брокера» и счётчик обращений к нему.
+// fakeGroupLag — lag групп из «брокера» и счётчик обращений к нему. Группы
+// читаются параллельно (§114.4) — счётчик под mutex; wait — хук «брокер
+// завис», общий для всех групп.
 type fakeGroupLag struct {
 	lags  map[string]int64
 	errs  map[string]error
+	wait  func(context.Context) error
+	mu    sync.Mutex
 	calls int
 }
 
-func (f *fakeGroupLag) GroupLag(_ context.Context, group, _ string) (int64, error) {
+func (f *fakeGroupLag) GroupLag(ctx context.Context, group, _ string) (int64, error) {
+	f.mu.Lock()
 	f.calls++
+	f.mu.Unlock()
+	if f.wait != nil {
+		if err := f.wait(ctx); err != nil {
+			return 0, err
+		}
+	}
 	return f.lags[group], f.errs[group]
 }
 

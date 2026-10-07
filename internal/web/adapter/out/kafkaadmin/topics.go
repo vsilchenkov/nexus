@@ -14,21 +14,35 @@ import (
 // партиции, RF, оценку числа сообщений (Σ high-low), consumer-группы с lag,
 // состояние реплик. SizeBytes остаётся 0 — размер на диске в админ-протоколе
 // недоступен и подмешивается usecase'ом из Prometheus (§75, см. port.TopicInfo).
+//
+// §114.4: ошибка Metadata или ListGroups и истёкший ctx (бюджет обхода
+// usecase'а) — ошибка. Watermarks, OffsetFetch и DescribeGroups по отдельным
+// топикам и группам остаются best-effort, но при истёкшем ctx они падают все
+// разом, и «успешный» обход вернул бы топики без сообщений и групп.
 func (c *Client) Topics(ctx context.Context) ([]port.TopicInfo, error) {
 	meta, err := c.kc.Metadata(ctx, &kafka.MetadataRequest{})
 	if err != nil {
 		return nil, fmt.Errorf("kafka metadata: %w", err)
 	}
 	online := brokerIDSet(meta.Brokers)
-	groupIDs := c.listGroupIDs(ctx)
+	groupIDs, err := c.listGroupIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
 	members := c.describeMembers(ctx, groupIDs)
 
 	out := make([]port.TopicInfo, 0, len(meta.Topics))
 	for _, t := range meta.Topics {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("kafka topics: %w", err)
+		}
 		if t.Internal {
 			continue
 		}
 		out = append(out, c.topicInfo(ctx, t, online, groupIDs, members))
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("kafka topics: %w", err)
 	}
 	return out, nil
 }

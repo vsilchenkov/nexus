@@ -2029,10 +2029,18 @@ definitions:
       health:
         $ref: '#/definitions/internal_web_adapter_in_http.kafkaHealthDTO'
       kafka_available:
+        description: |-
+          KafkaAvailable (§114.5) — все чтения брокера удались (состояние брокеров,
+          lag основной группы и очереди паузы).
         type: boolean
       lag_from_broker:
         description: LagFromBroker (§113.7) — current_lag прочитан из брокера, а не
           из Prometheus.
+        type: boolean
+      paused_backlog_available:
+        description: |-
+          PausedBacklogAvailable (§114.5) — summary.paused_backlog известен. false —
+          очередь паузы настроена, но брокер не ответил: 0 не значит «пусто».
         type: boolean
       paused_nodes:
         description: |-
@@ -5197,13 +5205,15 @@ paths:
       - kafka
   /api/kafka/overview:
     get:
-      description: KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему
+      description: 'KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему
         периоду, broker_health и severity health-banner. Источники деградируют (флаги
         *_available). current_lag (§113.7) — отставание основной группы из брокера
         (lag_from_broker=true), при его недоступности из Prometheus. paused_backlog
         — сообщения узлов на паузе, в lag не входят; при paused_backlog>0 — список
-        узлов на паузе (paused_nodes, не больше 20, всего paused_nodes_total). Admin-only,
-        rate-limit 60/мин.
+        узлов на паузе (paused_nodes, не больше 20, всего paused_nodes_total). §114:
+        каждое чтение брокера ограничено 3 с, неудача кешируется на 30 с; paused_backlog_available=false
+        — очередь паузы не прочитана; kafka_available=false и health.reason=broker_unreachable
+        — брокер не ответил. Admin-only, rate-limit 60/мин.'
       parameters:
       - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
         in: query
@@ -5301,7 +5311,9 @@ paths:
         ролью группы Nexus (§113.7: main/paused/dlq/retry), состояние реплик. Размер
         на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по
         всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false.
-        Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. Admin-only.'
+        Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. §114:
+        обход брокера ограничен 10 с, неудача кешируется на 30 с; kafka_available=false
+        — брокер не ответил (список топиков недоступен, а не пуст). Admin-only.'
       produces:
       - application/json
       responses:

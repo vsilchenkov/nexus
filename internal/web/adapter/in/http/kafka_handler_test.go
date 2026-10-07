@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -132,6 +133,13 @@ func (s stubGroupLag) GroupLag(_ context.Context, group, _ string) (int64, error
 	return s[group], nil
 }
 
+// failingGroupLag — брокер не отвечает на запрос офсетов (§114.5).
+type failingGroupLag struct{}
+
+func (failingGroupLag) GroupLag(context.Context, string, string) (int64, error) {
+	return 0, errors.New("dial tcp: connection refused")
+}
+
 type stubPausedNodes []port.NodeKeyRef
 
 func (s stubPausedNodes) PausedNodes(context.Context) ([]port.NodeKeyRef, error) { return s, nil }
@@ -165,9 +173,26 @@ func TestKafkaOverview_PausedBacklogJSON(t *testing.T) {
 	assert.EqualValues(t, 4, summary["current_lag"])
 	assert.EqualValues(t, 960, summary["paused_backlog"])
 	assert.Equal(t, true, body["lag_from_broker"])
+	assert.Equal(t, true, body["paused_backlog_available"])
 	assert.Equal(t, true, body["paused_nodes_available"])
 	assert.EqualValues(t, 1, body["paused_nodes_total"])
 	assert.Equal(t, []any{map[string]any{"id": "n1", "team": "edo", "path": "sbis"}}, body["paused_nodes"])
+}
+
+// TestKafkaOverview_BrokerUnreachableJSON (§114.5): брокер не ответил —
+// очередь паузы помечена непрочитанной, а баннер называет причину.
+func TestKafkaOverview_BrokerUnreachableJSON(t *testing.T) {
+	t.Parallel()
+	groups := usecase.KafkaGroupNames{Main: "g", Paused: "g-paused", MainTopic: "a", PausedTopic: "a.paused"}
+	uc := usecase.NewKafkaMonitorUsecase(nil, nil, nil, nil, usecase.KafkaThresholds{}, logging.NewNoop(),
+		usecase.WithKafkaGroups(groups), usecase.WithKafkaGroupLag(failingGroupLag{}))
+
+	body := kafkaOverviewJSON(t, uc)
+
+	assert.Equal(t, false, body["paused_backlog_available"])
+	assert.Equal(t, false, body["kafka_available"])
+	assert.Equal(t, false, body["lag_from_broker"])
+	assert.Equal(t, map[string]any{"severity": "warn", "reason": "broker_unreachable"}, body["health"])
 }
 
 // TestKafkaOverview_PausedNodesNeverNull: без очереди паузы paused_nodes —
