@@ -1338,6 +1338,10 @@ CSS-переменных, заданных в [globals.css](../web-ui/src/styles
    корректным MIME. Без этого route запросы к `/assets/index-*.js` проваливаются в
    `NoRoute` → возвращается `index.html` с `text/html` → модульный скрипт не исполняется.
 
+**Файлы в корне сайта не отдаются (§115.2):** `/nexus.svg`, `/favicon.ico` и т.п. уходят в
+`NoRoute` и получают `index.html`. Любой статический файл для `index.html` (иконка) кладётся в
+`web-ui/src/assets/` и подключается как исходник — Vite выпустит его хешированным в `/assets/`.
+
 `make build-ui` копирует свежий `web-ui/dist/*` в `internal/web/static/` (ассеты
 git-tracked — это источник embed; CI job `go-build` их не пересобирает). После правок
 во фронте нужно пересобрать UI и закоммитить обновлённый бандл, иначе бинарь отдаёт
@@ -7720,7 +7724,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | Пункт | Статус | Где |
 |---|---|---|
 | ТЗ §115 | ✅ Phase 115.0 | [sections/115-logs-excel-export.md](sections/115-logs-excel-export.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
-| §115.2 иконка вкладки | ⛔ | — |
+| §115.2 иконка вкладки | ✅ Phase 115.1 | Знак сайдбара [web-ui/src/assets/nexus.svg](../web-ui/src/assets/nexus.svg), ссылка `href="/src/assets/nexus.svg"` в [web-ui/index.html](../web-ui/index.html) → Vite выпускает `/assets/nexus-<hash>.svg`; Go не менялся. Тест `TestSPAFallback_FaviconServedFromEmbeddedBundle` ([spa_test.go](../internal/web/adapter/in/http/spa_test.go)) берёт ссылку из НАСТОЯЩЕГО встроенного `index.html` и требует `image/svg+xml` — красный на старом бандле |
 | §115.3 потоковый XLSX-writer | ⛔ | — |
 | §115.7 чтение ключей и строк из ClickHouse | ⛔ | — |
 | §115.6/§115.8/§115.9 usecase: лимиты, полнота, аудит | ⛔ | — |

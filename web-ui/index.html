@@ -3,7 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/svg+xml" href="/nexus.svg" />
+    <!-- §115.2: иконка — исходник в src/assets, Vite выпускает её хешированным
+         /assets/nexus-<hash>.svg. Файл в корне (/nexus.svg) Web не отдаёт:
+         embed.FS встраивает только index.html и assets/, остальное уходит в
+         SPA-fallback и получает index.html вместо картинки. -->
+    <link rel="icon" type="image/svg+xml" href="/src/assets/nexus.svg" />
     <!-- Шрифты эталона (§21) с §89.1 лежат локально: web-ui/src/assets/fonts,
          подключаются из main.tsx и попадают в бандл (а оттуда в embed.FS).
          Внешних ссылок здесь быть не должно — интерфейс обязан выглядеть
