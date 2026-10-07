@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   EXPORT_ROW_META_BYTES,
   exportErrorText,
+  exportFilterSummary,
   exportParams,
   exportPlan,
   exportRowChoices,
@@ -15,7 +16,8 @@ import { emptyAdvForm, type LogsFilterState } from "./logsQuery";
 
 // §115.4: чистые функции формы выгрузки журнала.
 
-const t = ((k: string) => k) as unknown as TFunction;
+const t = ((k: string, o?: Record<string, unknown>) =>
+  o ? `${k}:${JSON.stringify(o)}` : k) as unknown as TFunction;
 
 const EST: LogsExportEstimate = {
   records: 1000,
@@ -58,7 +60,6 @@ describe("exportPlan", () => {
     expect(p.bytes).toBe(1000 * (EXPORT_ROW_META_BYTES + 600));
     expect(p.limitedByRows).toBe(false);
     expect(p.limitedByBytes).toBe(false);
-    expect(p.fitRows).toBe(1000);
   });
 
   it("без тел объём — только остальные колонки", () => {
@@ -71,16 +72,15 @@ describe("exportPlan", () => {
     expect(p.limitedByRows).toBe(true);
   });
 
-  it("оценка выше лимита объёма — сколько примерно поместится", () => {
-    const est = { ...EST, max_bytes: 100_000 };
-    const p = exportPlan(est, 50_000, true);
+  it("оценка выше лимита объёма — только предупреждение, без числа записей", () => {
+    const p = exportPlan({ ...EST, max_bytes: 100_000 }, 50_000, true);
     expect(p.limitedByBytes).toBe(true);
-    expect(p.fitRows).toBe(Math.floor(100_000 / (EXPORT_ROW_META_BYTES + 600)));
+    expect(p).not.toHaveProperty("fitRows");
   });
 
   it("пустой журнал не делит на ноль", () => {
     const p = exportPlan({ ...EST, records: 0, rows: 0, request_bytes: 0 }, 50_000, true);
-    expect(p).toEqual({ inFile: 0, bytes: 0, limitedByRows: false, limitedByBytes: false, fitRows: 0 });
+    expect(p).toEqual({ inFile: 0, bytes: 0, limitedByRows: false, limitedByBytes: false });
   });
 });
 
@@ -122,5 +122,49 @@ describe("isExportCanceled", () => {
     expect(isExportCanceled({ code: "ERR_CANCELED" })).toBe(true);
     expect(isExportCanceled({ code: "ERR_NETWORK" })).toBe(false);
     expect(isExportCanceled(null)).toBe(false);
+  });
+});
+
+describe("exportFilterSummary", () => {
+  it("пустой фильтр — всё «любой/не задан», приглушено", () => {
+    const items = exportFilterSummary(FILTER, t);
+    expect(items.map((i) => [i.label, i.value, i.muted])).toEqual([
+      ["logs.advanced.q", "logs.export.none", true],
+      ["logs.export.period", "logs.export.period_none", true],
+      ["logs.export.state", "logs.filter.all", true],
+      ["logs.advanced.method", "logs.export.any", true],
+      ["logs.advanced.client", "logs.export.any", true],
+    ]);
+  });
+
+  it("заданные фильтры — значения, режимы поиска и прогон из дип-линка", () => {
+    const f: LogsFilterState = {
+      ...FILTER,
+      q: "order_id",
+      qCase: true,
+      qRegex: true,
+      from: "2026-10-07T00:00",
+      to: "2026-10-07T23:59",
+      status: "err",
+      method: "orders.create",
+      clientIp: "10.0.0.5",
+      done: "pending",
+    };
+    const v = Object.fromEntries(exportFilterSummary(f, t).map((i) => [i.label, i.value]));
+    expect(v).toEqual({
+      "logs.advanced.q": "order_id  [Aa .*]",
+      "logs.export.period": "07.10.2026 00:00 — 07.10.2026 23:59",
+      "logs.export.state": "logs.filter.err",
+      "logs.advanced.method": "orders.create",
+      "logs.advanced.client": "10.0.0.5",
+      "logs.export.run": "logs.filter.done_no",
+    });
+  });
+
+  it("одна граница периода", () => {
+    const from = exportFilterSummary({ ...FILTER, from: "2026-10-07T08:30" }, t)[1];
+    const to = exportFilterSummary({ ...FILTER, to: "2026-10-07T08:30" }, t)[1];
+    expect(from.value).toBe('logs.export.period_from:{"from":"07.10.2026 08:30"}');
+    expect(to.value).toBe('logs.export.period_to:{"to":"07.10.2026 08:30"}');
   });
 });

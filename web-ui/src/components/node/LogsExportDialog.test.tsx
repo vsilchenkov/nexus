@@ -79,8 +79,8 @@ function wrap(children: ReactNode) {
 
 const BASE: LogsFilterState = { ...emptyAdvForm, status: "all", done: "all" };
 
-function renderDialog(initial: Partial<LogsFilterState> = {}, onClose = vi.fn()) {
-  return render(wrap(<LogsExportDialog node={NODE} initial={{ ...BASE, ...initial }} onClose={onClose} />));
+function renderDialog(filter: Partial<LogsFilterState> = {}, onClose = vi.fn()) {
+  return render(wrap(<LogsExportDialog node={NODE} filter={{ ...BASE, ...filter }} onClose={onClose} />));
 }
 
 // estimateParams — параметры последнего запроса оценки.
@@ -100,12 +100,16 @@ describe("LogsExportDialog (§115.4)", () => {
     saveBlob.mockReset();
   });
 
-  it("стартует с фильтров вкладки и оценивает под ними", async () => {
+  it("показывает фильтры вкладки сводкой без правки и оценивает под ними", async () => {
     mockServer();
     renderDialog({ q: "order_id", status: "err", from: "2026-10-07T00:00" });
 
     await waitEstimate();
-    expect(screen.getByPlaceholderText("logs.advanced.q_placeholder")).toHaveValue("order_id");
+    // Второй панели фильтров в форме нет — только сводка.
+    expect(screen.queryByPlaceholderText("logs.advanced.q_placeholder")).toBeNull();
+    expect(screen.queryByRole("button", { name: "logs.advanced.reset" })).toBeNull();
+    expect(screen.getByText("order_id")).toBeInTheDocument();
+    expect(screen.getByText("logs.filter.err")).toBeInTheDocument();
     expect(estimateParams()).toMatchObject({ q: "order_id", status: "err" });
     expect(estimateParams().from).toBeDefined();
     expect(screen.getByText(/^logs\.export\.found:/).textContent).toContain(`"records":"${(1234).toLocaleString()}"`);
@@ -191,15 +195,17 @@ describe("LogsExportDialog (§115.4)", () => {
     expect(signals[1].aborted).toBe(true);
   });
 
-  it("чип done с дип-линка виден и снимается — оценка пересчитывается без него", async () => {
+  it("done с дип-линка «Очереди» виден в сводке и уходит в оценку и выгрузку", async () => {
     mockServer();
+    apiGetBlob.mockResolvedValue({ blob: new Blob([]) });
     renderDialog({ done: "pending" });
     await waitEstimate();
+
+    expect(screen.getByText("logs.export.run")).toBeInTheDocument();
+    expect(screen.getByText("logs.filter.done_no")).toBeInTheDocument();
     expect(estimateParams().done).toBe("no");
-
-    fireEvent.click(screen.getByRole("button", { name: /logs\.filter\.done_no/ }));
-
-    await waitFor(() => expect(estimateParams().done).toBeUndefined());
+    fireEvent.click(screen.getByRole("button", { name: "logs.export.submit" }));
+    await waitFor(() => expect(apiGetBlob.mock.calls[0][1].done).toBe("no"));
   });
 
   it("оценка недоступна — выгрузить всё равно можно", async () => {
@@ -228,11 +234,12 @@ describe("LogsExportDialog (§115.4)", () => {
     expect(await screen.findByText("logs.export.warn_no_period_search")).toBeInTheDocument();
   });
 
-  it("упор в лимит объёма показан заранее", async () => {
+  it("упор в лимит объёма — предупреждение без обещанного числа записей", async () => {
     mockServer({ max_bytes: 100_000 });
     renderDialog();
 
-    expect(await screen.findByText(/^logs\.export\.limited_bytes:/)).toBeInTheDocument();
+    const warn = await screen.findByText(/^logs\.export\.limited_bytes:/);
+    expect(warn.textContent).not.toContain('"n"');
   });
 });
 
@@ -242,7 +249,7 @@ describe("LogsTab — кнопка «Выгрузить» (§115)", () => {
     apiGetBlob.mockReset();
   });
 
-  it("у наблюдателя кнопка рядом со «Сбросить» открывает диалог с фильтрами панели", async () => {
+  it("у наблюдателя кнопка рядом со «Сбросить» открывает диалог с фильтрами вкладки", async () => {
     mockServer({}, "viewer");
     render(wrap(<LogsTab node={NODE} initialFilter={{ q: "order_id", status: "err" }} />));
 
@@ -251,6 +258,21 @@ describe("LogsTab — кнопка «Выгрузить» (§115)", () => {
     expect(await screen.findByText("logs.export.title")).toBeInTheDocument();
     await waitEstimate();
     expect(estimateParams()).toMatchObject({ q: "order_id", status: "err" });
+  });
+
+  it("поиск, набранный без Enter, применяется кнопкой — и в журнале, и в выгрузке", async () => {
+    mockServer();
+    render(wrap(<LogsTab node={NODE} initialFilter={{ method: "orders.create" }} />));
+
+    fireEvent.change(await screen.findByPlaceholderText("logs.advanced.q_placeholder"), {
+      target: { value: "typed" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "logs.export.button" }));
+
+    await waitEstimate();
+    expect(estimateParams()).toMatchObject({ q: "typed", method: "orders.create" });
+    const list = apiGet.mock.calls.filter((c) => c[0] === "/api/nodes/n1/logs");
+    expect(list[list.length - 1][1]).toMatchObject({ q: "typed" });
   });
 
   it("у узла без таблицы логов кнопки нет", async () => {

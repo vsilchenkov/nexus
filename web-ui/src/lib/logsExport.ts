@@ -50,32 +50,73 @@ export const EXPORT_ROW_META_BYTES = 400;
 export type ExportPlan = {
   /** Сколько записей уйдёт в файл при данном пределе строк. */
   inFile: number;
-  /** Оценка текста ячеек для inFile записей, байт. */
+  /** Оценка текста ячеек для inFile записей по среднему размеру записи, байт. */
   bytes: number;
   /** Под фильтром записей больше предела строк — в файл попадут самые новые. */
   limitedByRows: boolean;
-  /** Оценка объёма выше max_bytes — сервер остановится раньше. */
+  /** Оценка объёма выше max_bytes — выгрузка МОЖЕТ остановиться раньше. */
   limitedByBytes: boolean;
-  /** Сколько записей примерно поместится в max_bytes (= inFile без упора). */
-  fitRows: number;
 };
 
 /** exportPlan — что окажется в файле по оценке сервера. Тела считаются по
  * среднему на прогон: запись выгружается одним (новейшим) прогоном, поэтому
- * среднее на прогон — и среднее на запись. */
+ * среднее на прогон — и среднее на запись.
+ *
+ * Сколько записей войдёт до упора в объём, отсюда НЕ следует: записи пишутся
+ * от новых к старым, а среднее посчитано по всем найденным. Если тяжёлые тела
+ * у старых записей, войдёт куда больше «среднего» — стенд §115 показал
+ * «≈ 397» при фактических 1 579. Поэтому форма предупреждает «может
+ * остановиться раньше», а не называет число. */
 export function exportPlan(est: LogsExportEstimate, rowLimit: number, bodies: boolean): ExportPlan {
   const inFile = Math.max(0, Math.min(est.records, rowLimit));
   const bodyPerRow = bodies && est.rows > 0 ? (est.request_bytes + est.response_bytes) / est.rows : 0;
-  const perRow = EXPORT_ROW_META_BYTES + bodyPerRow;
-  const bytes = Math.round(inFile * perRow);
-  const limitedByBytes = bytes > est.max_bytes;
-  return {
-    inFile,
-    bytes,
-    limitedByRows: est.records > rowLimit,
-    limitedByBytes,
-    fitRows: limitedByBytes ? Math.floor(est.max_bytes / perRow) : inFile,
-  };
+  const bytes = Math.round(inFile * (EXPORT_ROW_META_BYTES + bodyPerRow));
+  return { inFile, bytes, limitedByRows: est.records > rowLimit, limitedByBytes: bytes > est.max_bytes };
+}
+
+// ExportFilterItem — строка сводки фильтров вкладки в форме выгрузки (§115.4).
+// muted — фильтр не задан (значение — «любой»/«не задан»).
+export type ExportFilterItem = { label: string; value: string; muted: boolean };
+
+// localDateTime — значение поля даты (datetime-local, «2026-10-07T00:00») как
+// «07.10.2026 00:00». Строкой, без Date: поле уже в локальной зоне.
+function localDateTime(v: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/.exec(v);
+  return m ? `${m[3]}.${m[2]}.${m[1]} ${m[4]}` : v;
+}
+
+function periodText(f: LogsFilterState, t: TFunction): string {
+  const from = f.from ? localDateTime(f.from) : "";
+  const to = f.to ? localDateTime(f.to) : "";
+  if (from && to) return `${from} — ${to}`;
+  if (from) return t("logs.export.period_from", { from });
+  if (to) return t("logs.export.period_to", { to });
+  return "";
+}
+
+/** exportFilterSummary — фильтры вкладки строками для формы выгрузки. Форма
+ * их не правит: выгружается ровно то, что показывает журнал. */
+export function exportFilterSummary(f: LogsFilterState, t: TFunction): ExportFilterItem[] {
+  const any = t("logs.export.any");
+  const modes = [f.qCase && "Aa", f.qWord && "ab|", f.qRegex && ".*"].filter(Boolean).join(" ");
+  const rows: { label: string; value: string; empty: string }[] = [
+    { label: t("logs.advanced.q"), value: f.q && modes ? `${f.q}  [${modes}]` : f.q, empty: t("logs.export.none") },
+    { label: t("logs.export.period"), value: periodText(f, t), empty: t("logs.export.period_none") },
+    {
+      label: t("logs.export.state"),
+      value: f.status === "all" ? "" : t(`logs.filter.${f.status}`),
+      empty: t("logs.filter.all"),
+    },
+    { label: t("logs.advanced.method"), value: f.method, empty: any },
+    { label: t("logs.advanced.client"), value: f.clientIp || f.clientHost, empty: any },
+  ];
+  // done приходит только дип-линком «Очереди» (§77.4) — показывается, только
+  // когда задан, как чип в шапке журнала.
+  if (f.done !== "all") {
+    const done = f.done === "done" ? t("logs.filter.done_yes") : t("logs.filter.done_no");
+    rows.push({ label: t("logs.export.run"), value: done, empty: "" });
+  }
+  return rows.map((r) => ({ label: r.label, value: r.value || r.empty, muted: !r.value }));
 }
 
 /** exportParams — query-параметры выгрузки: фильтр журнала (тот же

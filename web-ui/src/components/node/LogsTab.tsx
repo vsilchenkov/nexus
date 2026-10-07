@@ -578,6 +578,12 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   const canReplay = useRoleAtLeast("operator");
   // §115: выгрузка в Excel — всем ролям (чтение журнала доступно всем).
   const [exportOpen, setExportOpen] = useState(false);
+  // Набранный без Enter поиск сначала применяется (коммит идемпотентен, §77.3):
+  // иначе форма показала бы и выгрузила фильтр, которого нет в поле.
+  const openExport = () => {
+    commitAdv(advForm);
+    setExportOpen(true);
+  };
 
   const scrollToTop = () => {
     if (tableWrapRef.current) {
@@ -688,17 +694,13 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
           badQuery={badQuery}
           dateRange={dateRange}
           onOpenDate={fetchDateRange}
-          onExport={hasLogsTable ? () => setExportOpen(true) : undefined}
+          onExport={hasLogsTable ? openExport : undefined}
         />
       )}
-      {/* §115: диалог стартует с того, что видно в полях панели (черновик) —
-          поиск, набранный без Enter, тоже попадает в выгрузку. */}
+      {/* §115: форма показывает применённые фильтры журнала — выгружается
+          ровно то, что видно списком. */}
       {exportOpen && (
-        <LogsExportDialog
-          node={node}
-          initial={{ ...advForm, status: statusFilter, done: doneFilter }}
-          onClose={() => setExportOpen(false)}
-        />
+        <LogsExportDialog node={node} filter={filterState} onClose={() => setExportOpen(false)} />
       )}
 
       {/* §77.3: затянувшийся поиск — с возможностью прервать его. Отмена рвёт

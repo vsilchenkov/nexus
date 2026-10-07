@@ -4,20 +4,15 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangle, Download, RefreshCw } from "lucide-react";
 
 import { api, type Node } from "../../api/client";
-import { Button, ErrorAlert, Hint, Modal, Seg, Select } from "../ui";
+import { Button, ErrorAlert, Hint, Modal, Select } from "../ui";
+import { cn } from "../../lib/cn";
 import { saveBlob } from "../../lib/download";
 import { fmtSize } from "../../lib/format";
-import {
-  advFormEqual,
-  logsFilterParams,
-  type LogsAdvForm,
-  type LogsDoneFilter,
-  type LogsFilterState,
-  type LogsStatusFilter,
-} from "../../lib/logsQuery";
+import { logsFilterParams, type LogsFilterState } from "../../lib/logsQuery";
 import {
   browserTimeZone,
   exportErrorText,
+  exportFilterSummary,
   exportParams,
   exportPlan,
   exportRowChoices,
@@ -26,15 +21,15 @@ import {
   type ExportRowsChoice,
   type LogsExportEstimate,
 } from "../../lib/logsExport";
-import { LogsAdvancedFilters } from "./LogsAdvancedFilters";
 
 // §115.4: выгрузка журнала узла в Excel.
 //
-// Один экран (эскиз утверждён): фильтры вкладки «Логи» подставлены и
-// редактируемы, оценка пересчитывается сама, выгрузка идёт потоком с
-// прогрессом и «Остановить». Полнота файла (упёрлись в объём, ClickHouse
-// отказал посреди потока) видна только на листе «Параметры»: HTTP-статус
-// уходит до первой строки и потом не меняется.
+// Один экран: сводка фильтров вкладки «Логи» (без правки — выгружается ровно
+// то, что показывает журнал; вторая панель с тем же полем «Поиск» в модалке
+// лишь дублировала бы вкладку), предел строк, тела, живая оценка; выгрузка
+// идёт потоком с прогрессом и «Остановить». Полнота файла (упёрлись в объём,
+// ClickHouse отказал посреди потока) видна только на листе «Параметры»:
+// HTTP-статус уходит до первой строки и потом не меняется.
 
 // DownloadState — шаг выгрузки. loaded — сколько байт файла уже пришло.
 type DownloadState =
@@ -47,31 +42,13 @@ type DownloadState =
 // FALLBACK_FILE — имя, если заголовок с именем файла не дошёл (прокси срезал).
 const FALLBACK_FILE = "nexus-logs.xlsx";
 
-function advOf(f: LogsFilterState): LogsAdvForm {
-  return {
-    q: f.q,
-    qCase: f.qCase,
-    qWord: f.qWord,
-    qRegex: f.qRegex,
-    method: f.method,
-    clientIp: f.clientIp,
-    clientHost: f.clientHost,
-    from: f.from,
-    to: f.to,
-  };
-}
-
-export function LogsExportDialog({ node, initial, onClose }: {
+export function LogsExportDialog({ node, filter, onClose }: {
   node: Node;
-  /** Фильтры вкладки «Логи» на момент открытия. */
-  initial: LogsFilterState;
+  /** Применённые фильтры вкладки «Логи» — те же, что у списка журнала. */
+  filter: LogsFilterState;
   onClose: () => void;
 }) {
   const { t, i18n } = useTranslation();
-  const [draft, setDraft] = useState<LogsAdvForm>(() => advOf(initial));
-  const [applied, setApplied] = useState<LogsAdvForm>(() => advOf(initial));
-  const [status, setStatus] = useState<LogsStatusFilter>(initial.status);
-  const [done, setDone] = useState<LogsDoneFilter>(initial.done);
   const [rowsChoice, setRowsChoice] = useState<ExportRowsChoice>("max");
   const [bodies, setBodies] = useState(true);
   const [dl, setDl] = useState<DownloadState>({ phase: "idle" });
@@ -81,19 +58,12 @@ export function LogsExportDialog({ node, initial, onClose }: {
   // с ней (разрыв соединения отменяет контекст хендлера).
   useEffect(() => () => ctrlRef.current?.abort(), []);
 
-  // §77.3: коммит идемпотентен — Enter+blur не дают двух одинаковых оценок.
-  const commit = (next: LogsAdvForm) => {
-    setDraft(next);
-    setApplied((prev) => (advFormEqual(prev, next) ? prev : next));
-  };
-
-  const filter = useMemo<LogsFilterState>(() => ({ ...applied, status, done }), [applied, status, done]);
   const params = useMemo(() => logsFilterParams(filter), [filter]);
   const estQ = useQuery({
     queryKey: ["logs-export-estimate", node.id, params],
     queryFn: ({ signal }) =>
       api.get<LogsExportEstimate>(`/api/nodes/${node.id}/logs/export/estimate`, params, { signal }),
-    placeholderData: keepPreviousData, // пока считается новая оценка, видна прошлая
+    placeholderData: keepPreviousData,
     retry: false,
   });
   const badQuery = (estQ.error as { response?: { status?: number } } | null)?.response?.status === 400;
@@ -107,13 +77,10 @@ export function LogsExportDialog({ node, initial, onClose }: {
     const ctrl = new AbortController();
     ctrlRef.current = ctrl;
     setDl({ phase: "running", loaded: 0 });
-    // Выгружается то, что видно в полях (черновик), даже если поиск не
-    // подтверждён Enter'ом: кнопка не должна выгружать «не то, что на экране».
-    const f: LogsFilterState = { ...draft, status, done };
     try {
       const { blob, filename } = await api.getBlob(
         `/api/nodes/${node.id}/logs/export.xlsx`,
-        exportParams(f, { rows: rowLimit, bodies, tz: browserTimeZone() }),
+        exportParams(filter, { rows: rowLimit, bodies, tz: browserTimeZone() }),
         {
           signal: ctrl.signal,
           headers: { "Accept-Language": i18n.language },
@@ -139,7 +106,7 @@ export function LogsExportDialog({ node, initial, onClose }: {
         </span>
       }
       onClose={onClose}
-      className="max-w-3xl"
+      className="max-w-2xl"
       footer={
         <ExportFooter
           dl={dl}
@@ -150,46 +117,10 @@ export function LogsExportDialog({ node, initial, onClose }: {
         />
       }
     >
-      <fieldset disabled={running} className="space-y-4">
-        <section className="space-y-2">
-          <h4 className="text-[11px] uppercase tracking-wider text-fg-muted">{t("logs.export.filters")}</h4>
-          <div className="-mx-1 rounded-md border border-line">
-            <LogsAdvancedFilters
-              nodeId={node.id}
-              draft={draft}
-              applied={applied}
-              onDraft={setDraft}
-              onCommit={commit}
-              badQuery={badQuery}
-            />
-            <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-              <span className="text-[10px] uppercase tracking-wider text-fg-muted">{t("logs.export.state")}</span>
-              <Seg
-                value={status}
-                onChange={setStatus}
-                options={[
-                  { value: "all", label: t("logs.filter.all") },
-                  { value: "ok", label: t("logs.filter.ok") },
-                  { value: "err", label: t("logs.filter.err") },
-                ]}
-              />
-              {/* §77.4: done приходит только дип-линком «Очереди» — виден чипом
-                  и снимается, своего переключателя у него нет. */}
-              {done !== "all" && (
-                <button
-                  type="button"
-                  onClick={() => setDone("all")}
-                  title={t("logs.advanced.reset")}
-                  className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent hover:bg-accent/25"
-                >
-                  {done === "done" ? t("logs.filter.done_yes") : t("logs.filter.done_no")}
-                  <span aria-hidden>✕</span>
-                </button>
-              )}
-            </div>
-          </div>
-        </section>
-
+      {/* min-w-0: у fieldset по умолчанию min-width: min-content — длинное
+          значение фильтра распирало бы форму шире окна. */}
+      <fieldset disabled={running} className="min-w-0 space-y-4">
+        <ExportFilters filter={filter} badQuery={badQuery} />
         <ExportVolume
           est={est}
           estFailed={estQ.isError && !badQuery}
@@ -200,10 +131,9 @@ export function LogsExportDialog({ node, initial, onClose }: {
           bodies={bodies}
           onBodies={setBodies}
         />
-
-        {!draft.from && !draft.to && (
+        {!filter.from && !filter.to && (
           <Hint tone="warn" icon={<AlertTriangle className="h-3.5 w-3.5" />}>
-            {draft.q ? t("logs.export.warn_no_period_search") : t("logs.export.warn_no_period")}
+            {filter.q ? t("logs.export.warn_no_period_search") : t("logs.export.warn_no_period")}
           </Hint>
         )}
         {bodies && (
@@ -214,6 +144,28 @@ export function LogsExportDialog({ node, initial, onClose }: {
       </fieldset>
       <ExportResult dl={dl} />
     </Modal>
+  );
+}
+
+// ExportFilters — сводка фильтров вкладки. Без правки: поменять фильтр —
+// закрыть форму и поправить на вкладке, где тот же фильтр уже виден списком.
+function ExportFilters({ filter, badQuery }: { filter: LogsFilterState; badQuery: boolean }) {
+  const { t } = useTranslation();
+  const items = exportFilterSummary(filter, t);
+  return (
+    <section className="space-y-2">
+      <h4 className="text-[11px] uppercase tracking-wider text-fg-muted">{t("logs.export.filters")}</h4>
+      <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 rounded-md border border-line px-3 py-2 text-[13px]">
+        {items.map((it) => (
+          <div key={it.label} className="contents">
+            <dt className="text-fg-muted">{it.label}</dt>
+            <dd className={cn("break-words", it.muted ? "text-fg-subtle" : "font-mono")}>{it.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {badQuery && <div className="text-xs text-err">{t("logs.advanced.bad_query")}</div>}
+      <div className="text-xs text-fg-muted">{t("logs.export.filters_hint")}</div>
+    </section>
   );
 }
 
@@ -308,10 +260,7 @@ function ExportEstimate({ est, failed, fetching, rowLimit, bodies }: {
       )}
       {plan.limitedByBytes && (
         <div className="text-warn">
-          {t("logs.export.limited_bytes", {
-            max: fmtSize(est.max_bytes, units),
-            n: plan.fitRows.toLocaleString(),
-          })}
+          {t("logs.export.limited_bytes", { max: fmtSize(est.max_bytes, units) })}
         </div>
       )}
     </>,
