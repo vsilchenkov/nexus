@@ -196,7 +196,7 @@ func TestReaderSlot_MessageWinsOverRestart(t *testing.T) {
 	log := &readerLog{}
 	s := newTestSlot(log)
 	s.restartReq = true // гонка: запрос пришёл, а fetch уже вернул сообщение
-	assert.False(t, s.endFetch(true))
+	assert.False(t, s.endFetch(&kafka.Message{}))
 	assert.False(t, s.restartReq)
 	require.NoError(t, s.Close())
 }
@@ -282,4 +282,41 @@ func TestReaderSlot_CommitErrorCounted(t *testing.T) {
 			require.NoError(t, s.Close())
 		})
 	}
+}
+
+// TestReaderSlot_FetchedNext (§114.2): слот помнит позицию следующего
+// сообщения по каждой партиции. Позиция перезаписывается и вниз — после
+// внутреннего ребаланса kafka-go перечитывает с committed, — а пересоздание
+// reader'а её сбрасывает: новый reader начнёт с committed.
+func TestReaderSlot_FetchedNext(t *testing.T) {
+	t.Parallel()
+	log := &readerLog{}
+	s := newTestSlot(log)
+	fetch := func(m kafka.Message) {
+		t.Helper()
+		log.get(log.count() - 1).msgs <- m
+		got, err := s.FetchMessage(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, m.Offset, got.Offset)
+	}
+
+	_, ok := s.FetchedNext(0)
+	assert.False(t, ok, "ничего не получено")
+
+	fetch(kafka.Message{Partition: 0, Offset: 7})
+	fetch(kafka.Message{Partition: 2, Offset: 40})
+	next, ok := s.FetchedNext(0)
+	require.True(t, ok)
+	assert.EqualValues(t, 8, next)
+	next, _ = s.FetchedNext(2)
+	assert.EqualValues(t, 41, next)
+
+	fetch(kafka.Message{Partition: 0, Offset: 3}) // ребаланс: перечитывает с committed
+	next, _ = s.FetchedNext(0)
+	assert.EqualValues(t, 4, next, "позиция откатывается вместе с reader'ом")
+
+	s.Recreate("test")
+	_, ok = s.FetchedNext(0)
+	assert.False(t, ok, "новый reader ещё ничего не получал")
+	require.NoError(t, s.Close())
 }

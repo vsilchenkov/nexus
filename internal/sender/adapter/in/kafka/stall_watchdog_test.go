@@ -46,15 +46,21 @@ func part(p int, committed, last int64) kafkapf.PartitionPosition {
 	return kafkapf.PartitionPosition{Partition: p, Watermark: kafkapf.Watermark{First: 0, Last: last}, Committed: committed}
 }
 
-// fakeTarget — экземпляр группы: client.id, «ждёт с» и счётчик перезапусков.
+// fakeTarget — экземпляр группы: client.id, «ждёт с», прочитанные позиции
+// (партиция → Offset+1 последнего полученного) и счётчик перезапусков.
 type fakeTarget struct {
 	id       string
 	waiting  time.Time
+	fetched  map[int]int64
 	restarts int
 }
 
 func (f *fakeTarget) ClientID() string        { return f.id }
 func (f *fakeTarget) WaitingSince() time.Time { return f.waiting }
+func (f *fakeTarget) FetchedNext(p int) (int64, bool) {
+	v, ok := f.fetched[p]
+	return v, ok
+}
 func (f *fakeTarget) RequestRestart() bool {
 	if f.waiting.IsZero() {
 		return false
@@ -206,11 +212,74 @@ func TestStallWatchdog_Cooldown(t *testing.T) {
 	assert.Equal(t, 2, f.a.restarts)
 }
 
-// TestOwnOrOrphanLag: lag считается по своим и ничьим партициям.
-func TestOwnOrOrphanLag(t *testing.T) {
+// TestOwnOrOrphanLagging: партиции с lag — свои и ничьи; ничья поднимает orphan.
+func TestOwnOrOrphanLagging(t *testing.T) {
 	t.Parallel()
-	pos := []kafkapf.PartitionPosition{part(0, 0, 5), part(1, 0, 7), part(2, 0, 11)}
-	assigned := map[string][]int{"me": {0}, "other": {1}}
-	assert.EqualValues(t, 5+11, ownOrOrphanLag(pos, assigned, "me"))
-	assert.EqualValues(t, 7+11, ownOrOrphanLag(pos, assigned, "other"))
+	pos := []kafkapf.PartitionPosition{part(0, 0, 5), part(1, 0, 7), part(2, 0, 11), part(3, 4, 4)}
+	assigned := map[string][]int{"me": {0, 3}, "other": {1}}
+
+	got, orphan := ownOrOrphanLagging(pos, assigned, "me")
+	assert.True(t, orphan)
+	assert.EqualValues(t, 5+11, sumLag(got), "партиция 3 без lag не входит")
+
+	got, orphan = ownOrOrphanLagging(pos, map[string][]int{"me": {0, 2}, "other": {1}}, "me")
+	assert.False(t, orphan)
+	assert.EqualValues(t, 5+11, sumLag(got))
+}
+
+// TestStallWatchdog_CaughtUpNotRestarted (§114.2): экземпляр, получивший всё
+// до конца лога, при стоящем commit не перезапускается — стоит сохранение
+// позиции, а не чтение. Перезапуск остаётся, если прочитано не всё, если
+// позиции нет (новый reader ещё ничего не получил) и при ничьей партиции.
+func TestStallWatchdog_CaughtUpNotRestarted(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		fetched  map[int]int64
+		assigned map[string][]int
+		restarts int
+	}{
+		{name: "дочитал: брокер отвергает commit", fetched: map[int]int64{0: 50}},
+		{name: "получил дальше снимка", fetched: map[int]int64{0: 53}},
+		{name: "прочитал не всё", fetched: map[int]int64{0: 30}, restarts: 1},
+		{name: "из партиции ничего не получал", fetched: map[int]int64{1: 20}, restarts: 1},
+		{name: "ничья партиция", fetched: map[int]int64{0: 50},
+			assigned: map[string][]int{}, restarts: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newWatchdogFixture()
+			if tt.assigned != nil {
+				f.insp.assigned = tt.assigned
+			}
+			f.a.fetched = tt.fetched
+			f.insp.set(part(0, 10, 50), part(1, 20, 20)) // committed 10, конец лога 50
+
+			f.check(0)
+			f.check(testStallAfter + time.Second)
+			assert.Equal(t, tt.restarts, f.a.restarts)
+			// При ничьей партиции перезапускается и b — метрика считает всех.
+			assert.Equal(t, f.a.restarts+f.b.restarts, f.metrics.byReason[stallReasonFetch])
+		})
+	}
+}
+
+// TestStallWatchdog_CaughtUpThenNewMessage: дочитавший экземпляр со стоящим
+// commit не трогается, пока в партицию не придёт новое сообщение; если он его
+// не получает (конец лога ушёл дальше прочитанного), это уже зависание.
+func TestStallWatchdog_CaughtUpThenNewMessage(t *testing.T) {
+	t.Parallel()
+	f := newWatchdogFixture()
+	f.a.fetched = map[int]int64{0: 50}
+	f.insp.set(part(0, 10, 50))
+
+	f.check(0)
+	f.check(testStallAfter + time.Second)
+	f.check(stallCooldown + time.Second)
+	assert.Zero(t, f.a.restarts, "дочитал — не перезапускается и через паузу")
+
+	f.insp.set(part(0, 10, 51)) // новое сообщение, а экземпляр его не получил
+	f.check(stallCheckEvery)
+	assert.Equal(t, 1, f.a.restarts)
 }

@@ -63,6 +63,10 @@ type readerSlot struct {
 	waitingSince time.Time
 	restartReq   bool
 	closed       bool
+	// fetched — партиция → позиция следующего сообщения (Offset+1 последнего
+	// полученного), §114.2. Перезаписывается, а не растёт: после внутреннего
+	// ребаланса kafka-go читает заново с committed. Сбрасывается в Recreate.
+	fetched map[int]int64
 }
 
 // newReaderSlot создаёт слот idx группы и его первый reader. Имя (постоянная
@@ -120,7 +124,11 @@ func (s *readerSlot) FetchMessage(ctx context.Context) (kafka.Message, error) {
 		}
 		r, fctx, cancel := s.beginFetch(ctx)
 		msg, err := r.FetchMessage(fctx)
-		restart := s.endFetch(err == nil)
+		var got *kafka.Message
+		if err == nil {
+			got = &msg
+		}
+		restart := s.endFetch(got)
 		cancel()
 		if err == nil || ctx.Err() != nil || !restart {
 			return msg, err
@@ -138,17 +146,34 @@ func (s *readerSlot) beginFetch(ctx context.Context) (slotReader, context.Contex
 	return s.reader, fctx, cancel
 }
 
-// endFetch снимает отметку ожидания. Пришло сообщение — reader жив, запрос
-// на перезапуск (гонка со сторожем) снимается. Возвращает, ждёт ли перезапуск.
-func (s *readerSlot) endFetch(gotMessage bool) bool {
+// endFetch снимает отметку ожидания. Пришло сообщение (msg != nil) — reader
+// жив: запрос на перезапуск (гонка со сторожем) снимается, позиция партиции
+// запоминается для сторожа (§114.2). Возвращает, ждёт ли перезапуск.
+func (s *readerSlot) endFetch(msg *kafka.Message) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cancelFetch = nil
 	s.waitingSince = time.Time{}
-	if gotMessage {
+	if msg != nil {
 		s.restartReq = false
+		if s.fetched == nil {
+			s.fetched = map[int]int64{}
+		}
+		s.fetched[msg.Partition] = msg.Offset + 1
 	}
 	return s.restartReq
+}
+
+// FetchedNext — позиция, с которой экземпляр прочитает партицию дальше
+// (Offset+1 последнего полученного сообщения); ok=false — из этой партиции
+// текущий reader ещё ничего не получал. Сторож сравнивает её с концом лога:
+// дочитавший экземпляр, у которого стоит только commit, не перезапускается
+// (§114.2).
+func (s *readerSlot) FetchedNext(partition int) (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next, ok := s.fetched[partition]
+	return next, ok
 }
 
 // applyRestart выполняет запрошенный перезапуск перед очередным fetch.
@@ -206,6 +231,7 @@ func (s *readerSlot) Recreate(reason string) {
 	s.gen++
 	s.clientID = s.clientIDFor(s.gen)
 	s.reader = s.newReader(s.clientID)
+	s.fetched = nil // новый reader начнёт с committed
 	s.logger.Debug("kafka: reader recreated",
 		s.logger.Str("slot", s.name),
 		s.logger.Str("old_client_id", oldID),

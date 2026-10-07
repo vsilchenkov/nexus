@@ -7625,7 +7625,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 |---|---|---|
 | ТЗ §114 + отметки в §113.13 и §31.3 | ✅ Phase 114.0 | [sections/114-kafka-commit-stuck-and-monitor.md](sections/114-kafka-commit-stuck-and-monitor.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
 | §114.3 метрика ошибок commit и алерт | ✅ Phase 114.1 | Счётчик `nexus_kafka_commit_errors_total{group}` (`InitKafkaCommitErrors`/`IncKafkaCommitError`, [metrics.go](../internal/platform/metrics/metrics.go)); учёт в `readerSlot.Commit` ([reader_slot.go](../internal/sender/adapter/in/kafka/reader_slot.go)) — через слот идут commit'ы всех четырёх групп; `newReaderSlot(group, idx, guard, …)` берёт имя/часы/счётчик из `StallGuard` (поле `Commits`, в [sender/app.go](../internal/sender/app.go) — `a.metrics`). Алерт `NexusKafkaCommitFailing` ([prometheus.alerts.yml](../deploy/prometheus.alerts.yml)) + promtool-группа «Отвергнутые commit» ([prometheus.alerts.test.yml](../deploy/prometheus.alerts.test.yml)). Тесты `TestReaderSlot_CommitErrorCounted`, `TestKafkaCommitErrors`. DEPLOYMENT §9.1.9 — runbook |
-| §114.2 сторож не трогает дочитавший экземпляр | ⛔ | — |
+| §114.2 сторож не трогает дочитавший экземпляр | ✅ Phase 114.2 | Слот помнит `Offset+1` последнего полученного по партиции (`fetched`, `FetchedNext`, сброс в `Recreate`) — [reader_slot.go](../internal/sender/adapter/in/kafka/reader_slot.go); `readUpTo` (позиция ≥ `Last` снимка на всех стоящих партициях), `stallVictim`, `dropCaughtUp`, `reportCommitStuck` (Warn раз в 5 мин) — [stall_watchdog.go](../internal/sender/adapter/in/kafka/stall_watchdog.go); проходной сторож — то же правило + пауза `stallCooldown` между пересозданиями, `ownOrOrphanLagging` — [pass_stall_guard.go](../internal/sender/adapter/in/kafka/pass_stall_guard.go). Тесты: `TestStallWatchdog_CaughtUpNotRestarted`, `…_CaughtUpThenNewMessage`, строки «дочитал» в `TestPassStallGuard`, `TestPassStallGuard_Cooldown`, `TestReaderSlot_FetchedNext`; integration [sender_commit_rejected_test.go](../tests/integration/sender_commit_rejected_test.go) `TestSender_StallWatchdog_CommitRejectedNoRedelivery` (группа `test-int-sender`) |
 | §114.4–114.5 бюджет чтения брокера и честный статус (backend) | ⛔ | — |
 | §114.5 UI недоступного брокера | ⛔ | — |
 | §114.6 lag сторонних групп без commit | ⛔ | — |
@@ -7640,3 +7640,19 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
   `ctx.Err()`, а не тип ошибки: kafka-go возвращает и `Canceled`, и `DeadlineExceeded`) и закрытый
   reader (`io.ErrClosedPipe` из `CommitMessages` после `Close`). Логирование ошибки остаётся у
   вызывающих (`ErrorWithOp` с топиком и партицией) — слот только считает.
+- **«Дочитал» — по позиции последнего ПОЛУЧЕННОГО сообщения, а не по committed (§114.2).** У
+  consumer'а, которому брокер отвергает commit, и у зависшего kafka-go reader'а одинаковые снимки
+  брокера: committed стоит, lag > 0, экземпляр ждёт в fetch. Различает их только то, что видит сам
+  экземпляр: получил ли он сообщения до high watermark. Позиция перезаписывается, а не берётся
+  максимум — после внутреннего ребаланса kafka-go перечитывает с committed, и «дочитал» по старой
+  позиции стало бы ложью. Ничья партиция дочитанной не считается никогда: застрявший ребаланс лечит
+  именно перезапуск.
+- **Почему ни одного перезапуска, а не «один за эпизод».** Отвергнутый commit чаще всего означает,
+  что `__consumer_offsets` не принимает запись (ISR < `min.insync.replicas`, диск). `SyncGroup`
+  пишет назначение туда же, поэтому вход нового участника — ребаланс, который не завершится, и
+  группа перестанет читать целиком. Без перезапуска доставка идёт, не сохраняются только позиции.
+  Решение пользователя (07.10.2026).
+- **Проверено на настоящем отказе брокера.** Integration-тест ставит `__consumer_offsets`
+  `min.insync.replicas=2` при RF=1 (`IncrementalAlterConfigs`): запись в `__consumer_offsets` с
+  acks=all не проходит, и брокер отвергает `OffsetCommit`. Heartbeat'ы при этом идут — группа жива.
+  Тот же приём годится для стенда (ТЗ §114, проверка A).
