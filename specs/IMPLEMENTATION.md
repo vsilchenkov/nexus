@@ -7614,3 +7614,19 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
   (`scripts/ci/check_integration_coverage.py`) роняет `make test-integration` за секунду, если тест
   не попал ни в одну `test-int-*`: `TestKafkaOffsets*` и `TestNodesSnapshot*` попали в группы только
   на ревизии.
+
+### 4.99 §114 — отвергнутый commit, страница Kafka при недоступном брокере, lag сторонних групп
+
+Раздел [114-kafka-commit-stuck-and-monitor.md](sections/114-kafka-commit-stuck-and-monitor.md).
+Ветка `feature/kafka-commit-stuck-and-monitor` (от `dev`). Миграций, ключей `config.yml` и
+переменных `.env` нет. Повод — три границы ревизии §113.13.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §114 + отметки в §113.13 и §31.3 | ✅ Phase 114.0 | [sections/114-kafka-commit-stuck-and-monitor.md](sections/114-kafka-commit-stuck-and-monitor.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| §114.3 метрика ошибок commit и алерт | ⛔ | — |
+| §114.2 сторож не трогает дочитавший экземпляр | ⛔ | — |
+| §114.4–114.5 бюджет чтения брокера и честный статус (backend) | ⛔ | — |
+| §114.5 UI недоступного брокера | ⛔ | — |
+| §114.6 lag сторонних групп без commit | ⛔ | — |
+| Нагрузочный тест: страница Kafka и сторож под нагрузкой | ⛔ | — |

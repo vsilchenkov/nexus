@@ -71,8 +71,10 @@
 
 Severity health-banner вычисляется на каждом `/overview` по порогам (§31.5). Бэкенд отдаёт
 машинный `reason`-код (`healthy`/`offline_partitions`/`brokers_down`/`error_rate_high`/`lag_high`/
-`lag_growing`/`under_replicated`/`produce_latency_high`); конкретный текст с подстановкой чисел
-локализуется на фронте (бэкенд i18n-независим).
+`lag_growing`/`under_replicated`/`produce_latency_high`/`broker_unreachable` — последний с
+[§114.5](114-kafka-commit-stuck-and-monitor.md): чтение брокера не уложилось в бюджет); конкретный
+текст с подстановкой чисел локализуется на фронте (бэкенд i18n-независим). С §114.4 чтения брокера
+ограничены бюджетом (3 с в `/overview`, 10 с в `/topics`), неудача кешируется на те же 30 с.
 
 ### 31.4. UI экрана
 

@@ -123,6 +123,7 @@
 | [111](#111) | [111-first-start-rebase.md](111-first-start-rebase.md) | Устойчивый первый старт ноды с `instance.id` |
 | [112](#112) | [112-docker-log-rotation.md](112-docker-log-rotation.md) | Ротация логов контейнеров Docker |
 | [113](#113) | [113-paused-sweep-honest-queue.md](113-paused-sweep-honest-queue.md) | Отложенные сообщения узлов на паузе: проход по событию, честные lag и метрики, очередь sync-узла |
+| [114](#114) | [114-kafka-commit-stuck-and-monitor.md](114-kafka-commit-stuck-and-monitor.md) | Отвергнутый commit, страница Kafka при недоступном брокере, lag сторонних групп |
 
 Номер раздела — ссылка на его развёрнутое описание ниже; у коротких разделов описание
 исчерпывается строкой таблицы.
