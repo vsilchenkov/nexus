@@ -76,7 +76,7 @@ export function exportPlan(est: LogsExportEstimate, rowLimit: number, bodies: bo
 
 // ExportFilterItem — строка сводки фильтров вкладки в форме выгрузки (§115.4).
 // muted — фильтр не задан (значение — «любой»/«не задан»).
-export type ExportFilterItem = { label: string; value: string; muted: boolean };
+export type ExportFilterItem = { label: string; value: string };
 
 // localDateTime — значение поля даты (datetime-local, «2026-10-07T00:00») как
 // «07.10.2026 00:00». Строкой, без Date: поле уже в локальной зоне.
@@ -94,29 +94,22 @@ function periodText(f: LogsFilterState, t: TFunction): string {
   return "";
 }
 
-/** exportFilterSummary — фильтры вкладки строками для формы выгрузки. Форма
+/** exportFilterSummary — заданные фильтры вкладки строками для формы выгрузки.
+ * Незаданные не показываются; пустой список — «Фильтры не установлены». Форма
  * их не правит: выгружается ровно то, что показывает журнал. */
 export function exportFilterSummary(f: LogsFilterState, t: TFunction): ExportFilterItem[] {
-  const any = t("logs.export.any");
   const modes = [f.qCase && "Aa", f.qWord && "ab|", f.qRegex && ".*"].filter(Boolean).join(" ");
-  const rows: { label: string; value: string; empty: string }[] = [
-    { label: t("logs.advanced.q"), value: f.q && modes ? `${f.q}  [${modes}]` : f.q, empty: t("logs.export.none") },
-    { label: t("logs.export.period"), value: periodText(f, t), empty: t("logs.export.period_none") },
-    {
-      label: t("logs.export.state"),
-      value: f.status === "all" ? "" : t(`logs.filter.${f.status}`),
-      empty: t("logs.filter.all"),
-    },
-    { label: t("logs.advanced.method"), value: f.method, empty: any },
-    { label: t("logs.advanced.client"), value: f.clientIp || f.clientHost, empty: any },
+  const done = f.done === "done" ? t("logs.filter.done_yes") : t("logs.filter.done_no");
+  const rows: ExportFilterItem[] = [
+    { label: t("logs.advanced.q"), value: f.q && modes ? `${f.q}  [${modes}]` : f.q },
+    { label: t("logs.export.period"), value: periodText(f, t) },
+    { label: t("logs.export.state"), value: f.status === "all" ? "" : t(`logs.filter.${f.status}`) },
+    { label: t("logs.advanced.method"), value: f.method },
+    { label: t("logs.advanced.client"), value: f.clientIp || f.clientHost },
+    // done приходит только дип-линком «Очереди» (§77.4).
+    { label: t("logs.export.run"), value: f.done === "all" ? "" : done },
   ];
-  // done приходит только дип-линком «Очереди» (§77.4) — показывается, только
-  // когда задан, как чип в шапке журнала.
-  if (f.done !== "all") {
-    const done = f.done === "done" ? t("logs.filter.done_yes") : t("logs.filter.done_no");
-    rows.push({ label: t("logs.export.run"), value: done, empty: "" });
-  }
-  return rows.map((r) => ({ label: r.label, value: r.value || r.empty, muted: !r.value }));
+  return rows.filter((r) => r.value);
 }
 
 /** exportParams — query-параметры выгрузки: фильтр журнала (тот же
@@ -148,14 +141,17 @@ export function isExportCanceled(e: unknown): boolean {
   return (e as { code?: string } | null)?.code === "ERR_CANCELED";
 }
 
-/** exportErrorText — отказ сервера до начала файла (§115.5). 503 приходит в
- * двух смыслах (слоты реплики заняты / ClickHouse недоступен) — их различает
- * текст сервера, переведённый на язык интерфейса (Accept-Language запроса). */
+/** exportErrorText — отказ сервера до начала файла (§115.5). 500/503 («ClickHouse
+ * недоступен», «не успел», «слоты заняты») различает текст сервера, переведённый
+ * на язык интерфейса (Accept-Language запроса). 404 — свой текст: Web, запущенный
+ * без ClickHouse, маршрутов журнала не регистрирует и отвечает голым «not found». */
 export function exportErrorText(e: unknown, t: TFunction): string {
   const res = (e as { response?: { status?: number; data?: { error?: string } } } | null)?.response;
   switch (res?.status) {
     case 400:
       return t("logs.advanced.bad_query");
+    case 404:
+      return t("logs.export.err_not_found");
     case 429:
       return t("logs.export.err_rate");
     default:

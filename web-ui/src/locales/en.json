@@ -1118,12 +1118,11 @@
       "err_generic": "Failed to export logs",
       "filters_hint": "Exactly what the log shows is exported. To change the filters, close the form and adjust them on the tab.",
       "period": "Period",
-      "period_none": "not set",
       "period_from": "from {{from}}",
       "period_to": "to {{to}}",
-      "any": "any",
-      "none": "none",
-      "run": "Run"
+      "run": "Run",
+      "no_filters": "No filters set",
+      "err_not_found": "The node log is unavailable: the node was not found or ClickHouse is not connected to this server"
     },
     "filter": {
       "all": "All",

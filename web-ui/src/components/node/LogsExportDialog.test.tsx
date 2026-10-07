@@ -110,6 +110,9 @@ describe("LogsExportDialog (§115.4)", () => {
     expect(screen.queryByRole("button", { name: "logs.advanced.reset" })).toBeNull();
     expect(screen.getByText("order_id")).toBeInTheDocument();
     expect(screen.getByText("logs.filter.err")).toBeInTheDocument();
+    // Незаданные фильтры не показываются.
+    expect(screen.queryByText("logs.advanced.method")).toBeNull();
+    expect(screen.queryByText("logs.export.no_filters")).toBeNull();
     expect(estimateParams()).toMatchObject({ q: "order_id", status: "err" });
     expect(estimateParams().from).toBeDefined();
     expect(screen.getByText(/^logs\.export\.found:/).textContent).toContain(`"records":"${(1234).toLocaleString()}"`);
@@ -193,6 +196,15 @@ describe("LogsExportDialog (§115.4)", () => {
     await screen.findByText(/^logs\.export\.running:/);
     view.unmount();
     expect(signals[1].aborted).toBe(true);
+  });
+
+  it("без фильтров — «Фильтры не установлены»", async () => {
+    mockServer();
+    renderDialog();
+    await waitEstimate();
+
+    expect(screen.getByText("logs.export.no_filters")).toBeInTheDocument();
+    expect(screen.queryByText("logs.advanced.q")).toBeNull();
   });
 
   it("done с дип-линка «Очереди» виден в сводке и уходит в оценку и выгрузку", async () => {

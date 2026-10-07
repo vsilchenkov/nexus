@@ -5,7 +5,6 @@ import { AlertTriangle, Download, RefreshCw } from "lucide-react";
 
 import { api, type Node } from "../../api/client";
 import { Button, ErrorAlert, Hint, Modal, Select } from "../ui";
-import { cn } from "../../lib/cn";
 import { saveBlob } from "../../lib/download";
 import { fmtSize } from "../../lib/format";
 import { logsFilterParams, type LogsFilterState } from "../../lib/logsQuery";
@@ -155,14 +154,20 @@ function ExportFilters({ filter, badQuery }: { filter: LogsFilterState; badQuery
   return (
     <section className="space-y-2">
       <h4 className="text-[11px] uppercase tracking-wider text-fg-muted">{t("logs.export.filters")}</h4>
-      <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 rounded-md border border-line px-3 py-2 text-[13px]">
-        {items.map((it) => (
-          <div key={it.label} className="contents">
-            <dt className="text-fg-muted">{it.label}</dt>
-            <dd className={cn("break-words", it.muted ? "text-fg-subtle" : "font-mono")}>{it.value}</dd>
-          </div>
-        ))}
-      </dl>
+      {items.length > 0 ? (
+        <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 rounded-md border border-line px-3 py-2 text-[13px]">
+          {items.map((it) => (
+            <div key={it.label} className="contents">
+              <dt className="text-fg-muted">{it.label}</dt>
+              <dd className="break-words font-mono">{it.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <div className="rounded-md border border-line px-3 py-2 text-[13px] text-fg-subtle">
+          {t("logs.export.no_filters")}
+        </div>
+      )}
       {badQuery && <div className="text-xs text-err">{t("logs.advanced.bad_query")}</div>}
       <div className="text-xs text-fg-muted">{t("logs.export.filters_hint")}</div>
     </section>

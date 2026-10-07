@@ -108,6 +108,8 @@ describe("exportErrorText", () => {
 
   it.each([
     { name: "400 — синтаксис поиска", e: err(400, "x"), want: "logs.advanced.bad_query" },
+    { name: "404 — свой текст вместо голого «not found»", e: err(404, "not found"), want: "logs.export.err_not_found" },
+    { name: "500 — текст сервера (ClickHouse)", e: err(500, "ClickHouse недоступен"), want: "ClickHouse недоступен" },
     { name: "429 — частота", e: err(429, "rate limited"), want: "logs.export.err_rate" },
     { name: "503 — текст сервера (занято/ClickHouse)", e: err(503, "Все слоты заняты"), want: "Все слоты заняты" },
     { name: "503 без текста", e: err(503), want: "logs.export.err_generic" },
@@ -126,14 +128,15 @@ describe("isExportCanceled", () => {
 });
 
 describe("exportFilterSummary", () => {
-  it("пустой фильтр — всё «любой/не задан», приглушено", () => {
-    const items = exportFilterSummary(FILTER, t);
-    expect(items.map((i) => [i.label, i.value, i.muted])).toEqual([
-      ["logs.advanced.q", "logs.export.none", true],
-      ["logs.export.period", "logs.export.period_none", true],
-      ["logs.export.state", "logs.filter.all", true],
-      ["logs.advanced.method", "logs.export.any", true],
-      ["logs.advanced.client", "logs.export.any", true],
+  it("пустой фильтр — пустой список (форма пишет «Фильтры не установлены»)", () => {
+    expect(exportFilterSummary(FILTER, t)).toEqual([]);
+  });
+
+  it("показываются только заданные фильтры", () => {
+    const f: LogsFilterState = { ...FILTER, status: "ok", clientHost: "client.local" };
+    expect(exportFilterSummary(f, t)).toEqual([
+      { label: "logs.export.state", value: "logs.filter.ok" },
+      { label: "logs.advanced.client", value: "client.local" },
     ]);
   });
 
@@ -162,8 +165,8 @@ describe("exportFilterSummary", () => {
   });
 
   it("одна граница периода", () => {
-    const from = exportFilterSummary({ ...FILTER, from: "2026-10-07T08:30" }, t)[1];
-    const to = exportFilterSummary({ ...FILTER, to: "2026-10-07T08:30" }, t)[1];
+    const [from] = exportFilterSummary({ ...FILTER, from: "2026-10-07T08:30" }, t);
+    const [to] = exportFilterSummary({ ...FILTER, to: "2026-10-07T08:30" }, t);
     expect(from.value).toBe('logs.export.period_from:{"from":"07.10.2026 08:30"}');
     expect(to.value).toBe('logs.export.period_to:{"to":"07.10.2026 08:30"}');
   });
