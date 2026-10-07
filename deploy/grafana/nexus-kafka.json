@@ -78,7 +78,7 @@
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "description": "Отставание консьюмера по группам (nexus-sender / retry) и партициям. Линия 10k — порог алерта NexusKafkaLagHigh.",
+      "description": "Отставание консьюмера из брокера (§113.4) по группам (nexus-sender / clog-retry) и партициям. Очереди узлов на паузе и DLQ — на панели «Deferred queues». Линия 10k — порог алерта NexusKafkaLagHigh.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -97,7 +97,7 @@
       },
       "targets": [
         {
-          "expr": "max by (group, topic, partition) (nexus_kafka_lag)",
+          "expr": "max by (group, topic, partition) (nexus_kafka_lag{group!~\".*-(paused|dlq-reprocess)\"})",
           "legendFormat": "{{group}} {{topic}}/{{partition}}",
           "refId": "A"
         }
@@ -159,7 +159,7 @@
           "refId": "A"
         },
         {
-          "expr": "sum(rate(nexus_requests_total{service=\"sender\",method=\"requestAsync\"}[5m]))",
+          "expr": "sum(rate(nexus_requests_total{service=\"sender\",method=\"requestAsync\",status!=\"paused\"}[5m]))",
           "legendFormat": "delivered attempts (sender)",
           "refId": "B"
         },
@@ -273,6 +273,27 @@
           "expr": "sum by (mode) (increase(nexus_loop_detected_total[5m]))",
           "legendFormat": "{{mode}}",
           "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Deferred queues: paused nodes / DLQ",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 30 },
+      "description": "Отложенная работа (§113.4): сообщения узлов на паузе (группа -paused) и DLQ (группа -dlq-reprocess) — ждут возобновления узла / повтора, а не застрявший Sender. Узлов на паузе 0, а очередь паузы не пуста 30 мин — алерт NexusPausedBacklogStuck.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum by (group) (max by (group, topic, partition) (nexus_kafka_lag{group=~\".*-(paused|dlq-reprocess)\"}))",
+          "legendFormat": "{{group}}",
+          "refId": "A"
+        },
+        {
+          "expr": "max(nexus_paused_nodes)",
+          "legendFormat": "paused nodes",
+          "refId": "B"
         }
       ]
     }

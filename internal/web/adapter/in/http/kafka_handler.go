@@ -10,6 +10,7 @@ import (
 
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase"
+	"nexus/internal/web/usecase/port"
 )
 
 // rateLimiter — узкий интерфейс лимитера на стороне потребителя (ISP):
@@ -74,6 +75,9 @@ type kafkaSummaryDTO struct {
 	FailedConsumed uint64 `json:"failed_consumed"`
 	CurrentLag     uint64 `json:"current_lag"`
 	InFlightNow    uint64 `json:"in_flight_now"`
+	// PausedBacklog (§113.7) — сообщения узлов на паузе в nexus.async.paused; в
+	// current_lag не входят. 0 — очереди нет или брокер не ответил.
+	PausedBacklog uint64 `json:"paused_backlog"`
 }
 
 type kafkaDeltaDTO struct {
@@ -94,6 +98,13 @@ type kafkaHealthDTO struct {
 	Reason   string `json:"reason"`
 }
 
+// kafkaPausedNodeDTO — узел на паузе (§113.7): ссылка на его вкладку «Очередь».
+type kafkaPausedNodeDTO struct {
+	ID   string `json:"id"`
+	Team string `json:"team"`
+	Path string `json:"path"`
+}
+
 type kafkaOverviewDTO struct {
 	Period              kafkaPeriodDTO       `json:"period"`
 	Summary             kafkaSummaryDTO      `json:"summary"`
@@ -103,11 +114,31 @@ type kafkaOverviewDTO struct {
 	Health              kafkaHealthDTO       `json:"health"`
 	PrometheusAvailable bool                 `json:"prometheus_available"`
 	KafkaAvailable      bool                 `json:"kafka_available"`
+	// LagFromBroker (§113.7) — current_lag прочитан из брокера, а не из Prometheus.
+	LagFromBroker bool `json:"lag_from_broker"`
+	// PausedNodes (§113.7) — узлы на паузе, не больше 20; заполнен только при
+	// summary.paused_backlog > 0 и paused_nodes_available=true. Всегда массив.
+	PausedNodes []kafkaPausedNodeDTO `json:"paused_nodes"`
+	// PausedNodesTotal (§113.7) — сколько узлов на паузе всего.
+	PausedNodesTotal int `json:"paused_nodes_total"`
+	// PausedNodesAvailable (§113.7) — список узлов на паузе прочитан; false при
+	// пустой очереди паузы или ошибке PostgreSQL.
+	PausedNodesAvailable bool `json:"paused_nodes_available"`
+}
+
+// pausedNodesDTO — узлы на паузе для ответа; всегда не nil (пустой массив, а
+// не null — фронту не нужна лишняя проверка).
+func pausedNodesDTO(refs []port.NodeKeyRef) []kafkaPausedNodeDTO {
+	out := make([]kafkaPausedNodeDTO, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, kafkaPausedNodeDTO{ID: r.ID, Team: r.Key.Team, Path: r.Key.Path})
+	}
+	return out
 }
 
 // Overview godoc
 // @Summary  Сводка экрана мониторинга Kafka за период (§4.1 spec).
-// @Description  KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему периоду, broker_health и severity health-banner. Источники деградируют (флаги *_available). Admin-only, rate-limit 60/мин.
+// @Description  KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему периоду, broker_health и severity health-banner. Источники деградируют (флаги *_available). current_lag (§113.7) — отставание основной группы из брокера (lag_from_broker=true), при его недоступности из Prometheus. paused_backlog — сообщения узлов на паузе, в lag не входят; при paused_backlog>0 — список узлов на паузе (paused_nodes, не больше 20, всего paused_nodes_total). Admin-only, rate-limit 60/мин.
 // @Tags     kafka
 // @Produce  json
 // @Param    range  query  string  false  "1h | 3h | 24h | 7d | 14d | 30d (default 1h)"
@@ -130,11 +161,15 @@ func (h *KafkaHandler) Overview(c *gin.Context) {
 		DeltaVsPrevious: kafkaDeltaDTO{
 			Produced: r.DeltaProduced, Consumed: r.DeltaConsumed, HasDelta: r.HasDelta,
 		},
-		ErrorRate:           r.ErrorRate,
-		BrokerHealth:        kafkaBrokerHealthDTO(r.BrokerHealth),
-		Health:              kafkaHealthDTO(r.Health),
-		PrometheusAvailable: r.PrometheusAvailable,
-		KafkaAvailable:      r.KafkaAvailable,
+		ErrorRate:            r.ErrorRate,
+		BrokerHealth:         kafkaBrokerHealthDTO(r.BrokerHealth),
+		Health:               kafkaHealthDTO(r.Health),
+		PrometheusAvailable:  r.PrometheusAvailable,
+		KafkaAvailable:       r.KafkaAvailable,
+		LagFromBroker:        r.LagFromBroker,
+		PausedNodes:          pausedNodesDTO(r.PausedNodes),
+		PausedNodesTotal:     r.PausedNodesTotal,
+		PausedNodesAvailable: r.PausedNodesAvailable,
 	})
 }
 
@@ -215,6 +250,9 @@ type kafkaTopicGroupDTO struct {
 	Group    string `json:"group"`
 	LagTotal int64  `json:"lag_total"`
 	Members  int    `json:"members"`
+	// Role (§113.7) — main | paused | dlq | retry у групп Nexus; у посторонней
+	// группы поля нет.
+	Role string `json:"role,omitempty"`
 }
 
 type kafkaTopicDTO struct {
@@ -231,7 +269,7 @@ type kafkaTopicDTO struct {
 
 // Topics godoc
 // @Summary  Список топиков кластера (§4.3 spec).
-// @Description  Партиции, RF, оценка числа сообщений, consumer-группы с lag, состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. Admin-only.
+// @Description  Партиции, RF, оценка числа сообщений, consumer-группы с lag и ролью группы Nexus (§113.7: main/paused/dlq/retry), состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. Admin-only.
 // @Tags     kafka
 // @Produce  json
 // @Success  200  {object}  KafkaTopicsResponse

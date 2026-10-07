@@ -135,3 +135,44 @@ func TestNodeRepoRefsByPaths_E2E(t *testing.T) {
 	assert.NotNil(t, empty)
 	assert.Empty(t, empty)
 }
+
+// TestNodeRepoPausedNodes_E2E — §113.7: узлы на паузе во всех командах со
+// слогом команды, по порядку (слог, путь). Остальные статусы в список не
+// попадают. Синтаксис совместим с PostgreSQL 12.
+func TestNodeRepoPausedNodes_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+	fx := newPathResolveFixture(t, ctx, pool)
+
+	empty, err := fx.nodeRepo.PausedNodes(ctx)
+	require.NoError(t, err)
+	assert.NotNil(t, empty)
+	assert.Empty(t, empty)
+
+	teamA := fx.mkTeam("paused_a", "Paused A")
+	teamB := fx.mkTeam("paused_b", "Paused B")
+	zeta := fx.mkNode(teamB, "zeta")
+	alpha := fx.mkNode(teamB, "alpha")
+	solo := fx.mkNode(teamA, "solo")
+	fx.mkNode(teamA, "active")
+	disabled := fx.mkNode(teamA, "disabled")
+	setStatus := func(id string, st domain.NodeStatus) {
+		_, err := pool.Exec(ctx, `UPDATE nodes SET status = $1 WHERE id = $2`, string(st), id)
+		require.NoError(t, err)
+	}
+	for _, n := range []*domain.Node{zeta, alpha, solo} {
+		setStatus(n.ID, domain.NodeStatusPaused)
+	}
+	setStatus(disabled.ID, domain.NodeStatusDisabled)
+
+	got, err := fx.nodeRepo.PausedNodes(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []port.NodeKeyRef{
+		{ID: solo.ID, Key: port.NodeKey{Team: "paused_a", Path: "solo"}},
+		{ID: alpha.ID, Key: port.NodeKey{Team: "paused_b", Path: "alpha"}},
+		{ID: zeta.ID, Key: port.NodeKey{Team: "paused_b", Path: "zeta"}},
+	}, got)
+}

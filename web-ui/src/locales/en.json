@@ -318,6 +318,13 @@
       "of_total": "of total",
       "in_flight_hint": "between produce and consume"
     },
+    "paused": {
+      "backlog": "deferred: {{n}}",
+      "nodes": "paused nodes: {{n}}",
+      "more": "and {{n}} more",
+      "stuck": "deferred: {{n}}, no paused nodes — should drain within minutes; if it does not shrink, check the Sender",
+      "hint": "Requests of paused nodes wait in nexus.async.paused and are delivered after the node is resumed. They are not consumer lag."
+    },
     "topics": {
       "title": "Topics",
       "name": "Topic",
@@ -334,6 +341,14 @@
         "under_replicated": "under-replicated",
         "lag": "growing lag",
         "offline": "offline partitions"
+      },
+      "role_waiting": {
+        "paused": "{{group}} · deferred {{n}}",
+        "dlq": "{{group}} · awaiting retry {{n}}"
+      },
+      "role_hint": {
+        "paused": "Requests of paused nodes: they wait by design and are delivered after resume, so they do not count as lag",
+        "dlq": "Failed deliveries waiting for scheduled reprocessing: they do not count as lag"
       }
     },
     "top_producers": {
@@ -426,6 +441,16 @@
       "enabled": "Active",
       "disabled": "Disabled",
       "paused": "Paused"
+    },
+    "status_confirm": {
+      "pause_sync_title": "Pause the synchronous node?",
+      "pause_sync_message": "Requests will not be rejected: the caller gets 202 (queued) without the target's response, and requests pile up in the queue to be delivered after resume. To reject requests, disable the node.",
+      "pause_sync_action": "Pause",
+      "disable_title": "Disable the node?",
+      "disable_queue_message": "Waiting to be sent: {{waiting}}. Disabling deletes these messages undelivered — re-enabling will not bring them back.",
+      "disable_empty_message": "The node stops accepting requests. The queue is empty — nothing will be deleted.",
+      "disable_unknown_message": "The node stops accepting requests. The queue could not be read: any messages in it are deleted undelivered — re-enabling will not bring them back.",
+      "disable_action": "Disable"
     },
     "actions": {
       "edit": "Edit",
@@ -1229,14 +1254,13 @@
     },
     "banner": {
       "explain": "Failed deliveries stay in the logs (with reason and body) and can be replayed. To stop the growth, pause or disable the node; to remove them and stop the automatic retry, use “Clear failed”. The dead-letter backlog expires by retention.",
-      "explain_sync": "A synchronous node answers the caller immediately and has no queue. Failed deliveries stay in the logs (with reason and body) and can be replayed, but are never retried automatically. To stop the growth, pause or disable the node; to remove the records from view, use “Clear failed”.",
+      "explain_sync": "A synchronous node answers the caller immediately; it has a queue only while paused (requests are accepted with 202 and wait for resume). Failed deliveries stay in the logs (with reason and body) and can be replayed. To stop delivery, pause the node (requests pile up) or disable it (requests are rejected); to remove the records from view, use “Clear failed”.",
       "pause": "Pause node",
       "disable": "Disable node",
-      "disable_confirm": "Disable the node? It will stop accepting and delivering requests until re-enabled.",
       "resume": "Resume node",
       "enable": "Enable node",
       "state_paused": "The node is paused — new requests pile up in the queue below and are not delivered. Resume to drain it, or purge it.",
-      "state_paused_sync": "The node is paused — incoming requests are rejected right away (a synchronous node has no queue, so nothing piles up). Resume to accept requests again.",
+      "state_paused_sync": "The node is paused — synchronous requests are accepted with 202 (queued) and pile up in the queue below; the caller gets no response from the target. They are delivered after resume. Disabling the node deletes them undelivered.",
       "state_paused_pull": "The node is paused — Nexus stops pulling new messages from RabbitMQ, so they stay in the broker queue. Below are only the messages the bus accepted before the pause (purging affects exactly those). Resume to keep draining the queue.",
       "state_disabled": "The node is disabled — incoming requests are rejected (nothing is queued)."
     },
@@ -1256,7 +1280,7 @@
       "no_logging": "Logging is not configured for this node — failed deliveries can't be shown.",
       "original_window_hint": "Retry sends the full body while the original is still in the queue — about {{hours}}h after it was received; later the log copy is used, and a truncated copy is not sent at all.",
       "reprocess_hint": "Retried automatically until TTL ({{hours}} h) — once the target recovers, they are delivered. “Replay” forces an immediate retry.",
-      "no_reprocess_hint": "Synchronous requests are never retried automatically: the caller already got its response. “Replay” re-sends them manually.",
+      "no_reprocess_hint": "Synchronous requests are never retried automatically: the caller already got its response. The exception is requests accepted while paused (202): they are delivered through the queue and retried like asynchronous ones. “Replay” re-sends them manually.",
       "replay": "Replay",
       "col": {
         "status": "Status",

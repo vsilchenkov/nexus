@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -427,6 +428,40 @@ func TestApplyDefaults_MaxAsyncBodyBytes(t *testing.T) {
 			assert.Equal(t, tc.wantAsync, c.Receiver.MaxAsyncBodyBytes)
 			assert.LessOrEqual(t, c.Receiver.MaxAsyncBodyBytes, c.Receiver.MaxBodyBytes,
 				"async-лимит никогда не должен превышать общий")
+		})
+	}
+}
+
+// Ревизия §113: аварийные переключатели Sender'а боевой config/config.yml
+// читает из .env (PAUSED_SWEEP_CONTINUOUS, KAFKA_STALL_AFTER_SEC), а не из
+// правки файла — по той же причине, что NetBIOS ниже (§106.5).
+func TestLoad_RepoConfig_SenderSwitchesFromEnv(t *testing.T) {
+	// t.Parallel() несовместим с t.Setenv.
+	repoConfig := filepath.Join("..", "..", "..", "config", "config.yml")
+	tests := []struct {
+		name           string
+		continuous     string
+		stall          string
+		wantContinuous bool
+		wantStall      time.Duration
+	}{
+		{name: "env_absent_defaults", wantStall: 120 * time.Second},
+		{name: "env_set", continuous: "true", stall: "0", wantContinuous: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range map[string]string{"PAUSED_SWEEP_CONTINUOUS": tc.continuous, "KAFKA_STALL_AFTER_SEC": tc.stall} {
+				if v == "" {
+					t.Setenv(k, "") // регистрирует восстановление прежнего значения
+					require.NoError(t, os.Unsetenv(k))
+					continue
+				}
+				t.Setenv(k, v)
+			}
+			cfg, _, err := Load(Flags{ConfigPath: repoConfig}, t.TempDir())
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantContinuous, cfg.Sender.PausedSweep.Continuous)
+			assert.Equal(t, tc.wantStall, cfg.Kafka.Consumer.StallAfter())
 		})
 	}
 }

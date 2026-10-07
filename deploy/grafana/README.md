@@ -108,7 +108,9 @@ providers:
 - `up{job=nexus-*} == 0` — недоступность сервиса.
 - `5xx-rate > 5%`, `p95 > 200ms` — деградация sync-пути по §9.1.
 - `nexus_kafka_lag > 10k`, `clickhouse_errors_total > 0`, `dropped > 0` —
-  деградация async + потеря логов.
+  деградация async + потеря логов. Lag — из брокера (§113.4), без очередей паузы
+  и DLQ: для очереди паузы свой `NexusPausedBacklogStuck` (не пуста, а узлов на
+  паузе нет 30 мин).
 - `l2_cache_hits_total{kind="stale"} > 0` — Redis+PG лежат, Receiver
   обслуживает горячий кеш из памяти (§9.4 крайний случай).
 - группа `nexus.nodes` — здоровье узла (DOWN / DEGRADED / error rate), pull-узлы RabbitMQ, DLQ.

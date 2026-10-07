@@ -128,6 +128,17 @@ type Metrics struct {
 	ReplayBodySourceTotal *prometheus.CounterVec // {team, node, source=queue|log|rejected}
 	DLQReprocessDuration  prometheus.Histogram   // длительность одного прохода sweeper'а (секунды)
 
+	// §113.3: решения планировщика прохода очереди паузы и число узлов на паузе.
+	// Рост reason!="skip" без действий людей — признак того, что очередь снова
+	// переписывается вхолостую (инцидент 06.10.2026).
+	PausedSweepPassesTotal *prometheus.CounterVec // {reason=skip|startup|nodes|signal|backstop|round|continuous}
+	PausedNodes            prometheus.Gauge
+	// §113.5: повторный перенос в хвост очереди паузы (у копии уже есть
+	// paused_since). Не запрос: в nexus_requests_total раздул бы consumed/outgoing.
+	PausedRequeuedTotal *prometheus.CounterVec // {team, node}
+	// §113.6: сторож пересоздал reader зависшего consumer'а.
+	KafkaConsumerRestartsTotal *prometheus.CounterVec // {group, reason=stalled|pass_idle}
+
 	// §74.3: состояние схемы PostgreSQL относительно кода сервиса.
 	PGSchemaVersion prometheus.Gauge // версия схемы в БД (0 = миграций не было)
 	PGSchemaAhead   prometheus.Gauge // 1 = схема новее каталога миграций бинаря
@@ -283,7 +294,7 @@ func New(service string, opts ...Option) *Metrics {
 
 		KafkaLag: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name:        "nexus_kafka_lag",
-			Help:        "Kafka consumer lag in messages per topic/partition for the configured consumer group.",
+			Help:        "Kafka consumer lag in messages per topic/partition/group, read from the broker (log end offset minus committed offset); identical on every Sender replica.",
 			ConstLabels: constLabels,
 		}, []string{"topic", "partition", "group"}),
 
@@ -415,6 +426,28 @@ func New(service string, opts ...Option) *Metrics {
 			Buckets:     []float64{.01, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60},
 		}),
 
+		// §113.3: решение планировщика очереди паузы на каждом тике.
+		PausedSweepPassesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_paused_sweep_passes_total",
+			Help:        "Paused-queue sweep planner decisions per tick by reason (skip means no pass).",
+			ConstLabels: constLabels,
+		}, []string{"reason"}),
+		PausedNodes: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name:        "nexus_paused_nodes",
+			Help:        "Number of nodes currently paused (their requests wait in the paused topic).",
+			ConstLabels: constLabels,
+		}),
+		KafkaConsumerRestartsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_kafka_consumer_restarts_total",
+			Help:        "Kafka readers recreated by the stall watchdog, by consumer group and reason.",
+			ConstLabels: constLabels,
+		}, []string{"group", "reason"}),
+		PausedRequeuedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name:        "nexus_paused_requeued_total",
+			Help:        "Paused-topic messages moved again to the tail of the paused queue while their node stays paused (not counted in nexus_requests_total).",
+			ConstLabels: constLabels,
+		}, []string{"team", "node"}),
+
 		// §74.3: версия схемы PostgreSQL, на которой работает сервис.
 		PGSchemaVersion: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name:        "nexus_pg_schema_version",
@@ -474,6 +507,10 @@ func New(service string, opts ...Option) *Metrics {
 		m.DLQReprocessTotal,
 		m.ReplayBodySourceTotal,
 		m.DLQReprocessDuration,
+		m.PausedSweepPassesTotal,
+		m.PausedNodes,
+		m.PausedRequeuedTotal,
+		m.KafkaConsumerRestartsTotal,
 		m.PGSchemaVersion,
 		m.PGSchemaAhead,
 	)
@@ -555,6 +592,19 @@ func (m *Metrics) IncIngressRejectDropped(cause string, n int) {
 	}
 	m.IngressRejectDroppedTotal.WithLabelValues(cause).Add(float64(n))
 }
+
+// IncPausedSweepPass — решение планировщика очереди паузы на тике (§113.3).
+func (m *Metrics) IncPausedSweepPass(reason string) {
+	m.PausedSweepPassesTotal.WithLabelValues(reason).Inc()
+}
+
+// IncKafkaConsumerRestart — сторож пересоздал reader группы (§113.6).
+func (m *Metrics) IncKafkaConsumerRestart(group, reason string) {
+	m.KafkaConsumerRestartsTotal.WithLabelValues(group, reason).Inc()
+}
+
+// SetPausedNodes — число узлов на паузе (§113.3).
+func (m *Metrics) SetPausedNodes(n int) { m.PausedNodes.Set(float64(n)) }
 
 // Registry возвращает собственный prometheus.Registry — для тестов или
 // дополнительных кастомных collectors.

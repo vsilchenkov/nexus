@@ -82,8 +82,8 @@ func (s *asyncStack) startConsumerWith(ctx context.Context, proc asyncHandler) f
 	return s.startConsumerGroup(ctx, proc).Stop
 }
 
-// startConsumerGroup возвращает саму группу — нужно тестам, которым интересен
-// не только запуск/остановка, но и её состояние (например Snapshot с lag).
+// startConsumerGroup возвращает саму группу — нужно тестам, которым нужна не
+// только функция остановки.
 func (s *asyncStack) startConsumerGroup(ctx context.Context, proc asyncHandler) *kafkaadapter.ConsumerGroup {
 	cg := kafkaadapter.NewConsumerGroup(s.cfg, s.cfg.Kafka.AsyncTopic, proc, s.logger)
 	cg.Start(ctx)

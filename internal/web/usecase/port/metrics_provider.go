@@ -104,7 +104,7 @@ type KafkaSummary struct {
 	Consumed       float64 // обработано Sender-consumer'ом (requestAsync)
 	FailedProduced float64 // отказы публикации на Receiver (status 0/5xx)
 	FailedConsumed float64 // незавершённые на Sender (non-2xx, incomplete_total)
-	CurrentLag     float64 // суммарный consumer lag сейчас (sum nexus_kafka_lag)
+	CurrentLag     float64 // consumer lag основной группы сейчас (§113.4)
 	InFlight       float64 // сообщения «в полёте» (sum nexus_kafka_in_flight)
 	ProduceP95ms   float64 // p95 длительности публикации в Kafka, мс
 }
@@ -208,6 +208,10 @@ type PromMetrics interface {
 	// пара меток (team, node) в nexus_requests_total (§101.9). Произвольный
 	// период (§28 Пункт 4): окно = until-since, запрос вычисляется на момент until.
 	NodeThroughput(ctx context.Context, since, until time.Time) (map[NodeKey]NodeThroughput, error)
+
+	// KafkaNodeThroughput — как NodeThroughput, но только async-трафик
+	// (method="requestAsync", §113.5): топ узлов страницы Kafka.
+	KafkaNodeThroughput(ctx context.Context, since, until time.Time) (map[NodeKey]NodeThroughput, error)
 
 	// NodeErrors — per-node число «незавершённых» вызовов (done=0) за окно
 	// из nexus_request_incomplete_total. Ключ — пара (team, node).

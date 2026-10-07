@@ -160,6 +160,75 @@ func TestClient_KafkaQueue(t *testing.T) {
 	require.EqualValues(t, 312, q)
 }
 
+// TestClient_KafkaLag_MainGroupOnly (§113.4): lag в KPI, сводке и ряде — только
+// основная группа и max по репликам (каждая публикует lag брокера целиком).
+// Без опции — все группы, но тоже без удвоения репликами.
+func TestClient_KafkaLag_MainGroupOnly(t *testing.T) {
+	t.Parallel()
+	rec := &queryRecorder{}
+	srv := rec.server(t, vectorResp(sample("{}", "1")))
+	defer srv.Close()
+
+	c, err := New(srv.URL, time.Second, logging.NewNoop(), WithKafkaMainGroup(`nexus-"sender`))
+	require.NoError(t, err)
+	ctx := context.Background()
+	_, err = c.KafkaQueue(ctx)
+	require.NoError(t, err)
+	_, err = c.KafkaOverview(ctx, time.Now().Add(-time.Hour), time.Now())
+	require.NoError(t, err)
+
+	const want = `sum(max by (group, topic, partition) (nexus_kafka_lag{group="nexus-\"sender"}))`
+	var lagQueries []string
+	for _, q := range rec.all() {
+		if strings.Contains(q, "nexus_kafka_lag") {
+			lagQueries = append(lagQueries, q)
+		}
+	}
+	require.Equal(t, []string{want, want}, lagQueries)
+	require.Equal(t, want, kafkaSeriesQuery("lag", "30s", c.lagQuery))
+
+	all, err := New(srv.URL, time.Second, logging.NewNoop(), WithKafkaMainGroup(""))
+	require.NoError(t, err)
+	require.Equal(t, `sum(max by (group, topic, partition) (nexus_kafka_lag))`, all.lagQuery)
+}
+
+// TestClient_PausedNotCountedAsOutgoing (§113.5): откладывание из-за паузы —
+// не исходящий вызов. Каждый запрос исходящих Sender'а несёт status!="paused";
+// топ узлов страницы Kafka — только async-трафик.
+func TestClient_PausedNotCountedAsOutgoing(t *testing.T) {
+	t.Parallel()
+	rec := &queryRecorder{}
+	srv := rec.server(t, vectorResp(sample("{}", "1")))
+	defer srv.Close()
+	c, err := New(srv.URL, time.Second, logging.NewNoop())
+	require.NoError(t, err)
+	ctx := context.Background()
+	since, until := time.Now().Add(-time.Hour), time.Now()
+
+	_, err = c.GlobalTotals(ctx, time.Hour, "")
+	require.NoError(t, err)
+	_, err = c.NodeThroughput(ctx, since, until)
+	require.NoError(t, err)
+	_, err = c.KafkaOverview(ctx, since, until)
+	require.NoError(t, err)
+	before := len(rec.all())
+	_, err = c.KafkaNodeThroughput(ctx, since, until)
+	require.NoError(t, err)
+
+	outgoing := 0
+	for _, q := range rec.all() {
+		if strings.Contains(q, `nexus_requests_total{service="sender"`) && !strings.Contains(q, "status=~") {
+			outgoing++
+			require.Contains(t, q, `status!="paused"`, q)
+		}
+	}
+	require.Equal(t, 4, outgoing, "по одному из GlobalTotals, NodeThroughput, KafkaOverview, KafkaNodeThroughput")
+	for _, q := range rec.all()[before:] {
+		require.Contains(t, q, `method="requestAsync"`, q)
+	}
+	require.Contains(t, kafkaSeriesQuery("consumed", "30s", ""), `status!="paused"`)
+}
+
 // TestClient_KafkaTopicSizes (§75): размер собирается по метке topic. Нулевая
 // серия остаётся в карте — «топик пуст» не должно превращаться в «источника
 // нет» (на этом различии стоит sizes_available). Сэмпл без метки отбрасывается.

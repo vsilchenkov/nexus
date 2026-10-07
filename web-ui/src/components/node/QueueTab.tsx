@@ -17,6 +17,7 @@ import { useConfirm } from "../../lib/confirm";
 import { useRoleAtLeast } from "../../lib/useCurrentRole";
 import { BreakerCard } from "./BreakerCard";
 import { ReplayPeriodDialog } from "./ReplayPeriodDialog";
+import { disableConfirm, pauseSyncConfirm, pausesSyncNode, queueSnapshotOf } from "./statusConfirm";
 import { Link } from "react-router-dom";
 import { useNodeTabTo } from "../../lib/nodeTabLink";
 
@@ -79,9 +80,10 @@ function prettyJson(raw: string): string {
 //    replay. Очистка неудач не через Kafka (нельзя), а пауза/отключение узла +
 //    replay; фильтр по периоду показывает свежие.
 //
-// §69.1: вкладка открыта для ВСЕХ типов узлов. У sync-узла (root_method=request)
-// очереди в Kafka нет, поэтому первая секция скрыта (и peek не запрашивается —
-// иначе на каждое открытие уходил бы бесполезный скан топиков), а вторая
+// §69.1: вкладка открыта для ВСЕХ типов узлов. У включённого sync-узла
+// (root_method=request) очереди в Kafka нет, поэтому первая секция скрыта (и peek
+// не запрашивается — иначе на каждое открытие уходил бы бесполезный скан
+// топиков), а вторая
 // работает как и раньше: записи done=0 появляются и у sync (circuit breaker,
 // сетевые ошибки, превышение лимита тела). До §69.1 очистить их из UI было
 // нельзя вообще — вкладку приходилось «открывать» временной сменой типа узла.
@@ -105,6 +107,11 @@ export function QueueTab({
   // §69.1: очередь в Kafka есть у requestAsync и pull-узлов (RabbitMQAsync) —
   // они идут через один топик nexus.async. У sync-узла её нет.
   const isAsync = node.root_method !== "request";
+  // §113.9: …кроме sync-узла НА ПАУЗЕ. Receiver отвечает на его запросы 202 и
+  // ставит их в очередь (§3.6); до §113 вкладка их не показывала, и ни увидеть,
+  // ни очистить 960 запросов за 4 дня было нельзя (инцидент 06.10.2026). Тот же
+  // признак проверяет сервер (usesAsyncQueue), иначе секция была бы пустой.
+  const hasQueue = isAsync || node.status === "paused";
   // Pull-узел на паузе исключается из поллинга RabbitMQ (NodeLister), поэтому
   // новые сообщения ждут в БРОКЕРЕ, а не в очереди Nexus: тексты про «копятся
   // в очереди ниже» и «очистите очередь» для него ввели бы в заблуждение —
@@ -151,7 +158,7 @@ export function QueueTab({
   const pendingQ = useQuery({
     queryKey: ["aq-list", id],
     queryFn: () => api.get<ListResp>(`/api/nodes/${id}/async-queue/messages`),
-    enabled: canOperate && isAsync,
+    enabled: canOperate && hasQueue,
     refetchInterval: (q) => {
       if (node.status === "paused") return 4_000;
       const data = q.state.data as ListResp | undefined;
@@ -166,8 +173,8 @@ export function QueueTab({
   const originalWindowHours = pendingQ.data?.original_window_hours ?? 0;
   // Секцию показываем всегда (для operator+) — пустое состояние объясняет, почему
   // на активном узле в очереди пусто (см. §35: неудачи уходят в логи/DLQ).
-  // У sync-узла очереди не существует — секции нет вовсе (§69.1).
-  const showPending = canOperate && isAsync;
+  // У включённого sync-узла очереди не существует — секции нет вовсе (§69.1).
+  const showPending = canOperate && hasQueue;
 
   // Неудачные доставки — ClickHouse (done=0) за период.
   // ВАЖНО: в queryKey — стабильный periodKey(period), НЕ periodWindow(period).
@@ -306,7 +313,7 @@ export function QueueTab({
           плитка растягивается на всю ширину (single="full"). У async сосед есть,
           и там строка остаётся сеткой из двух колонок. */}
       <KpiRow cols={2} single="full">
-        {isAsync && (
+        {hasQueue && (
           <Kpi
             label={t("queue.kpi.pending")}
             value={canOperate ? `${pendingCount}${pendingCapped ? "+" : ""}` : "—"}
@@ -322,8 +329,10 @@ export function QueueTab({
 
       <Hint tone={node.status === "enabled" ? "muted" : "warn"}>
         <div className="space-y-2">
-          {/* §69.1: у sync-узла на паузе запросы не копятся в очереди, а
-              отклоняются на входе — тексты про «накопится в очереди» врали бы. */}
+          {/* §113.9: у sync-узла на паузе запросы принимаются с ответом 202 и
+              копятся в очереди ниже (§3.6). До §113 здесь было «отклоняются
+              сразу, копиться нечему» — неправда, из-за которой очередь узла
+              росла днями незамеченной. */}
           <p>
             {node.status === "paused"
               ? t(
@@ -355,7 +364,12 @@ export function QueueTab({
                   sm
                   variant="ghost"
                   disabled={setStatus.isPending}
-                  onClick={() => setStatus.mutate("paused")}
+                  onClick={async () => {
+                    // §113.11: sync-узел на паузе не отклоняет запросы, а копит их с 202.
+                    const to = { root_method: node.root_method, status: "paused" as const };
+                    if (pausesSyncNode(node, to) && !(await confirm(pauseSyncConfirm(t)))) return;
+                    setStatus.mutate("paused");
+                  }}
                 >
                   <Pause className="h-3.5 w-3.5" /> {t("queue.banner.pause")}
                 </Button>
@@ -366,15 +380,11 @@ export function QueueTab({
                   variant="ghost"
                   disabled={setStatus.isPending}
                   onClick={async () => {
-                    if (
-                      await confirm({
-                        title: t("queue.banner.disable"),
-                        message: t("queue.banner.disable_confirm"),
-                        confirmLabel: t("queue.banner.disable"),
-                        danger: true,
-                      })
-                    )
-                      setStatus.mutate("disabled");
+                    // Кнопка выключает узел одним кликом — спрашиваем всегда (как до
+                    // §113), а число ожидающих берём с плитки: «50+», «пусто» или
+                    // «неизвестно», если список не пришёл (§113.11).
+                    const queue = hasQueue ? queueSnapshotOf(pendingQ.data) : { count: 0, capped: false };
+                    if (await confirm(disableConfirm(queue, t))) setStatus.mutate("disabled");
                   }}
                 >
                   <Power className="h-3.5 w-3.5" /> {t("queue.banner.disable")}

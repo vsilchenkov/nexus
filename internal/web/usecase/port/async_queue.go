@@ -164,6 +164,14 @@ type QueueCancelWriter interface {
 	Cancel(ctx context.Context, ids []string, ttl time.Duration) (int, error)
 }
 
+// PausedSweepSignaler — сигнал Sender'у пройти очередь паузы (§113.3): после
+// отметок отмены у узла на паузе sweeper снимает его отменённые сообщения за
+// один раунд, а не ждёт страховочного прохода. Реализуется
+// internal/platform/queuecancel (Redis). Опционален: nil без Redis.
+type PausedSweepSignaler interface {
+	Bump(ctx context.Context) (int64, error)
+}
+
 // FailedLogsCleaner — удаление истории неудачных прогонов конкретных записей из
 // CH-таблицы узла (§79.2). Отдельный узкий интерфейс, потому что его потребитель
 // — не только очистка очереди, но и «Повторить все сейчас» (replay): после

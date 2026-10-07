@@ -16,6 +16,10 @@ const kafkaCachePrefix = "kafka:cache:"
 
 // KafkaCacheRedis кеширует ответы Kafka Admin (топики/брокеры) в Redis с общим
 // TTL (§3.2 spec, по умолчанию 30с). Значения сериализуются в JSON.
+//
+// Без клиента Redis (nil) кеш — no-op (§113.8): Get всегда промах, Set ничего не
+// делает. Web собирает его безусловно, и до §113 nil-клиент давал панику на
+// первом же открытии экрана Kafka вместо работы без кеша.
 type KafkaCacheRedis struct {
 	client *goredis.Client
 	ttl    time.Duration
@@ -34,6 +38,9 @@ func NewKafkaCacheRedis(client *goredis.Client, ttl time.Duration) *KafkaCacheRe
 // Get снимает значение ключа в dst (указатель). Отсутствие/просрочка →
 // (false, nil). Ошибка десериализации трактуется как промах (не фатально).
 func (c *KafkaCacheRedis) Get(ctx context.Context, key string, dst any) (bool, error) {
+	if c.client == nil {
+		return false, nil
+	}
 	data, err := c.client.Get(ctx, kafkaCachePrefix+key).Bytes()
 	if err != nil {
 		if errors.Is(err, goredis.Nil) {
@@ -50,6 +57,9 @@ func (c *KafkaCacheRedis) Get(ctx context.Context, key string, dst any) (bool, e
 
 // Set сериализует val в JSON и кладёт под ключ с TTL.
 func (c *KafkaCacheRedis) Set(ctx context.Context, key string, val any) error {
+	if c.client == nil {
+		return nil
+	}
 	data, err := json.Marshal(val)
 	if err != nil {
 		return err

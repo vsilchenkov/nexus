@@ -58,5 +58,19 @@ func TestSender_Async_MultiInstanceSmoke(t *testing.T) {
 	}, 90*time.Second, 200*time.Millisecond,
 		"оба узла должны получить свои сообщения при нескольких инстансах consumer'а")
 
-	require.Len(t, cg.Snapshot(), 2, "по одному снимку lag на инстанс — Prometheus читает именно их")
+	// §113.4: lag публикуется из брокера по реальным партициям, а не снимком
+	// reader'а на инстанс. Обе партиции видны, и после доставки группа догнала их.
+	offsets := kafkapf.NewOffsetsForBrokers(brokers, 10*time.Second)
+	pollUntil(t, 60*time.Second, func() bool {
+		pos, err := offsets.GroupPositions(ctx, cfg.Kafka.ConsumerGroup, cfg.Kafka.AsyncTopic)
+		if err != nil || len(pos) != 2 {
+			return false
+		}
+		for _, p := range pos {
+			if p.Lag() != 0 {
+				return false
+			}
+		}
+		return true
+	}, "lag группы из брокера: обе партиции, после доставки 0")
 }

@@ -35,13 +35,19 @@ type stubPeeker struct {
 	bodyTopic   string
 }
 
-func (s *stubPeeker) PeekList(_ context.Context, _, topic string, owner port.QueueOwner, _, _ int) (port.PeekListResult, error) {
+// PeekList ведёт себя как адаптер: набрав limit сообщений, останавливается
+// без Capped (§113.9 — на этом и строится проба «есть ли ещё»).
+func (s *stubPeeker) PeekList(_ context.Context, _, topic string, owner port.QueueOwner, limit, _ int) (port.PeekListResult, error) {
 	s.listTopics = append(s.listTopics, topic)
 	s.listOwners = append(s.listOwners, owner)
+	r := s.list
 	if s.listByTopic != nil {
-		return s.listByTopic[topic], s.err
+		r = s.listByTopic[topic]
 	}
-	return s.list, s.err
+	if limit > 0 && len(r.Items) > limit {
+		r.Items = r.Items[:limit]
+	}
+	return r, s.err
 }
 func (s *stubPeeker) PeekBody(_ context.Context, topic string, _ int, _ int64, owner port.QueueOwner) (port.QueueMessageBody, error) {
 	s.bodyTopic, s.bodyOwner = topic, owner
@@ -228,7 +234,10 @@ func TestAsyncQueue_List_DeduplicatesCirculatingMessage(t *testing.T) {
 }
 
 // TestAsyncQueue_List_TopicFailureDegrades: недоступность одного топика не
-// должна ронять всю вкладку — показываем то, что удалось прочитать.
+// должна ронять всю вкладку — показываем то, что удалось прочитать. Но список
+// при этом неполон, и kafka_available=false (ревизия §113): до правки здесь
+// закреплялось true, и пустой список при упавшем брокере выглядел как «очередь
+// пуста» — форма выключала узел без подтверждения, удаляя очередь (§113.11).
 func TestAsyncQueue_List_TopicFailureDegrades(t *testing.T) {
 	t.Parallel()
 
@@ -238,7 +247,7 @@ func TestAsyncQueue_List_TopicFailureDegrades(t *testing.T) {
 	r, err := uc.List(context.Background(), "n1", "t1")
 	require.NoError(t, err)
 	assert.Empty(t, r.Items)
-	assert.True(t, r.KafkaAvailable)
+	assert.False(t, r.KafkaAvailable, "неполный список — не «пусто»")
 }
 
 // TestAsyncQueue_Purge_ScansBothTopics: бэклог paused-узла лежит в delay-топике,
@@ -533,12 +542,19 @@ func TestAsyncQueue_PurgeFailed_NoCH_Noop(t *testing.T) {
 	assert.Empty(t, audit.entries)
 }
 
-// syncNode — узел без очереди (root_method=request). §69.1: вкладка «Очередь»
-// открыта и для таких узлов ради секции «Неудачные доставки», поэтому
+// syncNode — включённый узел без очереди (root_method=request). §69.1: вкладка
+// «Очередь» открыта и для таких узлов ради секции «Неудачные доставки», поэтому
 // Kafka-операции обязаны сами отсекать их, не трогая брокеры.
 func syncNodeCH() *domain.Node {
 	n := asyncNodeCH()
 	n.RootMethod = domain.RootMethodRequest
+	return n
+}
+
+// pausedSyncNodeCH — sync-узел на паузе: его запросы ждут в Kafka (§113.9).
+func pausedSyncNodeCH() *domain.Node {
+	n := syncNodeCH()
+	n.Status = domain.NodeStatusPaused
 	return n
 }
 
@@ -549,8 +565,69 @@ func TestAsyncQueue_List_SyncNode_SkipsKafka(t *testing.T) {
 
 	r, err := uc.List(context.Background(), "n1", "t1")
 	require.NoError(t, err)
-	assert.Empty(t, r.Items, "у sync-узла очереди нет")
+	assert.Empty(t, r.Items, "у включённого sync-узла очереди нет")
 	assert.Empty(t, peeker.listTopics, "топики не сканируются: peek стоит запроса к брокеру")
+}
+
+// TestAsyncQueue_PausedSyncNode_HasQueue (§113.9): запросы sync-узла на паузе
+// ждут в Kafka — вкладка показывает их и умеет очистить. До §113 оба вызова
+// уходили в ветку «у sync-узла очереди нет» (инцидент 06.10.2026).
+func TestAsyncQueue_PausedSyncNode_HasQueue(t *testing.T) {
+	t.Parallel()
+	peeker := &stubPeeker{
+		list: port.PeekListResult{Items: []port.QueueMessageMeta{{ID: "deferred-1"}}},
+		scan: port.ScanIDsResult{IDs: []string{"deferred-1"}},
+	}
+	cancelW := &stubCancelWriter{}
+	uc, audit := newQueueUC(peeker, cancelW, pausedSyncNodeCH())
+
+	r, err := uc.List(context.Background(), "n1", "t1")
+	require.NoError(t, err)
+	require.Len(t, r.Items, 1)
+	assert.Equal(t, "deferred-1", r.Items[0].ID)
+
+	p, err := uc.PurgeAll(context.Background(), Actor{UserID: "u"}, "n1", "t1")
+	require.NoError(t, err)
+	assert.Positive(t, p.Cancelled)
+	assert.Contains(t, cancelW.gotIDs, "deferred-1")
+	require.Len(t, audit.entries, 1)
+}
+
+// TestAsyncQueue_List_CappedPlus (§113.9): список обрезан — Capped, интерфейс
+// показывает «50+». Ровно 50 — без «+».
+func TestAsyncQueue_List_CappedPlus(t *testing.T) {
+	t.Parallel()
+	items := func(n int) []port.QueueMessageMeta {
+		out := make([]port.QueueMessageMeta, n)
+		for i := range out {
+			out[i] = port.QueueMessageMeta{ID: "id-" + strconv.Itoa(i)}
+		}
+		return out
+	}
+	tests := []struct {
+		name       string
+		n          int
+		wantLen    int
+		wantCapped bool
+	}{
+		{name: "меньше страницы", n: 7, wantLen: 7},
+		{name: "ровно страница", n: asyncQueueListLimit, wantLen: asyncQueueListLimit},
+		{name: "на одно больше страницы", n: asyncQueueListLimit + 1, wantLen: asyncQueueListLimit, wantCapped: true},
+		{name: "много больше", n: 5000, wantLen: asyncQueueListLimit, wantCapped: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			peeker := &stubPeeker{listByTopic: map[string]port.PeekListResult{
+				"nexus.async": {Items: items(tt.n)},
+			}}
+			uc, _ := newQueueUC(peeker, &stubCancelWriter{}, asyncNode())
+			r, err := uc.List(context.Background(), "n1", "t1")
+			require.NoError(t, err)
+			assert.Len(t, r.Items, tt.wantLen)
+			assert.Equal(t, tt.wantCapped, r.Capped)
+		})
+	}
 }
 
 func TestAsyncQueue_Purge_SyncNode_SkipsKafka(t *testing.T) {
@@ -566,21 +643,25 @@ func TestAsyncQueue_Purge_SyncNode_SkipsKafka(t *testing.T) {
 	assert.Empty(t, audit.entries, "нечего чистить — нечего и аудировать")
 }
 
-// §69.1: очистка «Неудачных доставок» — единственная операция вкладки, которая
-// осмысленна и для sync-узла: она читает/чистит ClickHouse, а не Kafka.
-// Tombstone'ы при этом не пишутся: DLQ-репроцессора, который бы их читал, нет.
-func TestAsyncQueue_PurgeFailed_SyncNode_DeletesWithoutTombstones(t *testing.T) {
+// TestAsyncQueue_PurgeFailed_SyncNode_WritesTombstones (§113.9): очистка
+// «Неудачных доставок» sync-узла тоже снимает повтор. Запросы, отложенные во
+// время паузы, доставляются через Kafka и при неудаче лежат в DLQ — до §113
+// tombstone'ы для sync-узла не писались, и очищенная запись возвращалась
+// повтором из DLQ.
+func TestAsyncQueue_PurgeFailed_SyncNode_WritesTombstones(t *testing.T) {
 	t.Parallel()
-	cancelW := &stubCancelWriter{}
-	failed := &stubFailedPurger{ids: []string{"f1"}, deleted: 3}
-	uc, audit := newQueueUCFull(&stubPeeker{}, cancelW, failed, syncNodeCH())
+	for _, node := range []*domain.Node{syncNodeCH(), pausedSyncNodeCH()} {
+		cancelW := &stubCancelWriter{}
+		failed := &stubFailedPurger{ids: []string{"f1"}, deleted: 3}
+		uc, audit := newQueueUCFull(&stubPeeker{}, cancelW, failed, node)
 
-	r, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
-	require.NoError(t, err)
-	assert.Equal(t, 3, r.Cancelled, "удалённые записи done=0 считаются как обычно")
-	assert.True(t, failed.delCalled)
-	assert.Empty(t, cancelW.gotIDs, "tombstone'ы для sync-узла не пишутся")
-	require.Len(t, audit.entries, 1)
+		r, err := uc.PurgeFailed(context.Background(), Actor{UserID: "u"}, "n1", "t1", time.Time{}, time.Time{})
+		require.NoError(t, err)
+		assert.Equal(t, 3, r.Cancelled, "удалённые записи done=0 считаются как обычно")
+		assert.True(t, failed.delCalled)
+		assert.Equal(t, []string{"f1"}, cancelW.gotIDs, "status=%s: tombstone на ту же запись", node.Status)
+		require.Len(t, audit.entries, 1)
+	}
 }
 
 func TestAsyncQueue_PurgeFailed_DeleteError(t *testing.T) {

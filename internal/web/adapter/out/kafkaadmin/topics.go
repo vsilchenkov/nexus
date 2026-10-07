@@ -6,6 +6,7 @@ import (
 
 	kafka "github.com/segmentio/kafka-go"
 
+	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -48,13 +49,14 @@ func (c *Client) topicInfo(ctx context.Context, t kafka.Topic, online map[int]st
 			ti.OfflinePartitions++
 		}
 	}
-	first, last := c.partitionWatermarks(ctx, t)
-	for pid, hi := range last {
-		if lo, ok := first[pid]; ok && hi > lo {
-			ti.MessagesEstimate += hi - lo
+	parts := partitionIDs(t)
+	wm := c.watermarks(ctx, t.Name, parts)
+	for _, w := range wm {
+		if w.Last > w.First {
+			ti.MessagesEstimate += w.Last - w.First
 		}
 	}
-	ti.ConsumerGroups = c.topicConsumerGroups(ctx, t.Name, partitionIDs(t), last, groupIDs, members)
+	ti.ConsumerGroups = c.topicConsumerGroups(ctx, t.Name, parts, wm, groupIDs, members)
 	return ti
 }
 
@@ -67,37 +69,24 @@ func replicationFactor(t kafka.Topic) int {
 	return len(t.Partitions[0].Replicas)
 }
 
-// partitionWatermarks — first/last offset по каждой партиции топика одним
-// ListOffsets-запросом (best-effort: при ошибке — пустые карты).
-func (c *Client) partitionWatermarks(ctx context.Context, t kafka.Topic) (first, last map[int]int64) {
-	first, last = map[int]int64{}, map[int]int64{}
-	reqs := make([]kafka.OffsetRequest, 0, len(t.Partitions)*2)
-	for _, p := range t.Partitions {
-		reqs = append(reqs, kafka.FirstOffsetOf(p.ID), kafka.LastOffsetOf(p.ID))
-	}
-	if len(reqs) == 0 {
-		return first, last
-	}
-	resp, err := c.kc.ListOffsets(ctx, &kafka.ListOffsetsRequest{Topics: map[string][]kafka.OffsetRequest{t.Name: reqs}})
+// watermarks — first/last offset партиций топика одним ListOffsets-запросом
+// (best-effort: при ошибке — то, что удалось прочитать, и Warn в лог).
+func (c *Client) watermarks(ctx context.Context, topic string, parts []int) map[int]kafkapf.Watermark {
+	wm, err := c.offsets.Watermarks(ctx, topic, parts)
 	if err != nil {
 		c.logger.Warn("kafka list offsets failed",
-			c.logger.Str("op", "web.kafkaAdmin.listOffsets"), c.logger.Str("topic", t.Name), c.logger.Err(err))
-		return first, last
+			c.logger.Str("op", "web.kafkaAdmin.listOffsets"), c.logger.Str("topic", topic), c.logger.Err(err))
 	}
-	for _, po := range resp.Topics[t.Name] {
-		first[po.Partition] = po.FirstOffset
-		last[po.Partition] = po.LastOffset
-	}
-	return first, last
+	return wm
 }
 
 // topicConsumerGroups — для каждой группы вычисляет суммарный lag по топику
-// (Σ max(0, high-committed)). Группа включается, только если имеет хоть один
-// закоммиченный offset по этому топику (committed >= 0).
-func (c *Client) topicConsumerGroups(ctx context.Context, topic string, parts []int, last map[int]int64, groupIDs []string, members map[string]int) []port.TopicConsumerGroup {
+// (kafkapf.PartitionPosition.Lag). Группа включается, только если имеет хоть
+// один закоммиченный offset по этому топику (committed >= 0).
+func (c *Client) topicConsumerGroups(ctx context.Context, topic string, parts []int, wm map[int]kafkapf.Watermark, groupIDs []string, members map[string]int) []port.TopicConsumerGroup {
 	var out []port.TopicConsumerGroup
 	for _, gid := range groupIDs {
-		lag, consumes := c.groupLag(ctx, gid, topic, parts, last)
+		lag, consumes := c.groupLag(ctx, gid, topic, parts, wm)
 		if !consumes {
 			continue
 		}
@@ -106,25 +95,55 @@ func (c *Client) topicConsumerGroups(ctx context.Context, topic string, parts []
 	return out
 }
 
-// groupLag — суммарный lag группы по топику и признак потребления топика
-// (есть ли committed offset). Best-effort: при ошибке OffsetFetch → (0, false).
-func (c *Client) groupLag(ctx context.Context, groupID, topic string, parts []int, last map[int]int64) (int64, bool) {
-	resp, err := c.kc.OffsetFetch(ctx, &kafka.OffsetFetchRequest{GroupID: groupID, Topics: map[string][]int{topic: parts}})
+// GroupLag реализует port.KafkaGroupLagReader (§113.7): lag группы по топику
+// из брокера. Частичный ответ (недочитанная партиция) — ошибка: заниженный lag
+// на карточке хуже честного «из брокера не прочитано», после которого usecase
+// берёт значение из Prometheus.
+func (c *Client) GroupLag(ctx context.Context, group, topic string) (int64, error) {
+	pos, err := c.offsets.GroupPositions(ctx, group, topic)
 	if err != nil {
-		c.logger.Warn("kafka offset fetch failed",
-			c.logger.Str("op", "web.kafkaAdmin.offsetFetch"), c.logger.Str("group", groupID), c.logger.Err(err))
+		return 0, fmt.Errorf("group lag %s/%s: %w", group, topic, err)
+	}
+	var lag int64
+	for _, p := range pos {
+		lag += p.Lag()
+	}
+	return lag, nil
+}
+
+// groupLag — суммарный lag группы по топику и признак потребления топика
+// (есть ли committed offset). Некоммиченная партиция потребляющей группы
+// считается от low watermark (§113.4: так её и прочитают reader'ы Nexus; до
+// §113 она давала 0 и прятала, например, бэклог в новой партиции). Best-effort:
+// при ошибке OffsetFetch без данных → (0, false).
+func (c *Client) groupLag(ctx context.Context, groupID, topic string, parts []int, wm map[int]kafkapf.Watermark) (int64, bool) {
+	committed := c.committedOffsets(ctx, groupID, topic, parts)
+	consumes := false
+	for _, off := range committed {
+		if off >= 0 {
+			consumes = true
+			break
+		}
+	}
+	if !consumes {
 		return 0, false
 	}
 	var lag int64
-	var consumes bool
-	for _, p := range resp.Topics[topic] {
-		if p.CommittedOffset < 0 {
-			continue
-		}
-		consumes = true
-		if hi, ok := last[p.Partition]; ok && hi > p.CommittedOffset {
-			lag += hi - p.CommittedOffset
-		}
+	for _, pos := range kafkapf.JoinPositions(parts, wm, committed) {
+		lag += pos.Lag()
 	}
-	return lag, consumes
+	return lag, true
+}
+
+// committedOffsets — committed offset группы по каждой партиции топика (-1,
+// если группа не коммитила). Best-effort: при ошибке — то, что удалось
+// прочитать (возможно, пустая карта), и Warn в лог.
+func (c *Client) committedOffsets(ctx context.Context, group, topic string, parts []int) map[int]int64 {
+	committed, err := c.offsets.Committed(ctx, group, topic, parts)
+	if err != nil {
+		c.logger.Warn("kafka offset fetch failed",
+			c.logger.Str("op", "web.kafkaAdmin.offsetFetch"), c.logger.Str("group", group),
+			c.logger.Str("topic", topic), c.logger.Err(err))
+	}
+	return committed
 }

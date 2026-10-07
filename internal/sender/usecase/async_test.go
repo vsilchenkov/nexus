@@ -8,11 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	"nexus/internal/platform/metrics"
 	"nexus/internal/sender/usecase/port"
 )
 
@@ -345,6 +347,31 @@ func TestAsync_Paused_KeepsFirstPausedSince(t *testing.T) {
 		"метка первого откладывания переносится как есть")
 	assert.NotEqual(t, firstSeen, dlq.produced[0].headers["last_requeue_at"],
 		"last_requeue_at обновляется на каждом круге")
+}
+
+// TestAsync_Paused_RequeueCountedSeparately (§113.5): первое откладывание —
+// запрос со статусом paused; повторный перенос sweeper'ом (paused_since уже
+// есть) — отдельный счётчик. До §113 оба шли в nexus_requests_total, и проход
+// каждые 30 с раздувал consumed/outgoing в сотни раз (инцидент 06.10.2026).
+func TestAsync_Paused_RequeueCountedSeparately(t *testing.T) {
+	t.Parallel()
+
+	node := &domain.Node{Path: "partner/echo", TeamSlug: "edo", Status: domain.NodeStatusPaused}
+	m := metrics.New("sender")
+	send := NewSendUsecase(&stubHTTPCaller{}, &stubLogWriter{}, nil, logging.NewNoop(), 64<<20)
+	p := NewAsyncProcessor(&stubAsyncNodeReader{node: node}, send, &stubDLQProducer{}, nil, nil,
+		"nexus.async.dlq", m, logging.NewNoop(), WithPausedRequeue("nexus.async.paused"))
+	ctx := context.Background()
+
+	require.Equal(t, HandleRequeued, p.Handle(ctx, makeEnvelope(t, "partner/echo"), nil))
+	for range 3 {
+		require.Equal(t, HandleRequeued, p.Handle(ctx, makeEnvelope(t, "partner/echo"),
+			map[string]string{"paused_since": "2026-10-02T10:00:00Z"}))
+	}
+
+	assert.InDelta(t, 1, testutil.ToFloat64(m.RequestsTotal.WithLabelValues("requestAsync", "edo", "partner/echo", "paused")), 0)
+	assert.Equal(t, 1, testutil.CollectAndCount(m.RequestsTotal), "повторные переносы — не запросы")
+	assert.InDelta(t, 3, testutil.ToFloat64(m.PausedRequeuedTotal.WithLabelValues("edo", "partner/echo")), 0)
 }
 
 // TestAsync_Paused_RequeueFails_Retry: если delay-топик недоступен, offset НЕ

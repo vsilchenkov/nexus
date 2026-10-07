@@ -34,12 +34,13 @@ groups:
           description: "Prometheus cannot scrape /metrics for {{ $labels.instance }} for 2 minutes."
 
       - alert: NexusHighErrorRate
-        # >5% 5xx за 5 минут на синхронном пути — выше SLO §9.1.
+        # >5% 5xx за 5 минут на синхронном пути — выше SLO §9.1. Откладывание из-за
+        # паузы (status="paused", §113.5) — не вызов узла и в знаменатель не идёт.
         expr: |
           (
             sum by (service) (rate(nexus_requests_total{status=~"5..|0"}[5m]))
             /
-            sum by (service) (rate(nexus_requests_total[5m]))
+            sum by (service) (rate(nexus_requests_total{status!="paused"}[5m]))
           ) > 0.05
         for: 10m
         labels:
@@ -65,7 +66,9 @@ groups:
 
       - alert: NexusKafkaLagHigh
         # >10k unprocessed сообщений на партицию для 5 минут — async очередь не успевает.
-        expr: max by (topic, partition) (nexus_kafka_lag) > 10000
+        # Lag из брокера (§113.4); очереди паузы и DLQ — отложенная работа, а не отставание
+        # Sender'а: узел на паузе неделями копит очередь законно (инцидент 06.10.2026).
+        expr: max by (topic, partition) (nexus_kafka_lag{group!~".*-(paused|dlq-reprocess)"}) > 10000
         for: 5m
         labels:
           severity: warning
@@ -73,6 +76,23 @@ groups:
         annotations:
           summary: "Kafka lag > 10k messages on {{ $labels.topic }}/{{ $labels.partition }}"
           description: "Sender-consumer is falling behind; check downstream upstream latency or scale consumer instances."
+
+      - alert: NexusPausedBacklogStuck
+        # §113.4: очередь паузы не пуста, а узлов на паузе нет — её никто не разбирает.
+        # После снятия паузы раунд прохода доставляет очередь за ~2 интервала; 30 минут —
+        # sweeper выключен, завис или реплики не видят сигналов (Redis/PostgreSQL).
+        # unless, а не «== 0»: gauge публикует планировщик sweeper'а, и при выключенном
+        # sweeper'е его нет вовсе — с «== 0» алерт молчал бы ровно в этом случае.
+        expr: |
+          (sum(max by (group, topic, partition) (nexus_kafka_lag{group=~".*-paused"})) > 0)
+          unless on() (max(nexus_paused_nodes) > 0)
+        for: 30m
+        labels:
+          severity: warning
+          service: sender
+        annotations:
+          summary: "Paused-node queue is not drained ({{ $value }} messages)"
+          description: "nexus.async.paused holds messages while no node is paused (or the sweeper is disabled and reports no paused nodes). Check sender.paused_sweep (enabled, logs 'paused sweep'), nexus_paused_sweep_passes_total and Redis/PostgreSQL reachability from Sender."
 
       # ----- ClickHouse health -----
 
@@ -156,14 +176,16 @@ groups:
 
       - alert: NexusNodeHighErrorRate
         # >20% неуспешных доставок на узел за 10 минут при заметном трафике (>0.05 rps — guard от шума).
+        # status!="paused" (§113.5): откладывание из-за паузы — не вызов узла; без фильтра
+        # перенос очереди паузы размывал долю ошибок и проходил guard трафика.
         expr: |
           (
             sum by (team, node) (rate(nexus_request_incomplete_total{service="sender"}[10m]))
             /
-            sum by (team, node) (rate(nexus_requests_total{service="sender"}[10m]))
+            sum by (team, node) (rate(nexus_requests_total{service="sender",status!="paused"}[10m]))
           ) > 0.2
           and
-          sum by (team, node) (rate(nexus_requests_total{service="sender"}[10m])) > 0.05
+          sum by (team, node) (rate(nexus_requests_total{service="sender",status!="paused"}[10m])) > 0.05
         for: 10m
         labels:
           severity: warning

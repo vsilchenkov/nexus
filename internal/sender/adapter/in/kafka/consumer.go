@@ -53,10 +53,11 @@ type ConsumerGroup struct {
 	logger    logging.Logger
 	topic     string
 	metrics   *metrics.Metrics // §31: nil-safe; nil → in-flight не пишется
+	stall     StallGuard       // §113.6: сторож зависшего reader'а
 
-	consumers []*kafkapf.Consumer
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	slots  []*readerSlot
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // ConsumerOption — функциональная опция конструктора ConsumerGroup.
@@ -65,6 +66,11 @@ type ConsumerOption func(*ConsumerGroup)
 // WithMetrics включает метрику nexus_kafka_in_flight (§31).
 func WithMetrics(m *metrics.Metrics) ConsumerOption {
 	return func(g *ConsumerGroup) { g.metrics = m }
+}
+
+// WithStallGuard включает сторожа зависшего reader'а (§113.6).
+func WithStallGuard(guard StallGuard) ConsumerOption {
+	return func(g *ConsumerGroup) { g.stall = guard }
 }
 
 func NewConsumerGroup(
@@ -96,19 +102,18 @@ func NewConsumerGroup(
 func (g *ConsumerGroup) Start(ctx context.Context) {
 	cctx, cancel := context.WithCancel(ctx)
 	g.cancel = cancel
-	instances := g.cfg.Kafka.Consumer.Instances
-	if instances <= 0 {
-		instances = 1
-	}
-	for i := 0; i < instances; i++ {
-		c := kafkapf.NewConsumer(g.cfg, g.topic)
-		g.consumers = append(g.consumers, c)
+	group := g.cfg.Kafka.ConsumerGroup
+	g.slots = newSlots(g.cfg.Kafka.Consumer.Instances, group, g.stall, func(clientID string) slotReader {
+		return kafkapf.NewConsumer(g.cfg, g.topic, kafkapf.WithClientID(clientID))
+	}, g.logger)
+	for i, s := range g.slots {
 		g.wg.Add(1)
-		go g.runOne(cctx, c, i)
+		go g.runOne(cctx, s, i)
 	}
+	startStallWatchdog(cctx, &g.wg, group, g.topic, g.stall, g.slots, g.logger)
 }
 
-func (g *ConsumerGroup) runOne(ctx context.Context, c *kafkapf.Consumer, idx int) {
+func (g *ConsumerGroup) runOne(ctx context.Context, c slotReader, idx int) {
 	defer g.wg.Done()
 	defer safego.Recover(g.logger, "sender.kafkaConsumer")
 	g.logger.Info("async consumer started",
@@ -177,24 +182,21 @@ func (g *ConsumerGroup) handleMessage(ctx context.Context, c messageCommitter, m
 // commit СЛЕДУЮЩЕГО сообщения той же партиции прокатывал committed offset мимо
 // него — и сообщение терялось навсегда. Retry-in-place сохраняет и сообщение, и
 // порядок партиции (ценой head-of-line blocking). Тот же приём, что у
-// ChLogRetryConsumer (§38).
+// ChLogRetryConsumer (§38) и проходных reader'ов (§113.2); пауза здесь
+// постоянная — основной поток не должен ждать дольше секунды после
+// восстановления зависимости.
 func (g *ConsumerGroup) processWithRetry(ctx context.Context, msg kafka.Message, hdrs map[string]string) bool {
-	for {
-		if g.processor.Handle(ctx, msg.Value, hdrs) != usecase.HandleRetry {
-			return true
-		}
+	retry := inPlaceRetry{min: asyncRetryPause, max: asyncRetryPause}
+	return retry.run(ctx, func() bool {
+		return g.processor.Handle(ctx, msg.Value, hdrs) != usecase.HandleRetry
+	}, func(int, time.Duration) {
 		// §51.9: повторная обработка того же offset'а — иначе «залипание»
 		// партиции на одном сообщении выглядит как молчание consumer'а.
 		g.logger.Debug("kafka: retrying message in place",
 			g.logger.Str("topic", g.topic),
 			g.logger.Int("partition", msg.Partition),
 			g.logger.Any("offset", msg.Offset))
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(asyncRetryPause):
-		}
-	}
+	})
 }
 
 // incInFlight/decInFlight — nil-safe изменение gauge сообщений «в полёте».
@@ -217,38 +219,6 @@ func (g *ConsumerGroup) Stop() {
 	if g.cancel != nil {
 		g.cancel()
 	}
-	for _, c := range g.consumers {
-		_ = c.Close()
-	}
+	closeSlots(g.slots)
 	g.wg.Wait()
-}
-
-// LagSnapshot — одна точка по консьюмеру (topic/partition → lag).
-//
-// Partition хранится строкой, потому что kafka-go's ReaderStats.Partition
-// тоже строка ("0", "1" или "all" в зависимости от конфигурации).
-type LagSnapshot struct {
-	Topic     string
-	Partition string
-	Lag       int64
-}
-
-// Snapshot снимает текущее состояние lag со всех инстансов consumer'ов.
-// Используется фоновым reporter'ом, который пушит данные в Prometheus.
-func (g *ConsumerGroup) Snapshot() []LagSnapshot {
-	out := make([]LagSnapshot, 0, len(g.consumers))
-	for _, c := range g.consumers {
-		s := c.Stats()
-		out = append(out, LagSnapshot{
-			Topic:     s.Topic,
-			Partition: s.Partition,
-			Lag:       s.Lag,
-		})
-	}
-	return out
-}
-
-// Group возвращает имя consumer-group (для меток метрик).
-func (g *ConsumerGroup) Group() string {
-	return g.cfg.Kafka.ConsumerGroup
 }

@@ -39,6 +39,7 @@ func perNodeFamilies() []string {
 		"nexus_node_degraded",
 		"nexus_dlq_reprocess_total",
 		"nexus_replay_body_source_total",
+		"nexus_paused_requeued_total",
 	}
 }
 
@@ -99,6 +100,7 @@ func TestNodeLabels_TypedMethodsWriteBothLabels(t *testing.T) {
 	m.SetNodeDegraded(n, "auth", true)
 	m.IncDLQReprocess(n, "dropped")
 	m.IncReplayBodySource(n, "queue")
+	m.IncPausedRequeued(n)
 
 	families, err := m.Registry().Gather()
 	require.NoError(t, err)
@@ -153,7 +155,7 @@ func TestPerNodeMetrics_WrittenOnlyThroughTypedMethods(t *testing.T) {
 	re := regexp.MustCompile(`\.(RequestsTotal|RequestsIncompleteTotal|NodeLastRequestError|` +
 		`AsyncIngressRejectedTotal|AckRenderFailedTotal|RequestDuration|RMQMessagesPulledTotal|` +
 		`RMQPullDuration|RMQConnectionState|RMQQueueDepth|RMQConsumerCount|NodeDegraded|` +
-		`DLQReprocessTotal|ReplayBodySourceTotal)\s*\.\s*` +
+		`DLQReprocessTotal|ReplayBodySourceTotal|PausedRequeuedTotal)\s*\.\s*` +
 		`(WithLabelValues|With|GetMetricWithLabelValues|GetMetricWith|CurryWith|MustCurryWith)\(`)
 	own, err := filepath.Abs(".")
 	require.NoError(t, err)

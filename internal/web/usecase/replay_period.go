@@ -310,7 +310,8 @@ func (u *ReplayUsecase) sendPeriodBatch(
 			if env, ok := found[c.ID]; ok {
 				src.original = &env
 			}
-			if _, rerr := u.replayOne(ctx, node, c.ID, ReplayOptions{UseNodeAuth: true}, src); rerr != nil {
+			r, rerr := u.replayOne(ctx, node, c.ID, ReplayOptions{UseNodeAuth: true}, src)
+			if rerr != nil {
 				// Конверт мог исчезнуть между пробой предпросмотра и отправкой
 				// (истёк retention, репроцессор доставил). Это не сбой записи, а
 				// та же причина, что показал бы предпросмотр.
@@ -321,6 +322,14 @@ func (u *ReplayUsecase) sendPeriodBatch(
 				res.Failed++
 				u.logger.Warn("replay period: one record failed",
 					u.logger.Str("log_id", c.ID), u.logger.Str("node", node.Path), u.logger.Err(rerr))
+				continue
+			}
+			// §113.10: не-2xx — неудача, а не «повторено».
+			if !replayAccepted(r) {
+				res.Failed++
+				u.logger.Warn("replay period: receiver rejected replay",
+					u.logger.Str("log_id", c.ID), u.logger.Str("node", node.Path),
+					u.logger.Int("status", r.StatusCode))
 				continue
 			}
 			res.Replayed++

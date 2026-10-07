@@ -641,6 +641,7 @@ func (a *App) Start(ctx context.Context) error {
 			a.cfg.Prometheus.URL,
 			time.Duration(a.cfg.Prometheus.TimeoutMs)*time.Millisecond,
 			a.logger,
+			prometheusreader.WithKafkaMainGroup(a.cfg.Kafka.ConsumerGroup),
 		)
 		if err != nil {
 			a.logger.Warn("prometheus client init failed; panel metrics degraded", a.logger.Err(err))
@@ -663,9 +664,15 @@ func (a *App) Start(ctx context.Context) error {
 	)
 	// §34.4/§36.11: cancel-set tombstones (Redis) — общий для очистки очереди и
 	// отмены оригиналов при «Повторить все сейчас». nil без Redis.
-	var queueCancel webport.QueueCancelWriter
+	// Сигнал прохода очереди паузы (§113.3) — тот же Redis-набор; переменные —
+	// интерфейсы, чтобы без Redis в usecase ушёл настоящий nil, а не typed-nil.
+	var (
+		queueCancel webport.QueueCancelWriter
+		sweepSignal webport.PausedSweepSignaler
+	)
 	if a.redis != nil {
-		queueCancel = queuecancel.New(a.redis)
+		qc := queuecancel.New(a.redis)
+		queueCancel, sweepSignal = qc, qc
 	}
 	dlqRetention := time.Duration(a.cfg.Kafka.Topic.RetentionMs) * time.Millisecond
 	// Один admin-клиент Kafka обслуживает три потребителя: экран мониторинга
@@ -673,12 +680,13 @@ func (a *App) Start(ctx context.Context) error {
 	// повтора (§96). Создаётся здесь, ДО replay: тому он нужен как источник тела.
 	var (
 		kafkaAdmin     webport.KafkaAdmin
+		kafkaGroupLag  webport.KafkaGroupLagReader // §113.7: lag карточки из брокера
 		asyncPeeker    webport.AsyncQueuePeeker
 		queueOriginals webport.AsyncOriginalReader
 	)
 	if a.cfg.Kafka.Brokers != "" {
 		kac := kafkaadmin.New(a.cfg.Kafka.Brokers, 5*time.Second, 30, a.logger)
-		kafkaAdmin, asyncPeeker, queueOriginals = kac, kac, kac
+		kafkaAdmin, kafkaGroupLag, asyncPeeker, queueOriginals = kac, kac, kac, kac
 	}
 	if a.ch != nil {
 		// a.chMgr уже создан выше (вместе с teamProvisioner).
@@ -711,6 +719,7 @@ func (a *App) Start(ctx context.Context) error {
 			// §96.9: без счётчика источника тела не видно, кормится приёмник
 			// конвертом или журнальной копией.
 			usecase.WithReplayMetrics(a.metrics),
+			usecase.WithReplaySweepSignal(sweepSignal),
 		)
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
@@ -800,9 +809,15 @@ func (a *App) Start(ctx context.Context) error {
 	// метаданных (TTL 30с). Все источники опциональны — usecase деградирует.
 	// §98.2/§101.9: nodeRepo здесь — резолвер узлов по путям со слогом команды:
 	// строка top-узлов ведёт на журнал узла по точной паре меток (team, node).
+	// §113.7: текущий lag — основная группа из брокера (Prometheus — запасной
+	// путь), очередь узлов на паузе — отдельной строкой, роли групп — по именам
+	// из того же конфига, по которому их создаёт Sender.
 	kafkaUC := usecase.NewKafkaMonitorUsecase(
 		promMetrics, kafkaAdmin, rediscache.NewKafkaCacheRedis(a.redis, 30*time.Second),
 		nodeRepo, kafkaThresholds(&a.cfg.Web.KafkaAlerts), a.logger,
+		usecase.WithKafkaGroups(kafkaGroupNames(&a.cfg.Kafka)),
+		usecase.WithKafkaGroupLag(kafkaGroupLag),
+		usecase.WithPausedNodes(nodeRepo),
 	)
 	kafkaHandler := httpadapter.NewKafkaHandler(kafkaUC, a.logger)
 
@@ -816,6 +831,7 @@ func (a *App) Start(ctx context.Context) error {
 		a.cfg.Kafka.ConsumerGroup, a.cfg.Kafka.AsyncTopic,
 		a.cfg.Kafka.PausedGroup(), a.cfg.Kafka.PausedTopic,
 		dlqRetention, 0, a.logger,
+		usecase.WithQueueSweepSignal(sweepSignal),
 	)
 	asyncQueueHandler := httpadapter.NewAsyncQueueHandler(asyncQueueUC, a.logger)
 
@@ -1051,6 +1067,14 @@ func queueSources(cfg *config.Config) []webport.QueueSource {
 		out = append(out, webport.QueueSource{Topic: cfg.Kafka.AsyncTopic, Group: cfg.Kafka.ConsumerGroup})
 	}
 	return out
+}
+
+// kafkaGroupNames — имена групп Nexus для экрана Kafka (§113.7).
+func kafkaGroupNames(k *config.KafkaSection) usecase.KafkaGroupNames {
+	return usecase.KafkaGroupNames{
+		Main: k.ConsumerGroup, Paused: k.PausedGroup(), DLQ: k.DLQGroup(), Retry: k.ClogRetryGroup(),
+		MainTopic: k.AsyncTopic, PausedTopic: k.PausedTopic,
+	}
 }
 
 func kafkaThresholds(c *config.KafkaAlertsSection) usecase.KafkaThresholds {

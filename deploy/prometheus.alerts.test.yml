@@ -143,3 +143,113 @@ tests:
             exp_annotations:
               summary: "DLQ messages dropped for node messengers/telegram (dropped)"
               description: "Async messages were permanently dropped from the DLQ; data loss for this node."
+
+  # §113.4: lag публикуется из брокера каждой репликой Sender'а — одинаковые
+  # значения, max по репликам. Очередь узла на паузе (группа -paused) законно
+  # копится неделями и не должна поднимать NexusKafkaLagHigh (инцидент 06.10.2026:
+  # баннер «Высокий lag» при здоровом основном потоке).
+  - name: "Kafka lag: очередь паузы не считается отставанием Sender'а"
+    interval: 1m
+    input_series:
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-1",group="nexus-sender",topic="nexus.async",partition="0"}'
+        values: '20000x15'
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-2",group="nexus-sender",topic="nexus.async",partition="0"}'
+        values: '20000x15'
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-1",group="nexus-sender-paused",topic="nexus.async.paused",partition="3"}'
+        values: '50000x15'
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-1",group="nexus-sender-dlq-reprocess",topic="nexus.async.dlq",partition="0"}'
+        values: '50000x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: NexusKafkaLagHigh
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender, topic: nexus.async, partition: "0" }
+            exp_annotations:
+              summary: "Kafka lag > 10k messages on nexus.async/0"
+              description: "Sender-consumer is falling behind; check downstream upstream latency or scale consumer instances."
+
+  # §113.4: очередь паузы не пуста, а узлов на паузе нет — её никто не разбирает.
+  # Пока узел на паузе (первые 20 минут), очередь законна; алерт — через 30 минут
+  # после того, как узлов на паузе не осталось.
+  - name: "Очередь паузы без узлов на паузе"
+    interval: 1m
+    input_series:
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-1",group="nexus-sender-paused",topic="nexus.async.paused",partition="3"}'
+        values: '960x60'
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-2",group="nexus-sender-paused",topic="nexus.async.paused",partition="3"}'
+        values: '960x60'
+      - series: 'nexus_paused_nodes{service="sender",instance="sender-1"}'
+        values: '1x19 0x40'
+      - series: 'nexus_paused_nodes{service="sender",instance="sender-2"}'
+        values: '1x19 0x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: NexusPausedBacklogStuck
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: NexusPausedBacklogStuck
+        exp_alerts: []
+      - eval_time: 55m
+        alertname: NexusPausedBacklogStuck
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender }
+            exp_annotations:
+              summary: "Paused-node queue is not drained (960 messages)"
+              description: "nexus.async.paused holds messages while no node is paused (or the sweeper is disabled and reports no paused nodes). Check sender.paused_sweep (enabled, logs 'paused sweep'), nexus_paused_sweep_passes_total and Redis/PostgreSQL reachability from Sender."
+
+  # Ревизия §113: sweeper выключен (sender.paused_sweep.disabled) — gauge
+  # nexus_paused_nodes не публикуется вовсе, а очередь копится и не разбирается.
+  # С условием «max(nexus_paused_nodes) == 0» алерт в этом случае молчал.
+  - name: "Очередь паузы при выключенном sweeper'е"
+    interval: 1m
+    input_series:
+      - series: 'nexus_kafka_lag{service="sender",instance="sender-1",group="nexus-sender-paused",topic="nexus.async.paused",partition="0"}'
+        values: '500x40'
+    alert_rule_test:
+      - eval_time: 35m
+        alertname: NexusPausedBacklogStuck
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender }
+            exp_annotations:
+              summary: "Paused-node queue is not drained (500 messages)"
+              description: "nexus.async.paused holds messages while no node is paused (or the sweeper is disabled and reports no paused nodes). Check sender.paused_sweep (enabled, logs 'paused sweep'), nexus_paused_sweep_passes_total and Redis/PostgreSQL reachability from Sender."
+
+  # Ревизия §113: SLO-алерт сервиса тоже не считает откладывания паузы вызовами.
+  # 1 rps доставки с 10% 5xx и 2 rps откладываний: без фильтра 0.1/3 = 3.3% < 5%.
+  - name: "NexusHighErrorRate: откладывания паузы не в знаменателе"
+    interval: 1m
+    input_series:
+      - series: 'nexus_requests_total{service="sender",status="200"}'
+        values: '0+54x30'
+      - series: 'nexus_requests_total{service="sender",status="500"}'
+        values: '0+6x30'
+      - series: 'nexus_requests_total{service="sender",status="paused"}'
+        values: '0+120x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: NexusHighErrorRate
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender }
+            exp_annotations:
+              summary: "sender 5xx rate > 5% for 10m"
+              description: "Aggregate error rate across all nodes is breaching the SLO."
+
+  # §113.5: откладывание из-за паузы — не вызов узла. До фильтра status!="paused"
+  # 10 отложенных на один реальный вызов размывали 100% ошибок до 9%, и алерт молчал.
+  - name: "error rate: откладывания паузы не размывают долю ошибок"
+    interval: 1m
+    input_series:
+      - series: 'nexus_requests_total{service="sender",method="requestAsync",team="edo",node="sbis",status="500"}'
+        values: '0+60x30'
+      - series: 'nexus_requests_total{service="sender",method="requestAsync",team="edo",node="sbis",status="paused"}'
+        values: '0+600x30'
+      - series: 'nexus_request_incomplete_total{service="sender",method="requestAsync",team="edo",node="sbis"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: NexusNodeHighErrorRate
+        exp_alerts:
+          - exp_labels: { severity: warning, service: sender, team: edo, node: sbis }
+            exp_annotations:
+              summary: "Node edo/sbis error rate > 20% for 10m"
+              description: "More than 20% of outbound requests to the node are non-2xx (traffic guard: >0.05 rps)."

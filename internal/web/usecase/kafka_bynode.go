@@ -47,14 +47,14 @@ type KafkaByNodeResult struct {
 }
 
 // ByNode — топ-узлы по числу async-сообщений и по ошибкам за период
-// (since, until]. Источник — Prometheus (per-node throughput по паре меток team
-// и node, §101.9).
+// (since, until]. Источник — Prometheus (per-node async-throughput по паре меток
+// team и node, §101.9, §113.5).
 func (u *KafkaMonitorUsecase) ByNode(ctx context.Context, since, until time.Time) KafkaByNodeResult {
 	res := KafkaByNodeResult{TopProducers: []NodeProducer{}, TopFailures: []NodeFailure{}}
 	if u.prom == nil {
 		return res
 	}
-	m, err := u.prom.NodeThroughput(ctx, since, until)
+	m, err := u.prom.KafkaNodeThroughput(ctx, since, until)
 	if err != nil {
 		u.logger.Warn("kafka by-node throughput failed", u.logger.Err(err))
 		return res
@@ -179,17 +179,20 @@ func topProducers(m map[port.NodeKey]port.NodeThroughput) []NodeProducer {
 }
 
 // topFailures сортирует узлы по числу ошибок (Errors>0) и берёт top-N с
-// error-rate (errors/(out+errors) — доля проваленных среди обработанных).
+// error-rate — долей проваленных среди исходящих.
+//
+// Знаменатель — Out, а не Out+Errors (§113.8): Out считает все исходящие
+// Sender'а с любым статусом, ошибки — их подмножество, и до §113 они входили в
+// знаменатель дважды (50 ошибок из 100 давали 33% вместо 50%). max с Errors —
+// на случай, когда increase() экстраполировал ошибки выше исходящих: доля не
+// превышает 100%.
 func topFailures(m map[port.NodeKey]port.NodeThroughput) []NodeFailure {
 	rows := make([]NodeFailure, 0)
 	for key, t := range m {
 		if t.Errors <= 0 {
 			continue
 		}
-		var rate float64
-		if denom := t.Out + t.Errors; denom > 0 {
-			rate = t.Errors / denom
-		}
+		rate := t.Errors / max(t.Out, t.Errors)
 		rows = append(rows, NodeFailure{NodePath: key.Path, Team: key.Team, Failed: f2u(t.Errors), Rate: rate})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Failed > rows[j].Failed })

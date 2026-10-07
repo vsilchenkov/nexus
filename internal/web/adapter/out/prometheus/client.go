@@ -23,17 +23,42 @@ import (
 
 // Client — обёртка над promv1.API с таймаутом на каждый запрос.
 type Client struct {
-	api     promv1.API
-	timeout time.Duration
-	logger  logging.Logger
+	api      promv1.API
+	timeout  time.Duration
+	logger   logging.Logger
+	lagQuery string
 }
 
 var _ port.PromMetrics = (*Client)(nil)
 
+// Option настраивает Client.
+type Option func(*Client)
+
+// WithKafkaMainGroup ограничивает lag (KPI «Очередь Kafka», сводка и ряд
+// страницы Kafka) основной consumer-группой (§113.4). Очереди узлов на паузе,
+// DLQ и повторов записи логов — отдельные группы, их отставание означает
+// отложенную работу, а не застрявший Sender, и показывается отдельно.
+func WithKafkaMainGroup(group string) Option {
+	return func(c *Client) {
+		if group != "" {
+			c.lagQuery = kafkaLagQuery(fmt.Sprintf(`{group="%s"}`, promLabel(group)))
+		}
+	}
+}
+
+// kafkaLagQuery — суммарный lag по селектору. Sender публикует lag из брокера
+// (§113.4), поэтому каждая реплика отдаёт одно и то же значение на партицию:
+// max по репликам вместо sum, иначе две реплики удвоили бы очередь.
+func kafkaLagQuery(selector string) string {
+	return fmt.Sprintf(`sum(max by (group, topic, partition) (nexus_kafka_lag%s))`, selector)
+}
+
 // New создаёт клиент к Prometheus по адресу url (напр. http://prometheus:9090).
 // Пустой url — ошибка: вызывающая сторона (app.go) не должна создавать клиент,
 // если prometheus.url не задан.
-func New(url string, timeout time.Duration, logger logging.Logger) (*Client, error) {
+//
+// Без WithKafkaMainGroup lag считается по всем группам.
+func New(url string, timeout time.Duration, logger logging.Logger, opts ...Option) (*Client, error) {
 	if url == "" {
 		return nil, fmt.Errorf("prometheus url is empty")
 	}
@@ -44,7 +69,11 @@ func New(url string, timeout time.Duration, logger logging.Logger) (*Client, err
 	if err != nil {
 		return nil, fmt.Errorf("prometheus client: %w", err)
 	}
-	return &Client{api: promv1.NewAPI(c), timeout: timeout, logger: logger}, nil
+	cl := &Client{api: promv1.NewAPI(c), timeout: timeout, logger: logger, lagQuery: kafkaLagQuery("")}
+	for _, o := range opts {
+		o(cl)
+	}
+	return cl, nil
 }
 
 // promRange форматирует длительность для PromQL range-selector ([Ns]).
@@ -164,6 +193,12 @@ func (c *Client) instantByNodeKey(ctx context.Context, query string, at time.Tim
 	return out, nil
 }
 
+// senderOut — матчер исходящих Sender'а без откладываний из-за паузы (§113.5):
+// status="paused" — сообщение не отправлено, а переложено в очередь паузы. До
+// §113 такие переносы шли в счётчик каждые 30 с и раздували consumed/outgoing в
+// сотни раз; фильтр в запросе исправляет и уже накопленную историю.
+const senderOut = `service="sender",status!="paused"`
+
 // GlobalTotals — incoming (receiver) / outgoing (sender) / errors (sender 0|4xx|5xx).
 // Непустой team сужает суммы до рядов команды (§101.9).
 func (c *Client) GlobalTotals(ctx context.Context, window time.Duration, team string) (port.GlobalTotals, error) {
@@ -176,7 +211,7 @@ func (c *Client) GlobalTotals(ctx context.Context, window time.Duration, team st
 		return t, err
 	}
 	if t.Outgoing, err = c.instantScalar(ctx,
-		fmt.Sprintf(`sum(increase(nexus_requests_total{service="sender"%s}[%s]))`, tm, w)); err != nil {
+		fmt.Sprintf(`sum(increase(nexus_requests_total{%s%s}[%s]))`, senderOut, tm, w)); err != nil {
 		return t, err
 	}
 	if t.Errors, err = c.instantScalar(ctx,
@@ -186,9 +221,9 @@ func (c *Client) GlobalTotals(ctx context.Context, window time.Duration, team st
 	return t, nil
 }
 
-// KafkaQueue — суммарный lag всех партиций (мгновенно).
+// KafkaQueue — суммарный lag основной группы по всем партициям (мгновенно).
 func (c *Client) KafkaQueue(ctx context.Context) (float64, error) {
-	return c.instantScalar(ctx, `sum(nexus_kafka_lag)`)
+	return c.instantScalar(ctx, c.lagQuery)
 }
 
 // NodeErrors — per-node число «незавершённых» вызовов (done=0) за окно
@@ -203,29 +238,47 @@ func (c *Client) NodeErrors(ctx context.Context, window time.Duration) (map[port
 // пара меток team и node, §101.9). Окно = until-since, запрос вычисляется на
 // момент until (поддержка произвольного календарного периода, §28 Пункт 4).
 func (c *Client) NodeThroughput(ctx context.Context, since, until time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
+	return c.nodeThroughput(ctx, since, until, "")
+}
+
+// KafkaNodeThroughput — то же, что NodeThroughput, только по async-трафику
+// (method="requestAsync", §113.5): топ узлов страницы Kafka. Без фильтра туда
+// попадал sync-трафик, которого в Kafka нет.
+func (c *Client) KafkaNodeThroughput(ctx context.Context, since, until time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
+	return c.nodeThroughput(ctx, since, until, `,method="requestAsync"`)
+}
+
+// nodeThroughput собирает per-node счётчики; mm — дополнительный матчер
+// (",method=..." или пусто).
+func (c *Client) nodeThroughput(ctx context.Context, since, until time.Time, mm string) (map[port.NodeKey]port.NodeThroughput, error) {
 	w := promRange(until.Sub(since))
 	in, err := c.instantByNodeKey(ctx,
-		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="receiver"}[%s]))`, w), until)
+		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="receiver"%s}[%s]))`, mm, w), until)
 	if err != nil {
 		return nil, err
 	}
 	out, err := c.instantByNodeKey(ctx,
-		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="sender"}[%s]))`, w), until)
+		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{%s%s}[%s]))`, senderOut, mm, w), until)
 	if err != nil {
 		return nil, err
 	}
 	errs, err := c.instantByNodeKey(ctx,
-		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="sender",status=~"0|[45].."}[%s]))`, w), until)
+		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="sender",status=~"0|[45].."%s}[%s]))`, mm, w), until)
 	if err != nil {
 		return nil, err
 	}
 	// p95 длительности исходящих (Sender) по узлам — гистограмма уже пишется
 	// и sync, и async (§22, новой метрики не нужно). Значение в секундах → мс.
 	p95, err := c.instantByNodeKey(ctx,
-		fmt.Sprintf(`histogram_quantile(0.95, sum by (team, node, le)(rate(nexus_request_duration_seconds_bucket{service="sender"}[%s])))`, w), until)
+		fmt.Sprintf(`histogram_quantile(0.95, sum by (team, node, le)(rate(nexus_request_duration_seconds_bucket{service="sender"%s}[%s])))`, mm, w), until)
 	if err != nil {
 		return nil, err
 	}
+	return mergeThroughput(in, out, errs, p95), nil
+}
+
+// mergeThroughput складывает ряды in/out/errors/p95 в строки по узлу.
+func mergeThroughput(in, out, errs, p95 map[port.NodeKey]float64) map[port.NodeKey]port.NodeThroughput {
 
 	res := make(map[port.NodeKey]port.NodeThroughput, len(out))
 	merge := func(m map[port.NodeKey]float64, set func(*port.NodeThroughput, float64)) {
@@ -243,7 +296,7 @@ func (c *Client) NodeThroughput(ctx context.Context, since, until time.Time) (ma
 			t.P95ms = v * 1000
 		}
 	})
-	return res, nil
+	return res
 }
 
 // NodeLastErrors — per-node исход последнего исходящего вызова (§41, «Down»):
@@ -297,7 +350,7 @@ func (c *Client) NodeSeries(ctx context.Context, since, until time.Time, buckets
 
 // KafkaOverview — сводка Kafka-трафика за окно (since, until] (§4.1 spec).
 // Async-трафик выделяется фильтром method="requestAsync"; счётчики — increase()
-// за окно на момент until, lag/in-flight — instant nexus_kafka_lag, p95 —
+// за окно на момент until, lag (основной группы)/in-flight — instant, p95 —
 // histogram_quantile по длительности async-обработки Sender'а.
 func (c *Client) KafkaOverview(ctx context.Context, since, until time.Time) (port.KafkaSummary, error) {
 	w := promRange(until.Sub(since))
@@ -314,14 +367,14 @@ func (c *Client) KafkaOverview(ctx context.Context, since, until time.Time) (por
 		return s, err
 	}
 	if s.Consumed, err = q(fmt.Sprintf(
-		`sum(increase(nexus_requests_total{service="sender",method="requestAsync"}[%s]))`, w)); err != nil {
+		`sum(increase(nexus_requests_total{%s,method="requestAsync"}[%s]))`, senderOut, w)); err != nil {
 		return s, err
 	}
 	if s.FailedConsumed, err = q(fmt.Sprintf(
 		`sum(increase(nexus_request_incomplete_total{method="requestAsync"}[%s]))`, w)); err != nil {
 		return s, err
 	}
-	if s.CurrentLag, err = c.instantScalarAt(ctx, `sum(nexus_kafka_lag)`, until); err != nil {
+	if s.CurrentLag, err = c.instantScalarAt(ctx, c.lagQuery, until); err != nil {
 		return s, err
 	}
 	// §31: in-flight — реальный gauge (fetched, не committed) из Sender.
@@ -367,18 +420,18 @@ func (c *Client) KafkaTopicSizes(ctx context.Context) (map[string]int64, error) 
 }
 
 // kafkaSeriesQuery — PromQL для одной метрики Kafka-ряда (§4.2 spec) с шагом
-// step. produced/consumed/errors — rate() (сообщений/сек), lag — gauge как есть.
-// Пустая строка → метрика неизвестна (пропускается вызывающим).
-func kafkaSeriesQuery(metric, step string) string {
+// step. produced/consumed/errors — rate() (сообщений/сек), lag — gauge как есть
+// (lagQuery клиента). Пустая строка → метрика неизвестна (пропускается вызывающим).
+func kafkaSeriesQuery(metric, step, lagQuery string) string {
 	switch metric {
 	case "produced":
 		return fmt.Sprintf(`sum(rate(nexus_requests_total{service="receiver",method="requestAsync"}[%s]))`, step)
 	case "consumed":
-		return fmt.Sprintf(`sum(rate(nexus_requests_total{service="sender",method="requestAsync"}[%s]))`, step)
+		return fmt.Sprintf(`sum(rate(nexus_requests_total{%s,method="requestAsync"}[%s]))`, senderOut, step)
 	case "errors":
 		return fmt.Sprintf(`sum(rate(nexus_request_incomplete_total{method="requestAsync"}[%s]))`, step)
 	case "lag":
-		return `sum(nexus_kafka_lag)`
+		return lagQuery
 	default:
 		return ""
 	}
@@ -398,7 +451,7 @@ func (c *Client) KafkaTimeseries(ctx context.Context, since, until time.Time, st
 	stepSel := promRange(step)
 	out := make(map[string][]port.KafkaPoint, len(metrics))
 	for _, m := range metrics {
-		query := kafkaSeriesQuery(m, stepSel)
+		query := kafkaSeriesQuery(m, stepSel, c.lagQuery)
 		if query == "" {
 			continue
 		}
