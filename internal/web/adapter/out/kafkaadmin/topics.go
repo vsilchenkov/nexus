@@ -2,6 +2,7 @@ package kafkaadmin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	kafka "github.com/segmentio/kafka-go"
@@ -15,10 +16,12 @@ import (
 // состояние реплик. SizeBytes остаётся 0 — размер на диске в админ-протоколе
 // недоступен и подмешивается usecase'ом из Prometheus (§75, см. port.TopicInfo).
 //
-// §114.4: ошибка Metadata или ListGroups и истёкший ctx (бюджет обхода
-// usecase'а) — ошибка. Watermarks, OffsetFetch и DescribeGroups по отдельным
-// топикам и группам остаются best-effort, но при истёкшем ctx они падают все
-// разом, и «успешный» обход вернул бы топики без сообщений и групп.
+// §114.4: сбой запроса Metadata или ListGroups (брокер не ответил) и истёкший
+// ctx (бюджет обхода usecase'а) — ошибка. Watermarks, OffsetFetch и
+// DescribeGroups по отдельным топикам и группам остаются best-effort, но при
+// истёкшем ctx они падают все разом, и «успешный» обход вернул бы топики без
+// сообщений и групп. Код ошибки, которым ответил ОТДЕЛЬНЫЙ брокер на
+// ListGroups (координатор ещё грузится), не виден — см. listGroupIDs.
 func (c *Client) Topics(ctx context.Context) ([]port.TopicInfo, error) {
 	meta, err := c.kc.Metadata(ctx, &kafka.MetadataRequest{})
 	if err != nil {
@@ -121,8 +124,17 @@ func (c *Client) topicConsumerGroups(ctx context.Context, topic string, parts []
 // из брокера. Частичный ответ (недочитанная партиция) — ошибка: заниженный lag
 // на карточке хуже честного «из брокера не прочитано», после которого usecase
 // берёт значение из Prometheus.
+//
+// Топика нет в кластере — lag 0 без ошибки: брокер ответил, ждать там нечему.
+// Иначе свежая установка до первого старта Sender'а (топики создают Receiver
+// и Sender) показывала бы «брокер не ответил» (ревизия §114).
 func (c *Client) GroupLag(ctx context.Context, group, topic string) (int64, error) {
 	pos, err := c.offsets.GroupPositions(ctx, group, topic)
+	if errors.Is(err, kafkapf.ErrTopicNotFound) {
+		c.logger.Debug("kafka group lag: topic does not exist, lag 0",
+			c.logger.Str("op", "web.kafkaAdmin.groupLag"), c.logger.Str("group", group), c.logger.Str("topic", topic))
+		return 0, nil
+	}
 	if err != nil {
 		return 0, fmt.Errorf("group lag %s/%s: %w", group, topic, err)
 	}

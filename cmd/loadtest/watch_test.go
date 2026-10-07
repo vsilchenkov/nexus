@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -162,6 +163,33 @@ func TestKafkaPageProbe(t *testing.T) {
 	assert.InDelta(t, 2.0, r.OverviewMaxMs, 1e-9)
 
 	assert.Nil(t, startKafkaPageProbe(context.Background(), get, 0, logging.NewNoop()).stop())
+}
+
+// TestKafkaPageProbe_StopMidPoll: опрос, прерванный самим stop(), — не ошибка
+// страницы. Иначе прогон падал бы случайно: stop() попадал бы в запрос в
+// полёте примерно раз на сотню прогонов.
+func TestKafkaPageProbe_StopMidPoll(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	inFlight := make(chan struct{})
+	ok := fakeKafkaAPI(`{"kafka_available":true,"health":{"reason":"healthy"}}`, `{"kafka_available":true}`, nil)
+	get := func(ctx context.Context, path string, dst any) (time.Duration, error) {
+		if calls.Add(1) <= 2 { // первый опрос — overview и topics
+			return ok(ctx, path, dst)
+		}
+		if path == "/api/kafka/overview?range=1h" {
+			close(inFlight)
+		}
+		<-ctx.Done()
+		return time.Millisecond, ctx.Err()
+	}
+	p := startKafkaPageProbe(context.Background(), get, time.Millisecond, logging.NewNoop())
+	<-inFlight
+	r := p.stop()
+	require.NotNil(t, r)
+	assert.Equal(t, 1, r.Polls, "прерванный опрос в отчёт не входит")
+	assert.Zero(t, r.Failures)
+	assert.Empty(t, r.problems())
 }
 
 // TestReportWatchProblems: нарушения §114.L валят прогон, выключенные

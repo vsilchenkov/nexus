@@ -78,7 +78,13 @@ func (p PartitionPosition) Lag() int64 {
 	return max(0, p.Last-max(p.Committed, p.First))
 }
 
-// Partitions возвращает номера партиций топика из Metadata.
+// ErrTopicNotFound — топика нет в кластере: брокер (или кеш метаданных
+// kafka-go) ответил, что такого топика не знает. Отличает «ждать в топике
+// нечему» от «брокер не ответил» (ревизия §114).
+var ErrTopicNotFound = errors.New("kafka: topic not found")
+
+// Partitions возвращает номера партиций топика из Metadata. Топика нет —
+// ошибка с ErrTopicNotFound (и исходной ошибкой kafka-go, если она была).
 func (o *Offsets) Partitions(ctx context.Context, topic string) ([]int, error) {
 	meta, err := o.api.Metadata(ctx, &kafka.MetadataRequest{Topics: []string{topic}})
 	if err != nil {
@@ -87,6 +93,9 @@ func (o *Offsets) Partitions(ctx context.Context, topic string) ([]int, error) {
 	for _, t := range meta.Topics {
 		if t.Name != topic {
 			continue
+		}
+		if errors.Is(t.Error, kafka.UnknownTopicOrPartition) {
+			return nil, fmt.Errorf("kafka metadata %s: %w: %w", topic, ErrTopicNotFound, t.Error)
 		}
 		if t.Error != nil {
 			return nil, fmt.Errorf("kafka metadata %s: %w", topic, t.Error)
@@ -97,7 +106,7 @@ func (o *Offsets) Partitions(ctx context.Context, topic string) ([]int, error) {
 		}
 		return ids, nil
 	}
-	return nil, fmt.Errorf("kafka metadata %s: topic not found", topic)
+	return nil, fmt.Errorf("kafka metadata %s: %w", topic, ErrTopicNotFound)
 }
 
 // Watermarks — first/last offset каждой из parts одним ListOffsets-запросом.

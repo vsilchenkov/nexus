@@ -87,6 +87,43 @@ func TestKafkaAdmin_StoppedBrokerNotOnline(t *testing.T) {
 	assert.Error(t, err, "обход без ListGroups — ошибка, а не топики без групп")
 }
 
+// TestKafkaAdmin_MissingPausedTopicNotUnreachable (ревизия §114): топика
+// очереди паузы ещё нет в кластере (свежая установка до первого старта
+// Sender'а). Брокер ответил «такого топика нет» — это lag 0, а не «брокер не
+// ответил»: до правки GroupLag падал ошибкой метаданных, и экран показывал
+// баннер broker_unreachable и «отложено: —» при живом брокере.
+func TestKafkaAdmin_MissingPausedTopicNotUnreachable(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	broker, kafkaCleanup := startKafka(t, ctx)
+	defer kafkaCleanup()
+
+	cfg := newKafkaTestConfig(broker)
+	const mainTopic, mainGroup, missing = "nexus.it.main", "nexus-sender-it", "nexus.it.paused.missing"
+	require.NoError(t, kafkapf.EnsureTopics(ctx, cfg, logging.NewNoop(), mainTopic))
+	writeToPartition(t, ctx, broker, mainTopic, 0, 2)
+	commitSimple(t, ctx, broker, mainGroup, mainTopic, 0, 2)
+
+	admin := kafkaadmin.New(broker, 5*time.Second, 0, logging.NewNoop())
+	require.Eventually(t, func() bool {
+		_, err := admin.GroupLag(ctx, mainGroup, mainTopic)
+		return err == nil
+	}, 60*time.Second, 500*time.Millisecond, "брокер отвечает на офсеты основной группы")
+
+	lag, err := admin.GroupLag(ctx, "nexus-sender-paused-it", missing)
+	require.NoError(t, err, "топика нет — брокер ответил, это не ошибка")
+	assert.Zero(t, lag)
+
+	uc := usecase.NewKafkaMonitorUsecase(nil, admin, nil, nil, usecase.KafkaThresholds{}, logging.NewNoop(),
+		usecase.WithKafkaGroupLag(admin),
+		usecase.WithKafkaGroups(usecase.KafkaGroupNames{Main: mainGroup, MainTopic: mainTopic,
+			Paused: "nexus-sender-paused-it", PausedTopic: missing}))
+	res := uc.Overview(ctx, time.Now().Add(-time.Hour), time.Now())
+	assert.True(t, res.PausedBacklogAvailable, "очередь паузы известна: её просто нет")
+	assert.True(t, res.KafkaAvailable)
+	assert.NotEqual(t, usecase.ReasonBrokerUnreachable, res.Health.Reason)
+}
+
 // TestKafkaAdmin_TopicsThirdPartyUncommitted (§114.6): посторонняя группа
 // сохранила позицию только в партиции 0. Брокер отвечает на OffsetFetch по
 // партиции 1 значением -1 — адаптер считает её lag отдельно, а экран (usecase)

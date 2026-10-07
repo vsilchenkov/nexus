@@ -7,17 +7,19 @@ import (
 	kafka "github.com/segmentio/kafka-go"
 )
 
-// listGroupIDs возвращает ID всех consumer-групп кластера. Ошибка — ошибка
-// Topics (§114.4): до §114 она глоталась, топики показывались без групп, и
-// такой ответ кешировался как нормальный — lag всех групп пропадал с экрана
-// на весь TTL, хотя брокер просто не ответил.
+// listGroupIDs возвращает ID всех consumer-групп кластера. Сбой запроса —
+// ошибка Topics (§114.4): до §114 она глоталась, топики показывались без
+// групп, и такой ответ кешировался как нормальный — lag всех групп пропадал с
+// экрана на весь TTL, хотя брокер просто не ответил.
+//
+// Граница: kafka-go (v0.4.51) рассылает ListGroups по всем брокерам и
+// склеивает ответы без ErrorCode, поэтому resp.Error всегда nil. Брокер,
+// ответивший кодом ошибки (COORDINATOR_LOAD_IN_PROGRESS после рестарта),
+// неотличим от брокера без групп: его группы выпадают из ответа (§114.7).
 func (c *Client) listGroupIDs(ctx context.Context) ([]string, error) {
 	resp, err := c.kc.ListGroups(ctx, &kafka.ListGroupsRequest{})
 	if err != nil {
 		return nil, fmt.Errorf("kafka list groups: %w", err)
-	}
-	if resp.Error != nil {
-		return nil, fmt.Errorf("kafka list groups: %w", resp.Error)
 	}
 	ids := make([]string, 0, len(resp.Groups))
 	for _, g := range resp.Groups {

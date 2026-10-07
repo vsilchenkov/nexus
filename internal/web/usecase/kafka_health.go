@@ -33,9 +33,10 @@ const (
 	ReasonLagGrowing        = "lag_growing"
 	ReasonUnderReplicated   = "under_replicated"
 	ReasonProduceLatency    = "produce_latency_high"
-	// ReasonBrokerUnreachable (§114.5) — чтение брокера не уложилось в бюджет
-	// или упало: lag взят из Prometheus, очередь паузы и состояние брокеров не
-	// прочитаны.
+	// ReasonBrokerUnreachable (§114.5) — хотя бы одно из чтений брокера (lag
+	// основной группы, очередь паузы, состояние брокеров) не уложилось в бюджет
+	// или упало. Остальные могли пройти: что именно не прочитано, говорят
+	// lag_from_broker и paused_backlog_available.
 	ReasonBrokerUnreachable = "broker_unreachable"
 )
 

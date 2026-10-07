@@ -145,28 +145,39 @@ func TestOffsets_Committed_GroupError(t *testing.T) {
 	assert.Empty(t, got)
 }
 
+// TestOffsets_Partitions: ревизия §114 — «топика нет» (брокер ответил)
+// отличается от сбоя (ErrTopicNotFound), при этом исходная ошибка kafka-go
+// не теряется.
 func TestOffsets_Partitions(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		api     *fakeOffsetsAPI
-		want    []int
-		wantErr bool
+		name         string
+		api          *fakeOffsetsAPI
+		want         []int
+		wantErr      bool
+		wantNotFound bool
 	}{
-		{"ok", &fakeOffsetsAPI{meta: topicMeta("t", 0, 1)}, []int{0, 1}, false},
-		{"missing topic", &fakeOffsetsAPI{meta: topicMeta("other", 0)}, nil, true},
-		{"topic error", &fakeOffsetsAPI{meta: &segkafka.MetadataResponse{Topics: []segkafka.Topic{
+		{name: "ok", api: &fakeOffsetsAPI{meta: topicMeta("t", 0, 1)}, want: []int{0, 1}},
+		{name: "missing topic", api: &fakeOffsetsAPI{meta: topicMeta("other", 0)}, wantErr: true, wantNotFound: true},
+		{name: "unknown topic", api: &fakeOffsetsAPI{meta: &segkafka.MetadataResponse{Topics: []segkafka.Topic{
 			{Name: "t", Error: segkafka.UnknownTopicOrPartition},
-		}}}, nil, true},
-		{"request error", &fakeOffsetsAPI{metaErr: errors.New("dial")}, nil, true},
+		}}}, wantErr: true, wantNotFound: true},
+		{name: "other topic error", api: &fakeOffsetsAPI{meta: &segkafka.MetadataResponse{Topics: []segkafka.Topic{
+			{Name: "t", Error: segkafka.LeaderNotAvailable},
+		}}}, wantErr: true},
+		{name: "request error", api: &fakeOffsetsAPI{metaErr: errors.New("dial")}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := (&Offsets{api: tt.api}).Partitions(context.Background(), "t")
 			if tt.wantErr {
-				assert.Error(t, err)
+				require.Error(t, err)
+				assert.Equal(t, tt.wantNotFound, errors.Is(err, ErrTopicNotFound))
+				if tt.name == "unknown topic" {
+					assert.ErrorIs(t, err, segkafka.UnknownTopicOrPartition)
+				}
 				return
 			}
 			require.NoError(t, err)

@@ -67,6 +67,11 @@ func readBroker[T any](ctx context.Context, u *KafkaMonitorUsecase, key string, 
 	if u.cache != nil {
 		var cached brokerRead[T]
 		if found, err := u.cache.Get(ctx, key, &cached); found && err == nil {
+			if !cached.OK {
+				// §51.9: неудача из кеша — брокер в этот раз не спрашивали.
+				u.logger.Debug("kafka broker read: cached failure, broker not asked",
+					u.logger.Str("op", "web.kafkaMonitor.brokerRead"), u.logger.Str("key", key))
+			}
 			return cached.Value, cached.OK
 		}
 	}
@@ -100,13 +105,13 @@ func fetchBroker[T any](ctx context.Context, u *KafkaMonitorUsecase, key string,
 	start := time.Now()
 	v, err := fetch(rctx)
 	r := brokerRead[T]{Value: v, OK: err == nil}
+	op, k := u.logger.Str("op", "web.kafkaMonitor.brokerRead"), u.logger.Str("key", key)
+	took := u.logger.Int("duration_ms", int(time.Since(start).Milliseconds()))
 	if err != nil {
 		u.logger.Warn("kafka broker read failed; cached as unavailable",
-			u.logger.Str("key", key), u.logger.Str("budget", budget.String()), u.logger.Err(err))
+			op, k, took, u.logger.Str("budget", budget.String()), u.logger.Err(err))
 	} else {
-		u.logger.Debug("kafka broker read",
-			u.logger.Str("op", "web.kafkaMonitor.brokerRead"), u.logger.Str("key", key),
-			u.logger.Int("duration_ms", int(time.Since(start).Milliseconds())))
+		u.logger.Debug("kafka broker read", op, k, took)
 	}
 	if u.cache != nil {
 		// Best-effort: без кеша следующий запрос снова сходит в брокер.

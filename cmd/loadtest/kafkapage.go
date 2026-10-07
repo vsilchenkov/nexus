@@ -142,7 +142,11 @@ func startKafkaPageProbe(ctx context.Context, get getJSONFn, every time.Duration
 		t := time.NewTicker(every)
 		defer t.Stop()
 		for {
-			p.acc.add(pollKafkaPage(pctx, get))
+			poll := pollKafkaPage(pctx, get)
+			if pctx.Err() != nil {
+				return // опрос прервал stop() — это не ошибка страницы
+			}
+			p.acc.add(poll)
 			select {
 			case <-pctx.Done():
 				return
