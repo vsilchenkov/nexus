@@ -25,6 +25,7 @@ import { ReplayDialog } from "../ReplayDialog";
 import { LogAckBlock } from "./LogAckBlock";
 import { LogUrlCell } from "./LogUrlCell";
 import { LogsAdvancedFilters } from "./LogsAdvancedFilters";
+import { LogsExportDialog } from "./LogsExportDialog";
 import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from "./types";
 
 type StatusFilter = "all" | "ok" | "err";
@@ -575,6 +576,8 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // operator+. viewer видит кнопку disabled с tooltip «Нет прав» (бэкенд тоже
   // отдаёт 403). Скрывать не будем — так понятно, что действие существует.
   const canReplay = useRoleAtLeast("operator");
+  // §115: выгрузка в Excel — всем ролям (чтение журнала доступно всем).
+  const [exportOpen, setExportOpen] = useState(false);
 
   const scrollToTop = () => {
     if (tableWrapRef.current) {
@@ -685,6 +688,16 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
           badQuery={badQuery}
           dateRange={dateRange}
           onOpenDate={fetchDateRange}
+          onExport={hasLogsTable ? () => setExportOpen(true) : undefined}
+        />
+      )}
+      {/* §115: диалог стартует с того, что видно в полях панели (черновик) —
+          поиск, набранный без Enter, тоже попадает в выгрузку. */}
+      {exportOpen && (
+        <LogsExportDialog
+          node={node}
+          initial={{ ...advForm, status: statusFilter, done: doneFilter }}
+          onClose={() => setExportOpen(false)}
         />
       )}
 

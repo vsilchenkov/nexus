@@ -38,6 +38,22 @@ export function attachmentName(header: unknown): string | undefined {
   return m?.[1];
 }
 
+// parseBlobError — с responseType "blob" axios и тело ошибки отдаёт blob'ом:
+// разбираем его обратно в JSON, чтобы вызывающий читал response.data.error
+// как у остальных запросов. Возвращает ту же ошибку для throw.
+async function parseBlobError(e: unknown): Promise<unknown> {
+  const res = (e as { response?: { data?: unknown } }).response;
+  if (res?.data instanceof Blob) {
+    try {
+      res.data = JSON.parse(await res.data.text());
+    } catch {
+      // Не JSON (обрыв прокси, HTML-страница ошибки) — оставляем как есть,
+      // вызывающий покажет общую ошибку.
+    }
+  }
+  return e;
+}
+
 export const api = {
   // opts.signal — настоящая отмена HTTP-запроса (§77.3): react-query передаёт
   // AbortSignal в queryFn, и без проброса в axios отмена оставалась бы чисто
@@ -80,16 +96,38 @@ export const api = {
       const r = await axiosInstance.post<Blob>(url, body, { responseType: "blob" });
       return { blob: r.data, filename: attachmentName(r.headers["content-disposition"]) };
     } catch (e) {
-      const res = (e as { response?: { data?: unknown } }).response;
-      if (res?.data instanceof Blob) {
-        try {
-          res.data = JSON.parse(await res.data.text());
-        } catch {
-          // Не JSON (обрыв прокси, HTML-страница ошибки) — оставляем как есть,
-          // вызывающий покажет общую ошибку.
-        }
-      }
-      throw e;
+      throw await parseBlobError(e);
+    }
+  },
+  // getBlob — GET с файлом в ответе (§115: выгрузка журнала в Excel). Файл
+  // идёт потоком минутами, поэтому общий потолок 30 с снят (timeout: 0 —
+  // без ограничения): каждый запрос в ClickHouse ограничен сервером, а
+  // «Остановить» — opts.signal. onDownloadProgress — сколько байт уже пришло
+  // (длины заранее нет: файл пишется по мере чтения журнала). opts.headers —
+  // например Accept-Language: язык листов файла должен совпадать с языком
+  // интерфейса, а не браузера.
+  async getBlob(
+    url: string,
+    params?: Record<string, unknown>,
+    opts?: {
+      signal?: AbortSignal;
+      headers?: Record<string, string>;
+      onDownloadProgress?: (loaded: number) => void;
+    },
+  ): Promise<{ blob: Blob; filename?: string }> {
+    const onProgress = opts?.onDownloadProgress;
+    try {
+      const r = await axiosInstance.get<Blob>(url, {
+        params,
+        signal: opts?.signal,
+        headers: opts?.headers,
+        responseType: "blob",
+        timeout: 0,
+        onDownloadProgress: onProgress ? (e) => onProgress(e.loaded) : undefined,
+      });
+      return { blob: r.data, filename: attachmentName(r.headers["content-disposition"]) };
+    } catch (e) {
+      throw await parseBlobError(e);
     }
   },
   async put<T>(url: string, body?: unknown): Promise<T> {

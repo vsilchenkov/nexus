@@ -114,15 +114,3 @@ export function backupErrorText(e: unknown, t: TFunction): string {
     d?.code && d.code !== "backup.passphrase_too_short" ? t(d.code) : (d?.error ?? t("common.error"));
   return d?.detail ? `${base}: ${d.detail}` : base;
 }
-
-// saveBlob — отдать файл браузеру на сохранение.
-export function saveBlob(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
