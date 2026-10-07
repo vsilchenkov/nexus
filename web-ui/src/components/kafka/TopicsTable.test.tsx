@@ -84,3 +84,31 @@ describe("TopicsTable — пустой список (§114.5)", () => {
     expect(screen.queryByText("kafka.topics.empty")).toBeNull();
   });
 });
+
+describe("TopicsTable — посторонняя группа без commit (§114.6)", () => {
+  it("число партиций без commit — на плашке, причина — в подсказке", () => {
+    render(
+      <TopicsTable
+        sizesAvailable
+        kafkaAvailable
+        topics={[topic("nexus.async", [{ group: "debug-tool", lag_total: 12, members: 0, uncommitted_partitions: 3 }])]}
+      />,
+    );
+    const chip = screen.getByText(/debug-tool · lag 12/);
+    expect(chip).toHaveTextContent("kafka.topics.uncommitted");
+    expect(chip.closest("span[title]")).toHaveAttribute("title", "kafka.topics.uncommitted_hint");
+  });
+
+  it("все партиции с commit — плашка как раньше, без подсказки", () => {
+    render(
+      <TopicsTable
+        sizesAvailable
+        kafkaAvailable
+        topics={[topic("nexus.async", [{ group: "debug-tool", lag_total: 12, members: 0 }])]}
+      />,
+    );
+    const chip = screen.getByText(/debug-tool · lag 12/);
+    expect(chip).not.toHaveTextContent("kafka.topics.uncommitted");
+    expect(chip.closest("span[title]")).toBeNull();
+  });
+});

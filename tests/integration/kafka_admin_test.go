@@ -14,6 +14,7 @@ import (
 	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/adapter/out/kafkaadmin"
+	"nexus/internal/web/usecase"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -84,4 +85,49 @@ func TestKafkaAdmin_StoppedBrokerNotOnline(t *testing.T) {
 
 	_, err = admin.Topics(ctx)
 	assert.Error(t, err, "обход без ListGroups — ошибка, а не топики без групп")
+}
+
+// TestKafkaAdmin_TopicsThirdPartyUncommitted (§114.6): посторонняя группа
+// сохранила позицию только в партиции 0. Брокер отвечает на OffsetFetch по
+// партиции 1 значением -1 — адаптер считает её lag отдельно, а экран (usecase)
+// не включает его в lag посторонней группы и показывает число партиций без
+// commit.
+func TestKafkaAdmin_TopicsThirdPartyUncommitted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	broker, kafkaCleanup := startKafka(t, ctx)
+	defer kafkaCleanup()
+
+	cfg := newKafkaTestConfig(broker)
+	cfg.Kafka.Topic.Partitions = 2
+	const topic, group = "nexus.it.thirdparty", "debug-tool"
+	require.NoError(t, kafkapf.EnsureTopics(ctx, cfg, logging.NewNoop(), topic))
+	writeToPartition(t, ctx, broker, topic, 0, 5)
+	writeToPartition(t, ctx, broker, topic, 1, 3)
+	commitSimple(t, ctx, broker, group, topic, 0, 2)
+
+	admin := kafkaadmin.New(broker, 5*time.Second, 0, logging.NewNoop())
+	var g port.TopicConsumerGroup
+	require.Eventually(t, func() bool {
+		topics, err := admin.Topics(ctx)
+		if err != nil {
+			return false
+		}
+		var ok bool
+		g, ok = topicGroup(topics, topic, group)
+		return ok
+	}, 60*time.Second, 500*time.Millisecond, "группа видна в обходе топиков")
+	assert.EqualValues(t, 6, g.LagTotal, "адаптер: обе части — 3 по commit + 3 без commit")
+	assert.EqualValues(t, 3, g.LagUncommitted)
+	assert.Equal(t, 1, g.UncommittedPartitions)
+
+	uc := usecase.NewKafkaMonitorUsecase(nil, admin, nil, nil, usecase.KafkaThresholds{}, logging.NewNoop(),
+		usecase.WithKafkaGroups(usecase.KafkaGroupNames{Main: "nexus-sender", MainTopic: topic}))
+	r := uc.Topics(ctx)
+	require.True(t, r.KafkaAvailable)
+	shown, ok := topicGroup(r.Topics, topic, group)
+	require.True(t, ok)
+	assert.EqualValues(t, 3, shown.LagTotal, "экран: lag посторонней группы — только по партициям с commit")
+	assert.Equal(t, 1, shown.UncommittedPartitions)
+	assert.Empty(t, shown.Role)
 }

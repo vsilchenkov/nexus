@@ -48,11 +48,18 @@ const (
 // TopicConsumerGroup — consumer-группа топика с суммарным lag и числом
 // участников (§4.3 spec). Role (§113.7) — роль группы Nexus (KafkaGroupRole*)
 // или пусто у посторонней группы; заполняет usecase по именам из конфига.
+//
+// §114.6: адаптер отдаёт LagTotal по всем партициям, по которым OffsetFetch
+// ответил, а часть по партициям без commit (lag от First) — отдельно в
+// LagUncommitted, вместе с их числом UncommittedPartitions. Посторонней группе
+// usecase эту часть вычитает: откуда она начнёт читать, Nexus не знает.
 type TopicConsumerGroup struct {
-	Group    string
-	LagTotal int64
-	Members  int
-	Role     string
+	Group                 string
+	LagTotal              int64
+	Members               int
+	Role                  string
+	LagUncommitted        int64
+	UncommittedPartitions int
 }
 
 // TopicInfo — метаданные одного топика (§4.3 spec). MessagesEstimate —

@@ -339,6 +339,8 @@
       "health": "Состояние",
       "empty": "Топиков нет",
       "unavailable": "Брокер Kafka не ответил — список топиков недоступен",
+      "uncommitted": "без commit: {{n}} парт.",
+      "uncommitted_hint": "Партиций без сохранённой позиции: {{n}}. Их lag не считается: группа их не читает или ещё не сохраняла позицию.",
       "state": {
         "ok": "OK",
         "under_replicated": "under-replicated",

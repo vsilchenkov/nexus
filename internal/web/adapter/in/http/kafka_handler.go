@@ -259,6 +259,17 @@ type kafkaTopicGroupDTO struct {
 	// Role (§113.7) — main | paused | dlq | retry у групп Nexus; у посторонней
 	// группы поля нет.
 	Role string `json:"role,omitempty"`
+	// UncommittedPartitions (§114.6) — у посторонней группы: партиций топика
+	// без сохранённой позиции; их lag в lag_total не входит. У групп Nexus поля
+	// нет — их lag без commit настоящий и уже в lag_total.
+	UncommittedPartitions int `json:"uncommitted_partitions,omitempty"`
+}
+
+// topicGroupDTO — группа топика для ответа. Явная сборка, а не конверсия
+// типа: у порта есть поле LagUncommitted, которого в ответе нет.
+func topicGroupDTO(g port.TopicConsumerGroup) kafkaTopicGroupDTO {
+	return kafkaTopicGroupDTO{Group: g.Group, LagTotal: g.LagTotal, Members: g.Members, Role: g.Role,
+		UncommittedPartitions: g.UncommittedPartitions}
 }
 
 type kafkaTopicDTO struct {
@@ -287,7 +298,7 @@ func (h *KafkaHandler) Topics(c *gin.Context) {
 	for _, t := range r.Topics {
 		groups := make([]kafkaTopicGroupDTO, 0, len(t.ConsumerGroups))
 		for _, g := range t.ConsumerGroups {
-			groups = append(groups, kafkaTopicGroupDTO(g))
+			groups = append(groups, topicGroupDTO(g))
 		}
 		topics = append(topics, kafkaTopicDTO{
 			Name: t.Name, Partitions: t.Partitions, ReplicationFactor: t.ReplicationFactor,

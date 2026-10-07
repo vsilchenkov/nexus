@@ -195,6 +195,45 @@ func TestKafkaOverview_BrokerUnreachableJSON(t *testing.T) {
 	assert.Equal(t, map[string]any{"severity": "warn", "reason": "broker_unreachable"}, body["health"])
 }
 
+// stubTopicsAdmin — KafkaAdmin с готовым списком топиков (§114.6).
+type stubTopicsAdmin []port.TopicInfo
+
+func (s stubTopicsAdmin) Topics(context.Context) ([]port.TopicInfo, error) { return s, nil }
+func (stubTopicsAdmin) BrokerHealth(context.Context) (port.BrokerHealth, error) {
+	return port.BrokerHealth{}, nil
+}
+func (stubTopicsAdmin) Ping(context.Context) ([]port.BrokerPing, error) { return nil, nil }
+
+// TestKafkaTopics_UncommittedPartitionsJSON (§114.6): uncommitted_partitions
+// есть только у посторонней группы; служебного lag_uncommitted в ответе нет.
+func TestKafkaTopics_UncommittedPartitionsJSON(t *testing.T) {
+	t.Parallel()
+	admin := stubTopicsAdmin{{Name: "nexus.async", ConsumerGroups: []port.TopicConsumerGroup{
+		{Group: "g", LagTotal: 10, LagUncommitted: 4, UncommittedPartitions: 1},
+		{Group: "debug-tool", LagTotal: 15, LagUncommitted: 3, UncommittedPartitions: 3},
+	}}}
+	uc := usecase.NewKafkaMonitorUsecase(nil, admin, nil, nil, usecase.KafkaThresholds{}, logging.NewNoop(),
+		usecase.WithKafkaGroups(usecase.KafkaGroupNames{Main: "g", MainTopic: "nexus.async"}))
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/api/kafka/topics", NewKafkaHandler(uc, logging.NewNoop()).Topics)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/kafka/topics", nil))
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		Topics []struct {
+			ConsumerGroups []map[string]any `json:"consumer_groups"`
+		} `json:"topics"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Topics, 1)
+	assert.Equal(t, []map[string]any{
+		{"group": "g", "lag_total": 10.0, "members": 0.0, "role": "main"},
+		{"group": "debug-tool", "lag_total": 12.0, "members": 0.0, "uncommitted_partitions": 3.0},
+	}, body.Topics[0].ConsumerGroups)
+}
+
 // TestKafkaOverview_PausedNodesNeverNull: без очереди паузы paused_nodes —
 // пустой массив, а не null.
 func TestKafkaOverview_PausedNodesNeverNull(t *testing.T) {

@@ -339,6 +339,8 @@
       "health": "State",
       "empty": "No topics",
       "unavailable": "Kafka broker did not respond — topic list unavailable",
+      "uncommitted": "no commit: {{n}} part.",
+      "uncommitted_hint": "Partitions without a saved position: {{n}}. Their lag is not counted: the group does not read them or has not saved a position yet.",
       "state": {
         "ok": "OK",
         "under_replicated": "under-replicated",

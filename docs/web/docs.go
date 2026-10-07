@@ -10635,6 +10635,10 @@ const docTemplate = `{
                 "role": {
                     "description": "Role (§113.7) — main | paused | dlq | retry у групп Nexus; у посторонней\nгруппы поля нет.",
                     "type": "string"
+                },
+                "uncommitted_partitions": {
+                    "description": "UncommittedPartitions (§114.6) — у посторонней группы: партиций топика\nбез сохранённой позиции; их lag в lag_total не входит. У групп Nexus поля\nнет — их lag без commit настоящий и уже в lag_total.",
+                    "type": "integer"
                 }
             }
         },

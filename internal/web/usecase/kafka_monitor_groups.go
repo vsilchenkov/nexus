@@ -194,14 +194,26 @@ func (u *KafkaMonitorUsecase) listPausedNodes(ctx context.Context, backlog int64
 	return nodes, true
 }
 
-// markGroupRoles проставляет группам топиков роли Nexus (§113.7). Роль
-// выводится из имени на каждый запрос, поэтому кешированные метаданные её не
-// искажают.
-func (u *KafkaMonitorUsecase) markGroupRoles(topics []port.TopicInfo) {
+// applyGroupRoles проставляет группам топиков роли Nexus (§113.7) и делит lag
+// посторонних групп (§114.6). Роль выводится из имени на каждый запрос,
+// поэтому кешированные метаданные её не искажают.
+//
+// Группа Nexus читает партицию без commit с First (§113.4) — её lag настоящий,
+// он остаётся в LagTotal, а отдельной плашки «без commit» нет. Посторонней
+// группе lag без commit вычитается: откуда она начнёт читать, неизвестно.
+// Вычтенная часть обнуляется — повторный вызов на тех же данных ничего не
+// меняет (на случай, если копию когда-нибудь перестанут делать).
+func (u *KafkaMonitorUsecase) applyGroupRoles(topics []port.TopicInfo) {
 	for i := range topics {
 		for j := range topics[i].ConsumerGroups {
 			g := &topics[i].ConsumerGroups[j]
 			g.Role = u.groups.role(g.Group)
+			if g.Role != "" {
+				g.UncommittedPartitions = 0
+				continue
+			}
+			g.LagTotal -= g.LagUncommitted
+			g.LagUncommitted = 0
 		}
 	}
 }

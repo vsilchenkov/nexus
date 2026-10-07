@@ -276,7 +276,7 @@ func (u *KafkaMonitorUsecase) Topics(ctx context.Context) KafkaTopicsResult {
 	}
 	// Срез общий для всех ждущих singleflight — правим копию.
 	topics := cloneTopics(shared)
-	u.markGroupRoles(topics)
+	u.applyGroupRoles(topics)
 	return KafkaTopicsResult{
 		Topics:         topics,
 		KafkaAvailable: true,

@@ -518,8 +518,16 @@ export type KafkaTimeseries = {
 };
 // §113.7: role — роль группы Nexus; у посторонней группы её нет. Lag paused- и
 // dlq-групп — сообщения, ждущие по замыслу, а не отставание обработки.
+// §114.6: uncommitted_partitions — у посторонней группы партиций без
+// сохранённой позиции; их lag в lag_total не входит.
 export type KafkaGroupRole = "main" | "paused" | "dlq" | "retry";
-export type KafkaTopicGroup = { group: string; lag_total: number; members: number; role?: KafkaGroupRole };
+export type KafkaTopicGroup = {
+  group: string;
+  lag_total: number;
+  members: number;
+  role?: KafkaGroupRole;
+  uncommitted_partitions?: number;
+};
 export type KafkaTopic = {
   name: string;
   partitions: number;
