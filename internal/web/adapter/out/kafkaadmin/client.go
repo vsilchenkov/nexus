@@ -16,6 +16,7 @@ import (
 
 	kafka "github.com/segmentio/kafka-go"
 
+	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
 )
@@ -23,13 +24,17 @@ import (
 // Client — обёртка над *kafka.Client с таймаутом и порогом ping-warn.
 type Client struct {
 	kc         *kafka.Client
+	offsets    *kafkapf.Offsets // §113.4: watermarks/committed — общий с Sender код
 	brokers    []string
 	timeout    time.Duration
 	warnPingMs int64
 	logger     logging.Logger
 }
 
-var _ port.KafkaAdmin = (*Client)(nil)
+var (
+	_ port.KafkaAdmin          = (*Client)(nil)
+	_ port.KafkaGroupLagReader = (*Client)(nil)
+)
 
 // New создаёт admin-клиент к брокерам (CSV host:port). warnPingMs — порог
 // «повышенной задержки» для §4.5 (0 → дефолт 30мс). Пустой brokers даст клиент
@@ -42,8 +47,10 @@ func New(brokers string, timeout time.Duration, warnPingMs int64, logger logging
 		warnPingMs = 30
 	}
 	addrs := splitBrokers(brokers)
+	kc := &kafka.Client{Addr: kafka.TCP(addrs...), Timeout: timeout}
 	return &Client{
-		kc:         &kafka.Client{Addr: kafka.TCP(addrs...), Timeout: timeout},
+		kc:         kc,
+		offsets:    kafkapf.NewOffsets(kc),
 		brokers:    addrs,
 		timeout:    timeout,
 		warnPingMs: warnPingMs,

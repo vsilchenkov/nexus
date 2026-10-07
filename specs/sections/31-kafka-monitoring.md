@@ -33,9 +33,13 @@
 - **Prometheus** (query/query_range) — throughput, ошибки, latency, lag, top-узлы. Async-трафик
   выделяется фильтром `method="requestAsync"`:
   - produced ← `nexus_requests_total{service="receiver",method="requestAsync"}`
-  - consumed ← `nexus_requests_total{service="sender",method="requestAsync"}`
+  - consumed ← `nexus_requests_total{service="sender",method="requestAsync",status!="paused"}`
+    (§113.5: переносы в delay-топик паузы — не потребление)
   - errors ← `nexus_request_incomplete_total{method="requestAsync"}` (+ status-фильтр для produced)
-  - lag ← `nexus_kafka_lag{topic,partition,group}`
+  - lag ← `nexus_kafka_lag{group="<основная группа>"}`, `max by (group,topic,partition)` — Sender
+    публикует его из брокера (§113.4). Текущий lag и health берутся из брокера напрямую (Kafka
+    Admin), Prometheus — история и запасной путь. Очередь паузы (группа `<group>-paused`) в lag не
+    входит и показывается отдельной строкой карточки (§113.7)
   - in-flight ← `sum(nexus_kafka_in_flight)` — выделенный gauge (Sender: fetched, но не
     committed; §31 добавил его в consumer-цикл)
   - produce p95 ← `nexus_kafka_produce_duration_seconds_bucket{topic}` — выделенная гистограмма
@@ -67,8 +71,10 @@
 
 Severity health-banner вычисляется на каждом `/overview` по порогам (§31.5). Бэкенд отдаёт
 машинный `reason`-код (`healthy`/`offline_partitions`/`brokers_down`/`error_rate_high`/`lag_high`/
-`lag_growing`/`under_replicated`/`produce_latency_high`); конкретный текст с подстановкой чисел
-локализуется на фронте (бэкенд i18n-независим).
+`lag_growing`/`under_replicated`/`produce_latency_high`/`broker_unreachable` — последний с
+[§114.5](114-kafka-commit-stuck-and-monitor.md): чтение брокера не уложилось в бюджет); конкретный
+текст с подстановкой чисел локализуется на фронте (бэкенд i18n-независим). С §114.4 чтения брокера
+ограничены бюджетом (3 с в `/overview`, 10 с в `/topics`), неудача кешируется на те же 30 с.
 
 ### 31.4. UI экрана
 
@@ -94,12 +100,16 @@ Severity health-banner вычисляется на каждом `/overview` по
 
 | Состояние | Жёлтый | Красный |
 |---|---|---|
-| Consumer lag (текущий) | > 100 | > 1000 ИЛИ рост > 50/сек |
+| Consumer lag (текущий, основная группа) | > 100 | > 1000 ИЛИ рост > 50/сек 5 минут подряд |
 | Error rate (produced+consumed) | > 0.1% | > 1% |
 | Under-replicated partitions | ≥ 1 | — |
 | Offline partitions | — | ≥ 1 (всегда критично) |
 | Brokers offline | ≥ 1 | > N/2 |
 | Produce latency p95 (прокси) | > 100ms | > 500ms |
+
+С §113: lag и рост lag — только основная группа (очередь паузы — не отставание consumer'а); «рост 5
+минут подряд» — все приросты на окне ≥ 0 и средний выше порога (раньше хватало одного скачка);
+порог p95 публикации реально участвует в расчёте (раньше значение до health не доходило).
 
 ### 31.6. Out of scope (v1)
 

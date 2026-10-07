@@ -81,3 +81,36 @@ func TestQueueCancel_DefaultTTL(t *testing.T) {
 	require.NoError(t, err)
 	assert.Greater(t, ttl, 6*24*time.Hour)
 }
+
+// TestQueueCancel_SignalOnlyByBump (§113.3, ревизия §113): на настоящем Redis
+// отметки отмены сигнал планировщика очереди паузы не двигают — его двигает
+// только Bump, который Web зовёт один раз на операцию у узла на паузе.
+func TestQueueCancel_SignalOnlyByBump(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	client, cleanup := startRedis(t, ctx)
+	defer cleanup()
+
+	qc := queuecancel.New(client)
+
+	before, err := qc.Signal(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, before)
+
+	_, err = qc.Cancel(ctx, []string{"sig-1", "sig-2"}, time.Hour)
+	require.NoError(t, err)
+	got, err := qc.IsCancelled(ctx, "sig-2")
+	require.NoError(t, err)
+	assert.True(t, got)
+	after, err := qc.Signal(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, after, "отметки сигнал не двигают — его двигает Bump (ревизия §113)")
+
+	bumped, err := qc.Bump(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), bumped)
+	now, err := qc.Signal(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, bumped, now)
+}

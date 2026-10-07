@@ -25,6 +25,10 @@ import (
 // Без этого теста регрессия была бы тихой: KPI «Ожидают отправки» показал бы 0,
 // а «Очистить все ожидающие» отменила бы ноль сообщений, то есть отвалился бы
 // главный сценарий §34.4 «очистить очередь мёртвого узла».
+//
+// §113.9: то же для sync-узла на паузе — его запросы Receiver ставит в ту же
+// очередь с ответом 202. До §113 вкладка отвечала «у sync-узла очереди нет»:
+// инцидент 06.10.2026, 960 невидимых и неочищаемых запросов.
 func TestAsyncQueue_PausedBacklog_E2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
@@ -41,10 +45,17 @@ func TestAsyncQueue_PausedBacklog_E2E(t *testing.T) {
 	nodeUC := newAsyncNodeUsecase(t, ctx, pool, stack.cipher)
 	createAsyncNode(t, ctx, nodeUC, "demo/qpaused", mock.URL+"/qpaused", "test.demo_qpaused", domain.NodeStatusPaused)
 	createAsyncNode(t, ctx, nodeUC, "demo/qwarmup", mock.URL+"/qwarmup", "test.demo_qwarmup", domain.NodeStatusEnabled)
+	createAsyncNode(t, ctx, nodeUC, "demo/qpaused-sync", mock.URL+"/qpaused-sync", "test.demo_qpaused_sync", domain.NodeStatusPaused)
+	_, err := pool.Exec(ctx, "UPDATE nodes SET root_method = $1 WHERE path = $2",
+		string(domain.RootMethodRequest), "demo/qpaused-sync")
+	require.NoError(t, err)
 
 	nodeRepo := pgrepo.NewNodeRepoPg(pool, stack.cipher, logger)
 	created, err := nodeRepo.GetByPath(ctx, "demo/qpaused")
 	require.NoError(t, err)
+	syncNode, err := nodeRepo.GetByPath(ctx, "demo/qpaused-sync")
+	require.NoError(t, err)
+	require.Equal(t, domain.RootMethodRequest, syncNode.RootMethod)
 
 	aqUC := webuc.NewAsyncQueueUsecase(
 		kafkaadmin.New(stack.cfg.Kafka.Brokers, 5*time.Second, 0, logger),
@@ -64,6 +75,11 @@ func TestAsyncQueue_PausedBacklog_E2E(t *testing.T) {
 	for i := 1; i <= backlog; i++ {
 		stack.produceEnvelope(t, ctx, fmt.Sprintf("qpaused-%d", i), "demo/qpaused",
 			mock.URL+"/qpaused", fmt.Sprintf(`{"n":%d}`, i))
+	}
+	const syncBacklog = 2
+	for i := 1; i <= syncBacklog; i++ {
+		stack.produceEnvelope(t, ctx, fmt.Sprintf("qpaused-sync-%d", i), "demo/qpaused-sync",
+			mock.URL+"/qpaused-sync", fmt.Sprintf(`{"s":%d}`, i))
 	}
 
 	// 1. Очередь видит бэклог, хотя в основном топике его уже нет.
@@ -86,6 +102,17 @@ func TestAsyncQueue_PausedBacklog_E2E(t *testing.T) {
 	// 3. Чужой топик читать нельзя (эндпоинт не универсальный ридер Kafka).
 	_, err = aqUC.Body(ctx, created.ID, created.TeamID, "nexus.logs.retry", 0, 0)
 	require.ErrorIs(t, err, webuc.ErrAsyncQueueUnknownTopic)
+
+	// 3a. §113.9: очередь sync-узла на паузе видна и очищается.
+	var syncList webuc.QueueListResult
+	require.Eventually(t, func() bool {
+		syncList, err = aqUC.List(ctx, syncNode.ID, syncNode.TeamID)
+		return err == nil && len(syncList.Items) == syncBacklog
+	}, 90*time.Second, time.Second,
+		"вкладка «Очередь» sync-узла на паузе должна показывать его запросы")
+	syncPurged, err := aqUC.PurgeAll(ctx, webuc.SystemActor(), syncNode.ID, syncNode.TeamID)
+	require.NoError(t, err)
+	require.Equal(t, syncBacklog, syncPurged.Cancelled, "purge sync-узла на паузе находит его запросы")
 
 	// 4. «Очистить все ожидающие» отменяет весь бэклог (tombstones в Redis).
 	purged, err := aqUC.PurgeAll(ctx, webuc.SystemActor(), created.ID, created.TeamID)

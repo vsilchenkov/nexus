@@ -64,6 +64,9 @@ const (
 	// обрывается закрытием вкладки, и след обязан остаться от ушедшего.
 	ActionNodeReplayPeriod = "node.replay_period"
 	ActionNodeDryRun       = "node.dry_run"
+	// ActionNodeLogsExport — §115: выгрузка журнала узла в Excel. Тела в файле
+	// не маскируются (§95.8), поэтому след нужен и от прерванной выгрузки.
+	ActionNodeLogsExport = "node.logs_export"
 	// §56: применение ALTER'ов синхронизации схемы CH к таблице узла.
 	ActionNodeCHSchemaSync = "node.ch_schema_sync"
 	ActionNodeMove         = "node.move"

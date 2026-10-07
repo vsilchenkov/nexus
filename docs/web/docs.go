@@ -2068,7 +2068,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему периоду, broker_health и severity health-banner. Источники деградируют (флаги *_available). Admin-only, rate-limit 60/мин.",
+                "description": "KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему периоду, broker_health и severity health-banner. Источники деградируют (флаги *_available). current_lag (§113.7) — отставание основной группы из брокера (lag_from_broker=true), при его недоступности из Prometheus. paused_backlog — сообщения узлов на паузе, в lag не входят; при paused_backlog\u003e0 — список узлов на паузе (paused_nodes, не больше 20, всего paused_nodes_total). §114: каждое чтение брокера ограничено 3 с, неудача кешируется на 30 с; paused_backlog_available=false — очередь паузы не прочитана; kafka_available=false и health.reason=broker_unreachable — брокер не ответил. Admin-only, rate-limit 60/мин.",
                 "produces": [
                     "application/json"
                 ],
@@ -2213,7 +2213,7 @@ const docTemplate = `{
                         "CookieAuth": []
                     }
                 ],
-                "description": "Партиции, RF, оценка числа сообщений, consumer-группы с lag, состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. Admin-only.",
+                "description": "Партиции, RF, оценка числа сообщений, consumer-группы с lag и ролью группы Nexus (§113.7: main/paused/dlq/retry), состояние реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false. Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. §114: обход брокера ограничен 10 с, неудача кешируется на 30 с; kafka_available=false — брокер не ответил (список топиков недоступен, а не пуст). Admin-only.",
                 "produces": [
                     "application/json"
                 ],
@@ -5372,6 +5372,266 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.LogDateRangeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/logs/export.xlsx": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Файл .xlsx потоком: лист «Логи» — колонки таблицы ClickHouse (запись = новейший подходящий прогон, порядок как в журнале), лист «Параметры» — фильтры, лимиты и статус полноты. Неполнота после начала потока (ClickHouse отказал, исчерпан объём) видна только в файле. Фильтры — те же, что у /logs. Тела не маскируются; выгрузка пишется в аудит (node.logs_export). Только session-cookie.",
+                "produces": [
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Выгрузка журнала узла в Excel (§115.5).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "предел записей (по умолчанию и сверх лимита — max_rows)",
+                        "name": "rows",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "выгружать тела request/response",
+                        "name": "bodies",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "часовой пояс дат (IANA, напр. Europe/Moscow); по умолчанию UTC",
+                        "name": "tz",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "нижняя граница date_request (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "верхняя граница date_request (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "поиск (§48)",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "регистрозависимый поиск",
+                        "name": "q_case",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "целое слово",
+                        "name": "q_word",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "RE2-выражение",
+                        "name": "q_regex",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "подпуть запроса",
+                        "name": "method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ok | err",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "yes | no",
+                        "name": "done",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "IP клиента",
+                        "name": "ip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "имя клиента (PTR)",
+                        "name": "client_host",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "синтаксис поиска",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "превышена частота запусков (Retry-After)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "ClickHouse недоступен или не успел отобрать записи (не 503 — nginx не повторяет)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "все слоты реплики заняты (Retry-After; nginx повторяет на соседней реплике)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/nodes/{id}/logs/export/estimate": {
+            "get": {
+                "security": [
+                    {
+                        "CookieAuth": []
+                    }
+                ],
+                "description": "Сколько записей и строк подходит под фильтры журнала и сколько весят тела (суммы request_size/response_size, каждый урезан капом ячейки — верхняя граница). Фильтры — те же, что у /logs. Плюс действующие лимиты выгрузки. Узел без таблицы → logs_configured=false, ClickHouse недоступен или таймаут 10 с → logs_available=false (оба — 200). Только session-cookie.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "logs"
+                ],
+                "summary": "Оценка выгрузки журнала узла в Excel (§115.5).",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "node id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "нижняя граница date_request (RFC3339 или UnixMilli)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "верхняя граница date_request (RFC3339 или UnixMilli)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "поиск (§48)",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "регистрозависимый поиск",
+                        "name": "q_case",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "целое слово",
+                        "name": "q_word",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "RE2-выражение",
+                        "name": "q_regex",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "подпуть запроса",
+                        "name": "method",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "ok | err",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "yes | no",
+                        "name": "done",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "IP клиента",
+                        "name": "ip",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "имя клиента (PTR)",
+                        "name": "client_host",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.LogsExportEstimateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "синтаксис поиска",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
                     },
                     "404": {
@@ -8717,6 +8977,42 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_web_adapter_in_http.LogsExportEstimateResponse": {
+            "type": "object",
+            "properties": {
+                "logs_available": {
+                    "type": "boolean"
+                },
+                "logs_configured": {
+                    "type": "boolean"
+                },
+                "max_body_chars": {
+                    "type": "integer"
+                },
+                "max_bytes": {
+                    "type": "integer"
+                },
+                "max_rows": {
+                    "type": "integer"
+                },
+                "records": {
+                    "description": "уникальные записи под фильтром",
+                    "type": "integer"
+                },
+                "request_bytes": {
+                    "description": "сумма размеров тел запроса, каждый урезан капом ячейки",
+                    "type": "integer"
+                },
+                "response_bytes": {
+                    "description": "то же для тел ответа",
+                    "type": "integer"
+                },
+                "rows": {
+                    "description": "строки-прогоны под фильтром",
+                    "type": "integer"
+                }
+            }
+        },
         "internal_web_adapter_in_http.MoveNodeRequest": {
             "type": "object",
             "required": [
@@ -10445,7 +10741,31 @@ const docTemplate = `{
                     "$ref": "#/definitions/internal_web_adapter_in_http.kafkaHealthDTO"
                 },
                 "kafka_available": {
+                    "description": "KafkaAvailable (§114.5) — все чтения брокера удались (состояние брокеров,\nlag основной группы и очереди паузы).",
                     "type": "boolean"
+                },
+                "lag_from_broker": {
+                    "description": "LagFromBroker (§113.7) — current_lag прочитан из брокера, а не из Prometheus.",
+                    "type": "boolean"
+                },
+                "paused_backlog_available": {
+                    "description": "PausedBacklogAvailable (§114.5) — summary.paused_backlog известен. false —\nочередь паузы настроена, но брокер не ответил: 0 не значит «пусто».",
+                    "type": "boolean"
+                },
+                "paused_nodes": {
+                    "description": "PausedNodes (§113.7) — узлы на паузе, не больше 20; заполнен только при\nsummary.paused_backlog \u003e 0 и paused_nodes_available=true. Всегда массив.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_web_adapter_in_http.kafkaPausedNodeDTO"
+                    }
+                },
+                "paused_nodes_available": {
+                    "description": "PausedNodesAvailable (§113.7) — список узлов на паузе прочитан; false при\nпустой очереди паузы или ошибке PostgreSQL.",
+                    "type": "boolean"
+                },
+                "paused_nodes_total": {
+                    "description": "PausedNodesTotal (§113.7) — сколько узлов на паузе всего.",
+                    "type": "integer"
                 },
                 "period": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.kafkaPeriodDTO"
@@ -10455,6 +10775,20 @@ const docTemplate = `{
                 },
                 "summary": {
                     "$ref": "#/definitions/internal_web_adapter_in_http.kafkaSummaryDTO"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.kafkaPausedNodeDTO": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "team": {
+                    "type": "string"
                 }
             }
         },
@@ -10516,6 +10850,10 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "in_flight_now": {
+                    "type": "integer"
+                },
+                "paused_backlog": {
+                    "description": "PausedBacklog (§113.7) — сообщения узлов на паузе в nexus.async.paused; в\ncurrent_lag не входят. 0 — очереди нет или брокер не ответил.",
                     "type": "integer"
                 },
                 "produced_total": {
@@ -10588,6 +10926,14 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "members": {
+                    "type": "integer"
+                },
+                "role": {
+                    "description": "Role (§113.7) — main | paused | dlq | retry у групп Nexus; у посторонней\nгруппы поля нет.",
+                    "type": "string"
+                },
+                "uncommitted_partitions": {
+                    "description": "UncommittedPartitions (§114.6) — у посторонней группы: партиций топика\nбез сохранённой позиции; их lag в lag_total не входит. У групп Nexus поля\nнет — их lag без commit настоящий и уже в lag_total.",
                     "type": "integer"
                 }
             }

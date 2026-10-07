@@ -438,7 +438,8 @@ integration:
 #
 # Переопределяемые через UI «Run pipeline» → Variables: LOADTEST_TARGET_RPS /
 # _DURATION / _NODES / _RATIO_ASYNC / _RATIO_DYNAMIC_URL / _RATIO_AUTH_TOKEN /
-# _RATIO_AUTH_BASIC / _RATIO_RMQ / _CH_NOLOSS (0|1) / _WITH_RMQ (0|1) / _P95_MS.
+# _RATIO_AUTH_BASIC / _RATIO_RMQ / _CH_NOLOSS (0|1) / _WITH_RMQ (0|1) / _P95_MS /
+# _KAFKA_PAGE_EVERY ("0" — выкл) / _SENDER_METRICS_URL (пусто — выкл).
 # Например, capacity-bench: LOADTEST_TARGET_RPS=600, LOADTEST_P95_MS=400.
 
 loadtest:
@@ -511,6 +512,12 @@ loadtest:
     LOADTEST_WITH_RMQ: "1"
     # Порог p95 (мс) для acceptance- и per-mode testcase'ов JUnit.
     LOADTEST_P95_MS: "200"
+    # §114.L: период опроса страницы Kafka (/api/kafka/overview + topics) всю
+    # нагрузку и слив; 10s — как автообновление открытой вкладки. "0" — выкл.
+    LOADTEST_KAFKA_PAGE_EVERY: "10s"
+    # §114.L: /metrics Sender'а — рестарты reader'ов и ошибки commit не растут
+    # за прогон. Пусто — выкл.
+    LOADTEST_SENDER_METRICS_URL: "http://sender:9091/metrics"
   before_script:
     # jq нужен в after_script для генерации JUnit-отчёта из report.json.
     - apk add --no-cache docker-cli-compose openssl jq
@@ -646,8 +653,13 @@ loadtest:
       # Профиль-зависимые флаги собираем в LT_ARGS (переменные не переживают
       # между отдельными `-` шагами — поэтому здесь, в одном блоке с run):
       #  - no-loss: --ch-addr clickhouse:9000 (сверка числа строк CH с async+rmq);
-      #  - rmq: --ratio-rmq + --rmq-url к compose-сервису rabbitmq (creds из .env).
-      LT_ARGS=""
+      #  - rmq: --ratio-rmq + --rmq-url к compose-сервису rabbitmq (creds из .env);
+      #  - §114.L: --kafka-page-every / --sender-metrics-url (страница Kafka и
+      #    счётчики сторожа Sender'а под нагрузкой).
+      LT_ARGS="--kafka-page-every ${LOADTEST_KAFKA_PAGE_EVERY:-0}"
+      if [ -n "$LOADTEST_SENDER_METRICS_URL" ]; then
+        LT_ARGS="$LT_ARGS --sender-metrics-url $LOADTEST_SENDER_METRICS_URL"
+      fi
       if [ "$LOADTEST_CH_NOLOSS" = "1" ]; then
         LT_ARGS="$LT_ARGS --ch-addr clickhouse:9000 --ch-user default --ch-flush-grace 15s --ch-noloss-max-wait ${LOADTEST_CH_NOLOSS_MAX_WAIT:-5m}"
       fi
@@ -757,7 +769,11 @@ loadtest:
     # ----- JUnit-отчёт для GitLab Tests tab -----
     # Расширенный набор testcase'ов из report.json (§10.2):
     #   - 3 общих acceptance-кейса (achieved_rps / p95 / error_rate);
-    #   - no_message_loss_async_rmq (если гонялась CH-сверка, .no_loss_checked);
+    #   - no_message_loss_async_rmq (если гонялась CH-сверка, .no_loss_checked)
+    #     и информативный ch_duplicate_rows_info (всегда зелёный, число дублей);
+    #   - §114.L: kafka_page_available_under_load / kafka_page_overview_under_5s
+    #     (.kafka_page) и sender_no_consumer_restarts / sender_no_commit_errors
+    #     (.sender_metrics) — если проверки включены флагами;
     #   - per-mode p95 и error_rate на каждый режим (.modes из cmd/loadtest).
     # Suite назван по $CI_JOB_NAME — каждый профиль (loadtest/-mixed/-async/...)
     # отдельной вкладкой. Пороги совпадают с report.passed() в cmd/loadtest.
@@ -789,6 +805,15 @@ loadtest:
           ( "p95_latency_under_\($p95max)ms\t" + okf(.p95_ms <= $p95max) + "\tp95=\(.p95_ms)ms" ),
           ( "error_rate_under_0.1pct\t" + okf(.error_rate < 0.001) + "\terror_rate=\(.error_rate) errors=\(.errors)/\(.sent)" ),
           ( if .no_loss_checked then ( "no_message_loss_async_rmq\t" + okf(.no_loss) + "\tch_rows=\(.ch_rows) expected_min=\(.no_loss_expected)" ) else empty end ),
+          ( if .no_loss_checked then ( "ch_duplicate_rows_info\t1\tch_rows - unique ids = \(.ch_duplicate_rows)" ) else empty end ),
+          ( if .kafka_page then
+              ( "kafka_page_available_under_load\t" + okf(.kafka_page.polls > 0 and .kafka_page.unavailable == 0 and .kafka_page.failures == 0) + "\tpolls=\(.kafka_page.polls) unavailable=\(.kafka_page.unavailable) failures=\(.kafka_page.failures)" ),
+              ( "kafka_page_overview_under_5s\t" + okf(.kafka_page.overview_max_ms <= 5000) + "\toverview p95=\(.kafka_page.overview_p95_ms)ms max=\(.kafka_page.overview_max_ms)ms; topics p95=\(.kafka_page.topics_p95_ms)ms max=\(.kafka_page.topics_max_ms)ms" )
+            else empty end ),
+          ( if .sender_metrics then
+              ( "sender_no_consumer_restarts\t" + okf((.sender_metrics.error // "") == "" and .sender_metrics.restarts_delta == 0) + "\trestarts_delta=\(.sender_metrics.restarts_delta) \(.sender_metrics.error // "")" ),
+              ( "sender_no_commit_errors\t" + okf((.sender_metrics.error // "") == "" and .sender_metrics.commit_errors_delta == 0) + "\tcommit_errors_delta=\(.sender_metrics.commit_errors_delta) \(.sender_metrics.error // "")" )
+            else empty end ),
           ( (.modes // {}) | to_entries[] |
               ( "p95_\(.key)_under_\($p95max)ms\t" + okf(.value.p95_ms <= $p95max) + "\tp95=\(.value.p95_ms)ms sent=\(.value.sent)" ),
               ( "error_rate_\(.key)_under_0.1pct\t" + okf(.value.error_rate < 0.001) + "\terror_rate=\(.value.error_rate) errors=\(.value.errors)/\(.value.sent)" )

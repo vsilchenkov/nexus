@@ -38,7 +38,7 @@ func (f *fakeNodePaths) IDsByPaths(_ context.Context, paths []string) (map[strin
 // §98.2/§101.9: строки top-узлов получают id по точной паре (команда, путь).
 func TestKafkaByNode_ResolvesNodeIDs(t *testing.T) {
 	t.Parallel()
-	prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+	prom := &fakeProm{asyncThroughput: map[port.NodeKey]port.NodeThroughput{
 		{Team: "fin", Path: "billing"}:    {Out: 800, Errors: 0},
 		{Team: "geo", Path: "geo/notify"}: {Out: 200, Errors: 7},
 		{Path: metrics.NodeUnresolved}:    {Out: 50, Errors: 5},
@@ -83,7 +83,7 @@ func TestKafkaByNode_ResolvesNodeIDs(t *testing.T) {
 // строки, у каждой своя команда, число и ссылка.
 func TestKafkaByNode_SameNamePathsInTwoTeams(t *testing.T) {
 	t.Parallel()
-	prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+	prom := &fakeProm{asyncThroughput: map[port.NodeKey]port.NodeThroughput{
 		{Team: "messengers", Path: "telegram"}: {Out: 7200, Errors: 1747},
 		{Team: "webhook", Path: "telegram"}:    {Out: 220, Errors: 8},
 	}}
@@ -102,7 +102,7 @@ func TestKafkaByNode_SameNamePathsInTwoTeams(t *testing.T) {
 	assert.Equal(t, "messengers", first.Team)
 	assert.Equal(t, "id-messengers", first.NodeID)
 	assert.EqualValues(t, 1747, first.Failed)
-	assert.InDelta(t, 1747.0/8947.0, first.Rate, 1e-9)
+	assert.InDelta(t, 1747.0/7200.0, first.Rate, 1e-9) // §113.8: errors/out
 	assert.Equal(t, "webhook", second.Team)
 	assert.Equal(t, "id-webhook", second.NodeID)
 	assert.EqualValues(t, 8, second.Failed)
@@ -117,7 +117,7 @@ func TestKafkaByNode_SameNamePathsInTwoTeams(t *testing.T) {
 // свёртки), неоднозначный остаётся строкой без команды и без ссылки.
 func TestKafkaByNode_LegacyRowsFold(t *testing.T) {
 	t.Parallel()
-	prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+	prom := &fakeProm{asyncThroughput: map[port.NodeKey]port.NodeThroughput{
 		{Team: "fin", Path: "billing"}:  {Out: 100, Errors: 1},
 		{Path: "billing"}:               {Out: 900, Errors: 2},
 		{Team: "msg", Path: "telegram"}: {Out: 50},
@@ -158,7 +158,7 @@ func TestKafkaByNode_ResolverDegrades(t *testing.T) {
 
 	t.Run("резолвера нет вовсе", func(t *testing.T) {
 		t.Parallel()
-		prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{{Team: "fin", Path: "billing"}: {Out: 10}}}
+		prom := &fakeProm{asyncThroughput: map[port.NodeKey]port.NodeThroughput{{Team: "fin", Path: "billing"}: {Out: 10}}}
 		uc := NewKafkaMonitorUsecase(prom, nil, nil, nil, defaultTh(), logging.NewNoop())
 		r := uc.ByNode(context.Background(), since, until)
 		require.Len(t, r.TopProducers, 1)
@@ -168,7 +168,7 @@ func TestKafkaByNode_ResolverDegrades(t *testing.T) {
 
 	t.Run("резолвер упал", func(t *testing.T) {
 		t.Parallel()
-		prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+		prom := &fakeProm{asyncThroughput: map[port.NodeKey]port.NodeThroughput{
 			{Team: "fin", Path: "billing"}: {Out: 10},
 			{Path: "billing"}:              {Out: 5},
 		}}

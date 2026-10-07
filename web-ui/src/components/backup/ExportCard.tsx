@@ -5,7 +5,8 @@ import { Download, ShieldAlert } from "lucide-react";
 
 import { api } from "../../api/client";
 import { Button, Card, ErrorAlert, Field, Hint, Input, SectionHead } from "../ui";
-import { backupErrorText, saveBlob, type BackupStatus } from "./types";
+import { saveBlob } from "../../lib/download";
+import { backupErrorText, type BackupStatus } from "./types";
 
 // ExportCard — выгрузка всей конфигурации в зашифрованный паролем файл
 // (§110.4). Пароль вводится дважды: опечатка в нём делает файл

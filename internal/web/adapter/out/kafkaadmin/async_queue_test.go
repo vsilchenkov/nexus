@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -148,5 +149,30 @@ func TestQueueEnvelopeTagsMatchCanon(t *testing.T) {
 		want, ok := canon[tag]
 		require.True(t, ok, "поле %q отсутствует в каноне конверта — проекция разъехалась", tag)
 		assert.Equal(t, want, f.Type.String(), "тип поля %q разошёлся с каноном", tag)
+	}
+}
+
+// TestLiveTailStart: хвост очереди считается от committed, но не левее low
+// watermark; без ответа OffsetFetch — от low watermark, а не с 0.
+func TestLiveTailStart(t *testing.T) {
+	t.Parallel()
+
+	w := kafkapf.Watermark{First: 100, Last: 500}
+	tests := []struct {
+		name      string
+		committed map[int]int64
+		want      int64
+	}{
+		{"committed in range", map[int]int64{0: 250}, 250},
+		{"never committed", map[int]int64{0: -1}, 100},
+		{"committed under retention", map[int]int64{0: 40}, 100},
+		{"offset fetch failed", map[int]int64{}, 100},
+		{"nil map", nil, 100},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, liveTailStart(w, tt.committed, 0))
+		})
 	}
 }

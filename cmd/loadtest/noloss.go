@@ -24,6 +24,10 @@ type noLossResult struct {
 	rows     int64 // строк type IN (requestAsync, RabbitMQAsync) в CH-логе
 	expected int64 // async + rmq отправлено (at-least-once-пути)
 	ok       bool
+	// dupRows (§114.L) — строк сверх уникальных ID: повторные доставки
+	// (перечитанное после рестарта reader'а) и повторы попыток. Информативно —
+	// в критерии не входит; -1 — не посчитано.
+	dupRows int64
 	// inconclusive — rows<expected, но потеря НЕ подтверждена: на момент maxWait
 	// (или отмены ctx) count всё ещё рос, т.е. бэклог Kafka/RMQ ещё дренировался.
 	// At-least-once + Kafka хранит непрочитанное, поэтому это «не успели дослить»,
@@ -102,7 +106,22 @@ func checkNoLoss(ctx context.Context, f flags, expected int64) noLossResult {
 	// придёт. Любой другой выход ниже expected (maxWait/отмена при растущем
 	// count) — бэклог ещё дренировался → inconclusive, не подтверждённая потеря.
 	res.inconclusive = !res.ok && outcome != pollPlateau
+	res.dupRows = countDuplicateRows(ctx, conn, f.CHTable)
 	return res
+}
+
+// countDuplicateRows — строк async/rmq сверх уникальных ID (§114.L).
+// Best-effort: ошибка — -1 и строка в выводе, на вердикт no-loss не влияет.
+func countDuplicateRows(ctx context.Context, conn chgo.Conn, table string) int64 {
+	qctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	q := fmt.Sprintf("SELECT count() - uniqExact(ID) FROM %s WHERE type IN ('requestAsync','RabbitMQAsync')", table)
+	var dup int64
+	if err := conn.QueryRow(qctx, q).Scan(&dup); err != nil {
+		fmt.Printf("no-loss: duplicate rows not counted: %v\n", err)
+		return -1
+	}
+	return dup
 }
 
 // pollUntilStable опрашивает cnt с интервалом interval (ожидание выполняется и

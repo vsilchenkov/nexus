@@ -36,13 +36,13 @@ import { type Node } from "../../api/client";
 
 const TEAM_ID = "763e7f70-80d3-4762-8e8c-585098a8402a";
 
-function node(rootMethod: string): Node {
+function node(rootMethod: string, status = "enabled"): Node {
   return {
     id: "e557e4b9-55ce-455c-8bfc-9996d568a7c6",
     path: "acs_sigur",
     team_id: TEAM_ID,
     root_method: rootMethod,
-    status: "enabled",
+    status,
     clickhouse_table: "nexus_webhook.acs_sigur",
   } as unknown as Node;
 }
@@ -133,5 +133,58 @@ describe("QueueTab: раскладка KPI-строки", () => {
     const row = tile.closest("div")?.parentElement?.parentElement;
     expect(row?.className).toContain("grid");
     expect(screen.getByText("queue.kpi.pending")).toBeTruthy();
+  });
+});
+
+// queueListCalls — запросы списка очереди: по ним видно, ходит ли вкладка в Kafka.
+function queueListCalls() {
+  return apiGet.mock.calls.filter((c) => String(c[0]).includes("/async-queue/messages"));
+}
+
+describe("QueueTab: sync-узел на паузе (§113.9)", () => {
+  // Инцидент 06.10.2026: sync-узел на паузе 4 дня копил запросы с ответом 202,
+  // а вкладка говорила «очереди у синхронного узла нет» и не показывала их.
+  it("очередь показывается: плитка, секция и запрос списка", async () => {
+    apiGet.mockImplementation((url: string) => {
+      if (url === "/api/me/prefs") return Promise.resolve({ items: [] });
+      if (url.includes("/logs/failed-count")) return Promise.resolve({ count: 0, logs_available: true });
+      if (url.includes("/async-queue/messages"))
+        return Promise.resolve({
+          items: [{ id: "d-1", topic: "nexus.async.paused", partition: 3, offset: 7, received_at: new Date().toISOString(), method: "POST", target_url: "https://x", size: 10 }],
+          capped: false,
+        });
+      if (url.includes("/breaker")) return Promise.resolve({ configured: false });
+      return Promise.resolve({ items: [] });
+    });
+    renderTab(node("request", "paused"));
+
+    expect(await screen.findByText("queue.kpi.pending")).toBeTruthy();
+    expect(screen.getByText("queue.section.pending")).toBeTruthy();
+    expect(screen.getByText("queue.banner.state_paused_sync")).toBeTruthy();
+    await waitFor(() => expect(queueListCalls().length).toBeGreaterThan(0));
+  });
+
+  it("включённый sync-узел в Kafka не ходит", async () => {
+    renderTab(node("request"));
+    await screen.findByText("queue.kpi.failed");
+    await waitFor(() => expect(failedCountCalls().length).toBeGreaterThan(0));
+    expect(queueListCalls()).toHaveLength(0);
+    expect(screen.queryByText("queue.section.pending")).toBeNull();
+  });
+
+  it("обрезанный список — «50+» в плитке", async () => {
+    const items = Array.from({ length: 50 }, (_, i) => ({
+      id: `m-${i}`, topic: "nexus.async.paused", partition: 0, offset: i,
+      received_at: new Date().toISOString(), method: "POST", target_url: "https://x", size: 1,
+    }));
+    apiGet.mockImplementation((url: string) => {
+      if (url === "/api/me/prefs") return Promise.resolve({ items: [] });
+      if (url.includes("/logs/failed-count")) return Promise.resolve({ count: 0, logs_available: true });
+      if (url.includes("/async-queue/messages")) return Promise.resolve({ items, capped: true });
+      if (url.includes("/breaker")) return Promise.resolve({ configured: false });
+      return Promise.resolve({ items: [] });
+    });
+    renderTab(node("request", "paused"));
+    expect(await screen.findByText("50+")).toBeTruthy();
   });
 });

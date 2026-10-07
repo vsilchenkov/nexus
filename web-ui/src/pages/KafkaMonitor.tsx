@@ -15,6 +15,7 @@ import { Button, Card, DefaultPeriodButton, PeriodPicker, Seg, periodKey, period
 import { PREF_KEY_KAFKA_PERIOD, useTeamDefaultPeriod } from "../lib/prefs";
 import type { Period } from "../components/ui";
 import { HealthBanner } from "../components/kafka/HealthBanner";
+import { PausedBacklog } from "../components/kafka/PausedBacklog";
 import { LagChart, MiniSpark, ThroughputChart } from "../components/kafka/charts";
 import { TopicsTable } from "../components/kafka/TopicsTable";
 import { TopNodes } from "../components/kafka/TopNodes";
@@ -187,6 +188,7 @@ export default function KafkaMonitor() {
       <TopicsTable
         topics={topicsQ.data?.topics ?? []}
         sizesAvailable={topicsQ.data?.sizes_available ?? false}
+        kafkaAvailable={topicsQ.data?.kafka_available ?? true}
       />
 
       {/* Топ-узлы (§5.7) */}
@@ -233,6 +235,7 @@ function KpiCards({
         <div className="-mx-1 mt-1">
           <MiniSpark values={lagSpark} color={lagTone === "err" ? "#e85d5c" : lagTone === "warn" ? "#d9a441" : "#5b9bf0"} unit={t("kafka.tooltip.lag_unit")} />
         </div>
+        <PausedBacklog ov={ov} />
       </KpiCard>
 
       <KpiCard label={t("kafka.kpi.errors")} value={(s.failed_produced + s.failed_consumed).toLocaleString()} tone={errTone}>

@@ -262,3 +262,28 @@ WHERE clickhouse_table <> '' AND clickhouse_retention_days > 0 AND NOT external_
 	}
 	return out, nil
 }
+
+// nodesSnapshotSQL — число узлов на паузе и отпечаток таблицы nodes (§113.3).
+// Совместим с PostgreSQL 12 (бой): FILTER и string_agg … ORDER BY есть с 9.4.
+const nodesSnapshotSQL = `
+SELECT count(*) FILTER (WHERE status = $1),
+       coalesce(md5(string_agg(id::text || ':' || xmin::text, ',' ORDER BY id)), '')
+FROM nodes`
+
+// NodesSnapshot возвращает число узлов на паузе и отпечаток таблицы nodes —
+// триггер раунда прохода очереди паузы (§113.3).
+//
+// Отпечаток — md5 от пар id:xmin всех строк. xmin меняется при ЛЮБОМ UPDATE
+// строки, кем бы он ни был сделан (Web, raw SQL, keyrotate, восстановление из
+// резервной копии), поэтому ловится и смена статуса туда-обратно между двумя
+// тиками (paused → enabled → paused), которую сравнение статусов пропустило бы.
+// INSERT и DELETE меняют сам набор пар. Заморозка (VACUUM FREEZE) xmin не
+// переписывает — с PG 9.4 она ставит бит в infomask, — лишних раундов от
+// обслуживания нет. Периодических UPDATE по nodes в Nexus нет: отпечаток
+// меняется только от действий людей.
+func (r *Reader) NodesSnapshot(ctx context.Context) (paused int, fingerprint string, err error) {
+	if err := r.pg.QueryRow(ctx, nodesSnapshotSQL, string(domain.NodeStatusPaused)).Scan(&paused, &fingerprint); err != nil {
+		return 0, "", fmt.Errorf("nodes snapshot: %w", err)
+	}
+	return paused, fingerprint, nil
+}

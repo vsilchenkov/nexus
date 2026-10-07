@@ -229,7 +229,7 @@ proto: ## Генерация Go-кода из .proto через protoc
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		proto/sender/v1/sender.proto
 
-loadtest: ## Нагрузочный сценарий §10.2: make loadtest ADMIN_PASSWORD=... [TARGET_RPS=500 DURATION=10m NODES=50 RATIO_ASYNC=.3 RATIO_DYNAMIC_URL=.2 RATIO_AUTH_TOKEN=.3 RATIO_AUTH_BASIC=.1 CH_ADDR=localhost:9000 RATIO_RMQ=.2 RMQ_URL=amqp://...]
+loadtest: ## Нагрузочный сценарий §10.2: make loadtest ADMIN_PASSWORD=... [TARGET_RPS=500 DURATION=10m NODES=50 RATIO_ASYNC=.3 RATIO_DYNAMIC_URL=.2 RATIO_AUTH_TOKEN=.3 RATIO_AUTH_BASIC=.1 CH_ADDR=localhost:9000 RATIO_RMQ=.2 RMQ_URL=amqp://... KAFKA_PAGE_EVERY=10s SENDER_METRICS_URL=http://localhost:9093/metrics]
 	$(GO) run ./cmd/loadtest \
 		--admin-password $(ADMIN_PASSWORD) \
 		--target-rps $(or $(TARGET_RPS),500) \
@@ -241,7 +241,9 @@ loadtest: ## Нагрузочный сценарий §10.2: make loadtest ADMIN
 		--ratio-auth-basic $(or $(RATIO_AUTH_BASIC),0) \
 		$(if $(CH_ADDR),--ch-addr $(CH_ADDR),) \
 		$(if $(RATIO_RMQ),--ratio-rmq $(RATIO_RMQ),) \
-		$(if $(RMQ_URL),--rmq-url $(RMQ_URL),)
+		$(if $(RMQ_URL),--rmq-url $(RMQ_URL),) \
+		$(if $(KAFKA_PAGE_EVERY),--kafka-page-every $(KAFKA_PAGE_EVERY),) \
+		$(if $(SENDER_METRICS_URL),--sender-metrics-url $(SENDER_METRICS_URL),)
 
 INTEGRATION_TIMEOUT ?= 20m
 
@@ -263,8 +265,8 @@ test-integration: check-int-coverage test-int-pg test-int-ch test-int-catalog te
 check-int-coverage: ## проверить, что каждый integration-тест попадает хотя бы в одну группу
 	python scripts/ci/check_integration_coverage.py
 
-test-int-pg: ## integration: Postgres-узлы/миграции/multi-tenancy
-	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestNodeRepo|^TestNodeUC|^TestNodeCache|^TestNodeSearch|^TestNodeAuthor|^TestMigrate|^TestMultiTenancy" ./tests/integration/...
+test-int-pg: ## integration: Postgres-узлы/миграции/multi-tenancy/отпечаток узлов §113
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestNodeRepo|^TestNodeUC|^TestNodeCache|^TestNodeSearch|^TestNodeAuthor|^TestNodesSnapshot|^TestMigrate|^TestMultiTenancy" ./tests/integration/...
 
 test-int-ch: ## integration: ClickHouse/шаблоны/метрики/replay/владение БД (§70)/резервная копия (§110)
 	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestClickHouse|^TestCHTemplateRepo|^TestCHProvisioner|^TestLogReader|^TestMetricsReader|^TestReplay|^TestMultiInstance|^TestBackup" ./tests/integration/...
@@ -287,8 +289,8 @@ test-int-rmq: ## integration: RabbitMQAsync Puller (§27)
 test-int-sender: ## integration: Sender async + DLQ + DLQ-репроцессор (Kafka)
 	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestSender_" ./tests/integration/...
 
-test-int-queue: ## integration: управление async-очередью §35 + tombstones (Kafka+Redis)
-	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAsyncQueue|^TestQueueCancel" ./tests/integration/...
+test-int-queue: ## integration: управление async-очередью §35 + tombstones (Kafka+Redis) + офсеты брокера §113 + адаптер экрана Kafka §114
+	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAsyncQueue|^TestQueueCancel|^TestKafkaOffsets|^TestKafkaAdmin" ./tests/integration/...
 
 test-int-misc: ## integration: остальное — скоупы, статусы узла, одноразовые ссылки §88, каталог полей, dry-run, rDNS, ротация ключа §90
 	$(GOTEST) -tags=integration -count=1 -v -timeout $(INTEGRATION_TIMEOUT) -run "^TestAuditKeyset|^TestAuditRevert|^TestAuditScope|^TestCHTableVerify|^TestKeyRotate|^TestDryRun|^TestMigrations_|^TestNodeAck|^TestNodeAsyncAckSpec|^TestNodeScope|^TestNodeStatus|^TestOneTimeToken|^TestRotateKey|^TestUserRepo_|^TestRDNS|^TestRequestFieldCatalog|^TestTeamExternalURL|^TestTeamFavorites" ./tests/integration/...

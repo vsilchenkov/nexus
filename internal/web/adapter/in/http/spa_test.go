@@ -3,12 +3,15 @@ package http
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 	"testing/fstest"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"nexus/internal/web/static"
 )
 
 // newSPARouter — роутер с SPA-раздачей поверх fstest.MapFS. MapFS выбран
@@ -82,6 +85,27 @@ func TestSPAFallback_MissingAssetIs404(t *testing.T) {
 	assert.NotContains(t, w.Header().Get("Content-Type"), "text/html")
 	assert.NotContains(t, w.Body.String(), "<html")
 	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+}
+
+// Регресс §115.2: index.html ссылался на /nexus.svg, которого во встроенной ФС
+// не было, — запрос уходил в SPA-fallback и получал index.html с text/html, и
+// вкладка браузера показывала пустой документ вместо логотипа. Проверяется
+// настоящий встроенный бандл: ссылка и файл обязаны приехать одной сборкой.
+func TestSPAFallback_FaviconServedFromEmbeddedBundle(t *testing.T) {
+	t.Parallel()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	SPAFallback(r, static.FS())
+
+	index := doGet(t, r, "/")
+	require.Equal(t, http.StatusOK, index.Code)
+	m := regexp.MustCompile(`<link rel="icon"[^>]*href="([^"]+)"`).FindStringSubmatch(index.Body.String())
+	require.Len(t, m, 2, "index.html must link a favicon")
+
+	w := doGet(t, r, m[1])
+	require.Equal(t, http.StatusOK, w.Code, m[1])
+	assert.Contains(t, w.Header().Get("Content-Type"), "image/svg+xml", m[1])
+	assert.Contains(t, w.Body.String(), "<svg", m[1])
 }
 
 func TestSPAFallback_IndexAndAPI(t *testing.T) {

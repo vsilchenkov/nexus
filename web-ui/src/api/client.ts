@@ -38,6 +38,22 @@ export function attachmentName(header: unknown): string | undefined {
   return m?.[1];
 }
 
+// parseBlobError — с responseType "blob" axios и тело ошибки отдаёт blob'ом:
+// разбираем его обратно в JSON, чтобы вызывающий читал response.data.error
+// как у остальных запросов. Возвращает ту же ошибку для throw.
+async function parseBlobError(e: unknown): Promise<unknown> {
+  const res = (e as { response?: { data?: unknown } }).response;
+  if (res?.data instanceof Blob) {
+    try {
+      res.data = JSON.parse(await res.data.text());
+    } catch {
+      // Не JSON (обрыв прокси, HTML-страница ошибки) — оставляем как есть,
+      // вызывающий покажет общую ошибку.
+    }
+  }
+  return e;
+}
+
 export const api = {
   // opts.signal — настоящая отмена HTTP-запроса (§77.3): react-query передаёт
   // AbortSignal в queryFn, и без проброса в axios отмена оставалась бы чисто
@@ -80,16 +96,38 @@ export const api = {
       const r = await axiosInstance.post<Blob>(url, body, { responseType: "blob" });
       return { blob: r.data, filename: attachmentName(r.headers["content-disposition"]) };
     } catch (e) {
-      const res = (e as { response?: { data?: unknown } }).response;
-      if (res?.data instanceof Blob) {
-        try {
-          res.data = JSON.parse(await res.data.text());
-        } catch {
-          // Не JSON (обрыв прокси, HTML-страница ошибки) — оставляем как есть,
-          // вызывающий покажет общую ошибку.
-        }
-      }
-      throw e;
+      throw await parseBlobError(e);
+    }
+  },
+  // getBlob — GET с файлом в ответе (§115: выгрузка журнала в Excel). Файл
+  // идёт потоком минутами, поэтому общий потолок 30 с снят (timeout: 0 —
+  // без ограничения): каждый запрос в ClickHouse ограничен сервером, а
+  // «Остановить» — opts.signal. onDownloadProgress — сколько байт уже пришло
+  // (длины заранее нет: файл пишется по мере чтения журнала). opts.headers —
+  // например Accept-Language: язык листов файла должен совпадать с языком
+  // интерфейса, а не браузера.
+  async getBlob(
+    url: string,
+    params?: Record<string, unknown>,
+    opts?: {
+      signal?: AbortSignal;
+      headers?: Record<string, string>;
+      onDownloadProgress?: (loaded: number) => void;
+    },
+  ): Promise<{ blob: Blob; filename?: string }> {
+    const onProgress = opts?.onDownloadProgress;
+    try {
+      const r = await axiosInstance.get<Blob>(url, {
+        params,
+        signal: opts?.signal,
+        headers: opts?.headers,
+        responseType: "blob",
+        timeout: 0,
+        onDownloadProgress: onProgress ? (e) => onProgress(e.loaded) : undefined,
+      });
+      return { blob: r.data, filename: attachmentName(r.headers["content-disposition"]) };
+    } catch (e) {
+      throw await parseBlobError(e);
     }
   },
   async put<T>(url: string, body?: unknown): Promise<T> {
@@ -478,8 +516,12 @@ export type KafkaOverview = {
     consumed_total: number;
     failed_produced: number;
     failed_consumed: number;
+    // §113.7: current_lag — только основная группа (из брокера, при его
+    // недоступности из Prometheus). paused_backlog — сообщения узлов на паузе
+    // в nexus.async.paused: ждут по замыслу и в lag не входят.
     current_lag: number;
     in_flight_now: number;
+    paused_backlog: number;
   };
   delta_vs_previous_period: { produced: number; consumed: number; has_delta: boolean };
   error_rate: number;
@@ -491,15 +533,39 @@ export type KafkaOverview = {
   };
   health: { severity: KafkaSeverity; reason: string };
   prometheus_available: boolean;
+  // §114.5: kafka_available — все чтения брокера удались (состояние брокеров,
+  // lag основной группы и очереди паузы). paused_backlog_available=false —
+  // очередь паузы настроена, но брокер не ответил: paused_backlog=0 там не
+  // значит «пусто».
   kafka_available: boolean;
+  paused_backlog_available: boolean;
+  // §113.7: узлы на паузе (не больше 20, всего — paused_nodes_total). Заполнены
+  // только при paused_backlog > 0 и paused_nodes_available: при false список не
+  // прочитан, и утверждать «узлов на паузе нет» нельзя.
+  lag_from_broker: boolean;
+  paused_nodes: KafkaPausedNode[];
+  paused_nodes_total: number;
+  paused_nodes_available: boolean;
 };
+export type KafkaPausedNode = { id: string; team: string; path: string };
 export type KafkaPoint = { t: number; v: number };
 export type KafkaTimeseries = {
   step_seconds: number;
   series: Record<string, KafkaPoint[]>;
   prometheus_available: boolean;
 };
-export type KafkaTopicGroup = { group: string; lag_total: number; members: number };
+// §113.7: role — роль группы Nexus; у посторонней группы её нет. Lag paused- и
+// dlq-групп — сообщения, ждущие по замыслу, а не отставание обработки.
+// §114.6: uncommitted_partitions — у посторонней группы партиций без
+// сохранённой позиции; их lag в lag_total не входит.
+export type KafkaGroupRole = "main" | "paused" | "dlq" | "retry";
+export type KafkaTopicGroup = {
+  group: string;
+  lag_total: number;
+  members: number;
+  role?: KafkaGroupRole;
+  uncommitted_partitions?: number;
+};
 export type KafkaTopic = {
   name: string;
   partitions: number;
@@ -514,6 +580,7 @@ export type KafkaTopic = {
 // sizes_available (§75): источник размеров (метрика kafka_log_log_size JMX-агента
 // брокера) ответил. При false нули в size_bytes означают «источника нет», при
 // true — «топик пуст».
+// kafka_available=false (§114.5) — брокер не ответил: список не прочитан, а не пуст.
 export type KafkaTopicsResp = {
   topics: KafkaTopic[];
   kafka_available: boolean;

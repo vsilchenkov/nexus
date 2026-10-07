@@ -318,6 +318,15 @@
       "of_total": "of total",
       "in_flight_hint": "between produce and consume"
     },
+    "paused": {
+      "backlog": "deferred: {{n}}",
+      "nodes": "paused nodes: {{n}}",
+      "more": "and {{n}} more",
+      "stuck": "deferred: {{n}}, no paused nodes — should drain within minutes; if it does not shrink, check the Sender",
+      "hint": "Requests of paused nodes wait in nexus.async.paused and are delivered after the node is resumed. They are not consumer lag.",
+      "unavailable": "deferred: — (Kafka broker did not respond)",
+      "unavailable_hint": "The paused queue was not read: the broker returned an error or did not respond within 3 s (the answer is cached for up to 30 s). Messages are not lost."
+    },
     "topics": {
       "title": "Topics",
       "name": "Topic",
@@ -329,11 +338,22 @@
       "groups": "Consumer groups",
       "health": "State",
       "empty": "No topics",
+      "unavailable": "Kafka broker did not respond — topic list unavailable",
+      "uncommitted": "no commit: {{n}} part.",
+      "uncommitted_hint": "Partitions without a saved position: {{n}}. Their lag is not counted: the group does not read them or has not saved a position yet.",
       "state": {
         "ok": "OK",
         "under_replicated": "under-replicated",
         "lag": "growing lag",
         "offline": "offline partitions"
+      },
+      "role_waiting": {
+        "paused": "{{group}} · deferred {{n}}",
+        "dlq": "{{group}} · awaiting retry {{n}}"
+      },
+      "role_hint": {
+        "paused": "Requests of paused nodes: they wait by design and are delivered after resume, so they do not count as lag",
+        "dlq": "Failed deliveries waiting for scheduled reprocessing: they do not count as lag"
       }
     },
     "top_producers": {
@@ -399,6 +419,10 @@
       "produce_latency_high": {
         "title": "Produce latency elevated",
         "details": "Processing p95 latency is above the threshold. Check broker and Sender load."
+      },
+      "broker_unreachable": {
+        "title": "Kafka broker did not answer all requests",
+        "details": "Some broker reads (group lag, paused queue, broker state) failed or took longer than 3 s. What was not read comes from Prometheus or is shown as a dash. Check the broker."
       }
     },
     "rate_limited": "Too many requests, try again in a minute.",
@@ -426,6 +450,16 @@
       "enabled": "Active",
       "disabled": "Disabled",
       "paused": "Paused"
+    },
+    "status_confirm": {
+      "pause_sync_title": "Pause the synchronous node?",
+      "pause_sync_message": "Requests will not be rejected: the caller gets 202 (queued) without the target's response, and requests pile up in the queue to be delivered after resume. To reject requests, disable the node.",
+      "pause_sync_action": "Pause",
+      "disable_title": "Disable the node?",
+      "disable_queue_message": "Waiting to be sent: {{waiting}}. Disabling deletes these messages undelivered — re-enabling will not bring them back.",
+      "disable_empty_message": "The node stops accepting requests. The queue is empty — nothing will be deleted.",
+      "disable_unknown_message": "The node stops accepting requests. The queue could not be read: any messages in it are deleted undelivered — re-enabling will not bring them back.",
+      "disable_action": "Disable"
     },
     "actions": {
       "edit": "Edit",
@@ -1054,6 +1088,42 @@
       "hint_modes": "Aa — match case; ab| — whole word only; .* — regular expression.",
       "hint_regex_note": "In .* mode the whole input is one RE2 expression, the syntax above is disabled."
     },
+    "export": {
+      "button": "Export",
+      "title": "Export logs to Excel",
+      "filters": "“Logs” tab filters",
+      "state": "State",
+      "volume": "Volume",
+      "rows_label": "Rows at most",
+      "rows_max_unknown": "all",
+      "bodies": "Request and response bodies (up to {{n}} characters per cell)",
+      "bodies_plain": "Request and response bodies",
+      "estimate": "Estimate",
+      "estimate_loading": "Calculating…",
+      "estimate_unavailable": "Estimate unavailable: ClickHouse did not answer in time. You can still export.",
+      "nothing": "No records match the filters.",
+      "found": "Records found: {{records}} · to file: {{inFile}}",
+      "size": "Data volume: ≈ {{size}} — by the average record size (the .xlsx file is compressed and will be smaller)",
+      "limited_rows": "The {{n}} newest records go to the file — the rest are cut by the limit.",
+      "limited_bytes": "The estimate exceeds the {{max}} volume limit — the export may stop earlier: records are written from newest to oldest until the volume runs out. Turn off bodies or narrow the filter.",
+      "warn_no_period": "No period set — the newest records of the node's whole history will be exported.",
+      "warn_no_period_search": "No period set — the search runs over the node's whole history: it is slow and may hit the timeout. Set “From/To”.",
+      "warn_bodies": "Request and response bodies are not masked — they may contain personal data and secrets. The export is recorded in the audit log.",
+      "submit": "Export .xlsx",
+      "running": "Exporting… {{size}}",
+      "stop": "Stop",
+      "saved": "File saved ({{size}}). Completeness and the applied filters are on the “Parameters” sheet.",
+      "stopped": "Export stopped, the file was not saved.",
+      "err_rate": "Too many exports — wait a minute and try again.",
+      "err_generic": "Failed to export logs",
+      "filters_hint": "Exactly what the log shows is exported. To change the filters, close the form and adjust them on the tab.",
+      "period": "Period",
+      "period_from": "from {{from}}",
+      "period_to": "to {{to}}",
+      "run": "Run",
+      "no_filters": "No filters set",
+      "err_not_found": "The node log is unavailable: the node was not found or ClickHouse is not connected to this server"
+    },
     "filter": {
       "all": "All",
       "ok": "OK",
@@ -1229,14 +1299,13 @@
     },
     "banner": {
       "explain": "Failed deliveries stay in the logs (with reason and body) and can be replayed. To stop the growth, pause or disable the node; to remove them and stop the automatic retry, use “Clear failed”. The dead-letter backlog expires by retention.",
-      "explain_sync": "A synchronous node answers the caller immediately and has no queue. Failed deliveries stay in the logs (with reason and body) and can be replayed, but are never retried automatically. To stop the growth, pause or disable the node; to remove the records from view, use “Clear failed”.",
+      "explain_sync": "A synchronous node answers the caller immediately; it has a queue only while paused (requests are accepted with 202 and wait for resume). Failed deliveries stay in the logs (with reason and body) and can be replayed. To stop delivery, pause the node (requests pile up) or disable it (requests are rejected); to remove the records from view, use “Clear failed”.",
       "pause": "Pause node",
       "disable": "Disable node",
-      "disable_confirm": "Disable the node? It will stop accepting and delivering requests until re-enabled.",
       "resume": "Resume node",
       "enable": "Enable node",
       "state_paused": "The node is paused — new requests pile up in the queue below and are not delivered. Resume to drain it, or purge it.",
-      "state_paused_sync": "The node is paused — incoming requests are rejected right away (a synchronous node has no queue, so nothing piles up). Resume to accept requests again.",
+      "state_paused_sync": "The node is paused — synchronous requests are accepted with 202 (queued) and pile up in the queue below; the caller gets no response from the target. They are delivered after resume. Disabling the node deletes them undelivered.",
       "state_paused_pull": "The node is paused — Nexus stops pulling new messages from RabbitMQ, so they stay in the broker queue. Below are only the messages the bus accepted before the pause (purging affects exactly those). Resume to keep draining the queue.",
       "state_disabled": "The node is disabled — incoming requests are rejected (nothing is queued)."
     },
@@ -1256,7 +1325,7 @@
       "no_logging": "Logging is not configured for this node — failed deliveries can't be shown.",
       "original_window_hint": "Retry sends the full body while the original is still in the queue — about {{hours}}h after it was received; later the log copy is used, and a truncated copy is not sent at all.",
       "reprocess_hint": "Retried automatically until TTL ({{hours}} h) — once the target recovers, they are delivered. “Replay” forces an immediate retry.",
-      "no_reprocess_hint": "Synchronous requests are never retried automatically: the caller already got its response. “Replay” re-sends them manually.",
+      "no_reprocess_hint": "Synchronous requests are never retried automatically: the caller already got its response. The exception is requests accepted while paused (202): they are delivered through the queue and retried like asynchronous ones. “Replay” re-sends them manually.",
       "replay": "Replay",
       "col": {
         "status": "Status",

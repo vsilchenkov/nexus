@@ -230,6 +230,14 @@ const DLQGroupSuffix = "-dlq-reprocess"
 // DLQGroup возвращает имя consumer-group авто-репроцессора DLQ.
 func (k KafkaSection) DLQGroup() string { return k.ConsumerGroup + DLQGroupSuffix }
 
+// ClogRetryGroupSuffix — суффикс consumer-group повтора записи в ClickHouse
+// (§38). Группу вычисляют Sender (читает retry_topic) и Web (§113.7: роль
+// группы на экране Kafka).
+const ClogRetryGroupSuffix = "-clog-retry"
+
+// ClogRetryGroup возвращает имя consumer-group повтора записи в ClickHouse.
+func (k KafkaSection) ClogRetryGroup() string { return k.ConsumerGroup + ClogRetryGroupSuffix }
+
 type KafkaTopicSection struct {
 	Partitions        int    `yaml:"partitions"`
 	ReplicationFactor int    `yaml:"replication_factor"`
@@ -267,6 +275,18 @@ type KafkaConsumerSection struct {
 	MaxPollIntervalMs      int    `yaml:"max_poll_interval_ms"`
 	IsolationLevel         string `yaml:"isolation_level"`
 	Instances              int    `yaml:"instances"`
+	// StallAfterSec — §113.6: порог сторожа зависшего reader'а Sender'а. Ключа
+	// нет → 120 (defaults), 0 — сторож выключен. Указатель: иначе «ключа нет» и
+	// «выключить» не различить.
+	StallAfterSec *int `yaml:"stall_after_sec"`
+}
+
+// StallAfter — порог сторожа зависшего reader'а (§113.6); 0 — выключен.
+func (k KafkaConsumerSection) StallAfter() time.Duration {
+	if k.StallAfterSec == nil {
+		return 0
+	}
+	return time.Duration(max(*k.StallAfterSec, 0)) * time.Second
 }
 
 type ReceiverSection struct {
@@ -488,10 +508,21 @@ type SenderRDNSNetBIOSConfig struct {
 // партиции, мы вернули бы head-of-line blocking внутрь delay-топика (узел,
 // снявший паузу, ждал бы бэклог долго-paused соседа). IntervalSec задаёт и
 // максимальную задержку доставки после снятия паузы, и темп циркуляции.
+//
+// §113.3: тик interval_sec — это момент РЕШЕНИЯ, а не проход. Проход идёт, только
+// когда судьба сообщений могла измениться (узлы, отмена, старт) — иначе очередь
+// узла на паузе переписывалась бы каждые 30 с (бой 06.10.2026: 17 ГБ за 4 дня).
 type SenderPausedSweepConfig struct {
 	Disabled    bool `yaml:"disabled"`     // выключатель (default false → включён)
-	IntervalSec int  `yaml:"interval_sec"` // период прохода (default 30с)
+	IntervalSec int  `yaml:"interval_sec"` // период тика планировщика (default 30с)
 	MaxScan     int  `yaml:"max_scan"`     // cap сообщений за проход (default 1000)
+	// BackstopSec — страховочный раунд без события (§113.3, default 21600 = 6 ч).
+	// Эффективно min(значение, retention топика / 4): сообщение на паузе
+	// переписывается не реже раза в backstop и не должно протухнуть по retention.
+	BackstopSec int `yaml:"backstop_sec"`
+	// Continuous — аварийный выключатель планировщика (§113.3): проход на каждом
+	// тике, как до §113. Без отката кода, если раунды по событию подведут.
+	Continuous bool `yaml:"continuous"`
 }
 
 // SenderReprocessorConfig — глобальные параметры авто-репроцессора DLQ (§36).
@@ -608,6 +639,27 @@ type WebSection struct {
 	// работает как прежде — Web не обязан знать про Sender ради базового
 	// сценария. Тип общий с receiver.sender_grpc.
 	SenderGRPC ReceiverSenderGRPCConfig `yaml:"sender_grpc"`
+	// LogsExport — выгрузка журнала узла в Excel (§115.6).
+	LogsExport LogsExportSection `yaml:"logs_export"`
+}
+
+// LogsExportSection — потолки выгрузки журнала узла в Excel (§115.6). Ноль
+// поля → дефолт (defaults.go). Меняется только конфигом, нужен рестарт Web.
+type LogsExportSection struct {
+	// MaxRows — записей в файле (≤ 1 048 575 — строк листа Excel без шапки).
+	MaxRows int `yaml:"max_rows"`
+	// MaxBytes — бюджет текста ячеек, байт UTF-8: на исчерпании выгрузка
+	// останавливается со статусом «ограничена объёмом».
+	MaxBytes int64 `yaml:"max_bytes"`
+	// MaxBodyChars — символов тела в ячейке (≤ 32 767 — предел ячейки Excel).
+	MaxBodyChars int `yaml:"max_body_chars"`
+	// MaxConcurrent — одновременных выгрузок на реплику Web.
+	MaxConcurrent int `yaml:"max_concurrent"`
+	// RateLimitPerUserPerMin — запусков выгрузки на пользователя в минуту.
+	RateLimitPerUserPerMin int `yaml:"rate_limit_per_user_per_min"`
+	// QueryTimeoutSec — таймаут шага в ClickHouse: отбор ключей целиком (все
+	// раунды) и каждый батч строк.
+	QueryTimeoutSec int `yaml:"query_timeout_sec"`
 }
 
 // KafkaAlertsSection — пороги индикации (жёлтый/красный) для экрана

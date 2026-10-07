@@ -111,7 +111,7 @@
 |---|---|---|
 | `/metrics` Prometheus в каждом сервисе | ✅ | [platform/metrics/metrics.go](../internal/platform/metrics/metrics.go) — изолированный `*prometheus.Registry`, подключается через `a.metrics.Handler()` в каждом `app.go` |
 | **`nexus_requests_total` + `nexus_request_duration_seconds`** | ✅ Phase 6.1 | Gin middleware [platform/metrics/gin.go](../internal/platform/metrics/gin.go) — Receiver/Web; gRPC [sender_service.go](../internal/sender/adapter/in/grpc/sender_service.go) и async [usecase/async.go](../internal/sender/usecase/async.go) — Sender |
-| **`nexus_kafka_lag`** | ✅ Phase 6.1 | reporter в [sender/app.go](../internal/sender/app.go) `reportKafkaLag()` — раз в 15 сек снимает `Stats()` со всех consumer-инстансов |
+| **`nexus_kafka_lag`** | ✅ Phase 6.1, из брокера с Phase 113.5 | [kafkaoffsets/lag.go](../internal/sender/adapter/out/kafkaoffsets/lag.go) `LagReporter` — раз в 15 сек `ListOffsets − OffsetFetch` по реальным партициям для групп main/clog-retry/dlq-reprocess/paused (`lagTargets` в [sender/app.go](../internal/sender/app.go)); до §113 — `Reader.Stats()` (см. 4.98) |
 | **`nexus_clickhouse_buffer_size` / `_errors_total` / `_dropped_total` / `_fallback_total`** | ✅ Phase 6.1 | [chlog/writer.go](../internal/sender/adapter/out/chlog/writer.go) обновляет в `append`/`flushTable`/`Write` |
 | **HTTP-API метрик для панели (§21)** | ✅ Phase 21.1 (+§21 CH-источник) | Глобальные KPI Overview (incoming/outgoing/errors 24ч) и Kafka-мониторинг — из Prometheus ([adapter/out/prometheus/client.go](../internal/web/adapter/out/prometheus/client.go)). **Per-node метрики — из ClickHouse-логов** ([adapter/out/clickhouse/log_reader.go](../internal/web/adapter/out/clickhouse/log_reader.go) `NodeKPI`/`NodeChart`): и страница узла (вкладки «Обзор»/«Метрики»), и **throughput рабочего стола** (`NodesOverview`, per-node конкурентно) — один источник, цифры стола = цифры узла, без неточного `increase()`. Usecase [usecase/metrics.go](../internal/web/usecase/metrics.go), порт [port/metrics_provider.go](../internal/web/usecase/port/metrics_provider.go) + [port/log_reader.go](../internal/web/usecase/port/log_reader.go), handler [metrics_handler.go](../internal/web/adapter/in/http/metrics_handler.go): `GET /api/metrics/overview`, `/api/metrics/nodes`, `/api/metrics/nodes/{id}`. Без CH `NodesOverview` деградирует на Prometheus. |
 
@@ -1338,6 +1338,10 @@ CSS-переменных, заданных в [globals.css](../web-ui/src/styles
    корректным MIME. Без этого route запросы к `/assets/index-*.js` проваливаются в
    `NoRoute` → возвращается `index.html` с `text/html` → модульный скрипт не исполняется.
 
+**Файлы в корне сайта не отдаются (§115.2):** `/nexus.svg`, `/favicon.ico` и т.п. уходят в
+`NoRoute` и получают `index.html`. Любой статический файл для `index.html` (иконка) кладётся в
+`web-ui/src/assets/` и подключается как исходник — Vite выпустит его хешированным в `/assets/`.
+
 `make build-ui` копирует свежий `web-ui/dist/*` в `internal/web/static/` (ассеты
 git-tracked — это источник embed; CI job `go-build` их не пересобирает). После правок
 во фронте нужно пересобрать UI и закоммитить обновлённый бандл, иначе бинарь отдаёт
@@ -1432,7 +1436,8 @@ gRPC server, chlog.Writer и AsyncProcessor — глобальной registry м
 
 - Глобальные KPI Overview: incoming = `sum(increase(nexus_requests_total{service="receiver"}[24h]))`,
   outgoing = то же для `service="sender"`, errors = `…,status=~"0|[45].."`; очередь Kafka =
-  `sum(nexus_kafka_lag)`; per-node throughput = `sum by (node)(…)`.
+  `sum(nexus_kafka_lag)` (с §113.5 — `sum(max by (group, topic, partition) (nexus_kafka_lag{group="<main>"}))`,
+  опция `WithKafkaMainGroup`); per-node throughput = `sum by (node)(…)`.
 - **per-node KPI и ряд графика на странице узла** (`NodeKPI`/`NodeChart`): total/errors через
   `increase(nexus_requests_total)` / `increase(nexus_request_incomplete_total)` (errors = «незавершённые»,
   точный аналог прежнего CH-условия `status>=400 OR status=0 OR done=0`), delivered = total−errors,
@@ -3440,11 +3445,10 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
 - **Зависание async-consumer'а Sender'а после рестарта Kafka** (найдено стендом перед 1.40.1, см.
   §112 «Стенд перед релизом»). kafka-go v0.4.51 после рестарта брокера иногда остаётся в
   consumer-группе (heartbeat идёт, партиции назначены), но `FetchMessage` больше не возвращается;
-  `nexus_kafka_lag` (из `Reader.Stats`) при этом 0, `nexus_kafka_in_flight` — 0. Лечится только
-  рестартом Sender'а; сейчас закрыто процедурой (DEPLOYMENT §9.1.7). Нужно отдельное ТЗ:
-  сторож прогресса (лаг по брокеру > 0 и нет fetch N секунд → пересоздать reader), лаг из
-  брокера вместо `Reader.Stats`, алерт; заодно проверить другие reader'ы (clog-retry, dlq,
-  paused) и обновление kafka-go.
+  `nexus_kafka_lag` (из `Reader.Stats`) при этом 0, `nexus_kafka_in_flight` — 0. **Закрыто §113:**
+  lag из брокера (зависание видно по `nexus_kafka_lag`) и сторож (Phase 113.7, см. 4.98) для всех
+  четырёх групп. Осталось: обновление kafka-go (может убрать первопричину) и воспроизведение
+  зависания на стенде — сторож проверен на имитации «стоящей» партиции, а не на живом зависании.
 
 0. **Горизонтальное масштабирование Receiver/Web (нулевой простой при обновлении)** — вынесено
    из §74 отдельным ТЗ. Сейчас у каждого сервиса один экземпляр, и `docker compose up` даёт
@@ -4391,6 +4395,15 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   (`warmupConsumer`): сначала доставляем сообщение enabled-узла и ждём его хита — это доказывает, что
   consumer активен, и только потом проверяем отсутствие доставки. Любой новый тест этого контура
   обязан начинаться с warmup.
+- **§113.2: то же правило для ВСЕХ reader'ов, включая проходные.** Sweeper паузы и DLQ-репроцессор
+  жили с `break` без commit на Retry и тем самым теряли сообщение (найдено при разборе боевого
+  инцидента 06.10.2026, см. 4.98). Повтор вынесен в общий хелпер
+  [retry_in_place.go](../internal/sender/adapter/in/kafka/retry_in_place.go) `inPlaceRetry.run`:
+  проходные reader'ы — backoff 1→30 с (сбой PG/Kafka может затянуться, долбить раз в секунду
+  незачем), основной consumer — постоянная 1 с (после восстановления зависимости поток не должен
+  ждать). Тест-фейк обязан моделировать «нет передоставки» (после Retry fetch отдаёт X+1) — старый
+  тест `RetryBreaksWithoutCommit` закреплял именно дефект: смотрел на один проход («не закоммитили —
+  значит не потеряли») и не проверял, что сделает следующий.
 
 ### 4.38 §3.6 delay-топик `nexus.async.paused`: изоляция paused-узлов
 
@@ -4406,10 +4419,15 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   снявший паузу, ждёт за бэклогом долго-paused соседа (10k сообщений × 1 с ≈ 3 часа) — тот же
   head-of-line, просто переехавший в delay-топик. Пауза должна быть МЕЖДУ проходами: внутри прохода
   работаем на полной скорости, `interval_sec` (30 с) ограничивает темп циркуляции и задаёт
-  максимальную задержку доставки после `unpause`.
+  максимальную задержку доставки после `unpause`. **§113.3: тик — момент решения, а не проход:**
+  проход только по событию, иначе очередь узла на паузе переписывается каждые 30 с (бой
+  06.10.2026, 17 ГБ за 4 дня; см. 4.98).
 - **Инварианты прохода скопированы из DLQ-репроцессора (§36):** wrap-detect `seen[id]` (иначе бэклог
   крутится внутри одного прохода бесконечно) и **commit строго ДО break** (иначе коммит последующих
-  прокатывает offset мимо незакоммиченного — та же потеря, что в 4.37).
+  прокатывает offset мимо незакоммиченного — та же потеря, что в 4.37). До §113.2 оба проходных
+  reader'а нарушали этот инвариант на `HandleRetry`/`ReprocessRetry`: `break` без commit, следующий
+  проход читал X+1 (тот же reader X не передоставляет), commit X+1 перешагивал X. Теперь Retry
+  повторяется на месте (см. 4.37, последний пункт).
 - **`paused_since` — метка первого откладывания**, не затирается на кругах циркуляции: по ней виден
   возраст бэклога (нужно для баннера §3.6 «узел в паузе X дней»). `last_requeue_at` обновляется.
 - **Известные ограничения (приняты осознанно):**
@@ -4419,7 +4437,8 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   - *Порядок.* На границе `unpause` строгий FIFO рвётся: прочитанное до снятия паузы уезжает в хвост
     и доставляется позже прочитанного после. Обещание «порядок сохраняется» из §3.6 п.4 снято.
   - *Выключенный sweeper* = бэклог не доставится вообще и протухнет по retention. Наблюдаемость —
-    `nexus_kafka_lag` по группе `<group>-paused` (публикуется из `reportKafkaLag`).
+    `nexus_kafka_lag` по группе `<group>-paused` (из брокера, `LagReporter`, §113.5) и алерт
+    `NexusPausedBacklogStuck`.
 - **§35 обязан знать оба топика.** Иначе у paused-узла KPI «Ожидают отправки» показывает 0, а
   «Очистить все ожидающие» не находит сообщений — отваливается главный юзкейс §34.4. `List`/`ScanIDs`
   ходят по обоим источникам ([async_queue.go](../internal/web/usecase/async_queue.go) `sources()`),
@@ -4858,6 +4877,9 @@ vitest-кейсы nodeValidation.
   корректно работали для sync-узла ещё до §69, но были недостижимы: вкладку скрывал фронт. Обратная
   сторона — `List`/`purge` (настоящая Kafka) для sync-узла бессмысленны, отсюда ранние выходы
   §69.4: без них каждое открытие вкладки sync-узла стоило бы скана двух топиков до `peekCap`.
+  **Уточнено §113.9:** «бессмысленны» верно только для ВКЛЮЧЁННОГО sync-узла. На паузе Receiver
+  отвечает на его запросы 202 и кладёт их в Kafka (§3.6), так что очередь есть, и ранний выход её
+  прятал (инцидент 06.10.2026). Tombstone'ы в `PurgeFailed` с §113.9 пишутся для всех узлов.
 - **Валидацию схемы нельзя вешать на «любой непустой `target_url`».** У `from_request` поле на форме
   скрыто, но значение из состояния формы уходит на бэк всегда — остаточный мусор от переключения
   режима заблокировал бы сохранение ошибкой на невидимом поле. Проверка привязана к режиму, где
@@ -7408,3 +7430,394 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 Попутно: `TestSend_SentCallOutlivesReadyWait` (`internal/platform/grpcsender`) однажды упал в
 полном параллельном прогоне `go test ./...` (`not sent within ready_wait 100ms`), в одиночку —
 10 из 10 зелёных. Тайминговый тест под нагрузкой, к §112 не относится.
+
+### 4.98 §113 — отложенные сообщения узлов на паузе, честные lag и метрики, очередь sync-узла
+
+Раздел [113-paused-sweep-honest-queue.md](sections/113-paused-sweep-honest-queue.md). Ветка
+`feature/paused-sweep-honest-queue` (от `dev`). Миграций нет. Повод — бой 06.10.2026: sweeper
+переписывал очередь sync-узла на паузе (~960 запросов) по 1000 сообщений каждые 30 с — 17 ГБ за 4
+дня; баннер «Высокий consumer lag» при lag 0 у основной группы.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §113 + правки §3.6/§15/§31/§34.4/§36.11/§69/§80.2 | ✅ Phase 113.0 | [sections/113-paused-sweep-honest-queue.md](sections/113-paused-sweep-honest-queue.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| §113.2 retry-in-place в проходных reader'ах | ✅ Phase 113.1 | общий хелпер [retry_in_place.go](../internal/sender/adapter/in/kafka/retry_in_place.go) (backoff 1→30 с, выход по ctx без commit), [paused_sweeper.go](../internal/sender/adapter/in/kafka/paused_sweeper.go) `handleInPlace`, [dlq_reprocessor.go](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) `processInPlace` (порт `dlqProcessor`), основной [consumer.go](../internal/sender/adapter/in/kafka/consumer.go) `processWithRetry` на том же хелпере (пауза постоянная 1 с); тесты `*_RetryInPlace_NoLoss`/`_CtxCancel` в [paused_sweeper_test.go](../internal/sender/adapter/in/kafka/paused_sweeper_test.go), [dlq_reprocessor_test.go](../internal/sender/adapter/in/kafka/dlq_reprocessor_test.go), [retry_in_place_test.go](../internal/sender/adapter/in/kafka/retry_in_place_test.go). См. 4.37 |
+| §113.3 sweeper по событию | ✅ Phase 113.3–113.4 | планировщик [paused_sweep_planner.go](../internal/sender/usecase/paused_sweep_planner.go) (`Decide`, `PassDone`, триггеры) + [paused_sweep_round.go](../internal/sender/usecase/paused_sweep_round.go) (цель, завершение, застой, backstop по retention); гейт тика [paused_sweeper.go](../internal/sender/adapter/in/kafka/paused_sweeper.go) `tick`/`WithSweepPlanner`; офсеты delay-топика [kafkaoffsets/paused.go](../internal/sender/adapter/out/kafkaoffsets/paused.go); сборка `newPausedSweepPlanner` в [sender/app.go](../internal/sender/app.go); сигнал отмены [queuecancel/redis.go](../internal/platform/queuecancel/redis.go), отпечаток [nodepg/reader.go](../internal/sender/adapter/out/nodepg/reader.go) `NodesSnapshot`; конфиг `backstop_sec`/`continuous` + `validatePausedSweep`; метрики `nexus_paused_sweep_passes_total{reason}`, `nexus_paused_nodes`. Тесты: [paused_sweep_planner_test.go](../internal/sender/usecase/paused_sweep_planner_test.go), `TestPausedSweeper_SkippedTickDoesNotFetch`, [validate_paused_sweep_test.go](../internal/platform/config/validate_paused_sweep_test.go), integration [sender_paused_gate_test.go](../tests/integration/sender_paused_gate_test.go), [sender_nodes_snapshot_test.go](../tests/integration/sender_nodes_snapshot_test.go) |
+| §113.4 lag из брокера | ✅ Phase 113.2 (читатель офсетов), 113.5 (Sender, PromQL, алерты) | [platform/kafka/offsets.go](../internal/platform/kafka/offsets.go) `Offsets` (`Partitions`, `Watermarks`, `Committed`, `GroupPositions`, `TopicRetention`), `PartitionPosition.Lag`; Web [kafkaadmin](../internal/web/adapter/out/kafkaadmin/topics.go) переведён на него (`watermarks`, `committedOffsets`, `liveTailStart`); `KafkaSection.ClogRetryGroup()` в [config.go](../internal/platform/config/config.go). Sender: [kafkaoffsets/lag.go](../internal/sender/adapter/out/kafkaoffsets/lag.go) `LagReporter`, `lagTargets`/`reportEvery` в [sender/app.go](../internal/sender/app.go); цепочка `LagSnapshot`/`Snapshot`/`Stats` удалена. Web: [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) `WithKafkaMainGroup`/`kafkaLagQuery` (KPI «Очередь Kafka», `KafkaOverview`, ряд lag и через него `lagGrowthPerSec`). Алерты [prometheus.alerts.yml](../deploy/prometheus.alerts.yml) (`NexusKafkaLagHigh` без `-paused`/`-dlq-reprocess`, новый `NexusPausedBacklogStuck`) + тесты в [prometheus.alerts.test.yml](../deploy/prometheus.alerts.test.yml); Grafana [nexus.json](../deploy/grafana/nexus.json), [nexus-kafka.json](../deploy/grafana/nexus-kafka.json) (панель «Deferred queues»); DEPLOYMENT §9.1.8. Тесты [offsets_test.go](../internal/platform/kafka/offsets_test.go), [lag_test.go](../internal/sender/adapter/out/kafkaoffsets/lag_test.go), `TestClient_KafkaLag_MainGroupOnly`, integration [kafka_offsets_test.go](../tests/integration/kafka_offsets_test.go), `TestSender_Async_MultiInstanceSmoke` |
+| §113.5 честные счётчики | ✅ Phase 113.6 | Sender: `countPaused` в [async.go](../internal/sender/usecase/async.go) — повторный перенос (есть `paused_since`) → `IncPausedRequeued` (`nexus_paused_requeued_total{team,node}`, [node_labels.go](../internal/platform/metrics/node_labels.go)), первое откладывание — `IncRequest(…,"paused")`. Web [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go): матчер `senderOut` (`status!="paused"`) в `GlobalTotals`, `NodeThroughput`, `KafkaOverview` (consumed), ряд consumed; новый порт `KafkaNodeThroughput` (`method="requestAsync"`) для `ByNode` [kafka_bynode.go](../internal/web/usecase/kafka_bynode.go). Алерт `NexusNodeHighErrorRate`, Grafana `nexus.json`/`nexus-kafka.json`/`nexus-nodes.json`. Тесты `TestAsync_Paused_RequeueCountedSeparately`, `TestClient_PausedNotCountedAsOutgoing`, гарды [node_labels_test.go](../internal/platform/metrics/node_labels_test.go), фейк `asyncThroughput` в ByNode-тестах, promtool-тест размывания |
+| §113.6 сторож зависания consumer'а | ✅ Phase 113.7 | слот reader'а [reader_slot.go](../internal/sender/adapter/in/kafka/reader_slot.go) (`FetchMessage` с отметкой ожидания, `RequestRestart`, `Recreate`, client.id с поколением), сторож непрерывных групп [stall_watchdog.go](../internal/sender/adapter/in/kafka/stall_watchdog.go) (`StallGuard`, `Check`, `ownOrOrphanLag`), проходных — [pass_stall_guard.go](../internal/sender/adapter/in/kafka/pass_stall_guard.go), сборка [slot_pool.go](../internal/sender/adapter/in/kafka/slot_pool.go); опции `WithStallGuard`/`WithRetryStallGuard`/`WithDLQStallGuard`/`WithSweeperStallGuard`, `stallGuard()` в [sender/app.go](../internal/sender/app.go). Брокер: `kafkapf.WithClientID`, `Offsets.GroupAssignment` (DescribeGroups). Конфиг `kafka.consumer.stall_after_sec` (`*int`: нет ключа → 120, 0 — выкл) + `validateStallAfter`; метрика `nexus_kafka_consumer_restarts_total{group,reason}`. Тесты: [reader_slot_test.go](../internal/sender/adapter/in/kafka/reader_slot_test.go), [stall_watchdog_test.go](../internal/sender/adapter/in/kafka/stall_watchdog_test.go), [pass_stall_guard_test.go](../internal/sender/adapter/in/kafka/pass_stall_guard_test.go), [stall_after_test.go](../internal/platform/config/stall_after_test.go), `TestOffsets_GroupAssignment`, integration [sender_stall_watchdog_test.go](../tests/integration/sender_stall_watchdog_test.go) |
+| §113.7 страница Kafka | ✅ Phase 113.8 | Usecase [kafka_monitor_groups.go](../internal/web/usecase/kafka_monitor_groups.go): опции `WithKafkaGroups`/`WithKafkaGroupLag`/`WithPausedNodes`, `fillBrokerLag` (lag основной группы из брокера поверх Prometheus-значения, кеш `lag:<group>:<topic>`), `fillPausedNodes` (только при `paused_backlog > 0`, до 20 узлов + `PausedNodesTotal`), `markGroupRoles`; вызовы в [kafka_monitor.go](../internal/web/usecase/kafka_monitor.go) `Overview`/`Topics`. Порты `KafkaGroupLagReader`, `KafkaGroupRole*` в [port/kafka_admin.go](../internal/web/usecase/port/kafka_admin.go), `PausedNodeLister` в [port/node_repo.go](../internal/web/usecase/port/node_repo.go); адаптеры `Client.GroupLag` в [kafkaadmin/topics.go](../internal/web/adapter/out/kafkaadmin/topics.go), `NodeRepoPg.PausedNodes` в [postgres/node_repo.go](../internal/web/adapter/out/postgres/node_repo.go); сборка `kafkaGroupNames` в [web/app.go](../internal/web/app.go). DTO [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go): `summary.paused_backlog`, `lag_from_broker`, `paused_nodes[]`, `paused_nodes_total`, `paused_nodes_available`, `consumer_groups[].role`. UI: [PausedBacklog.tsx](../web-ui/src/components/kafka/PausedBacklog.tsx) (вторая строка карточки lag, ссылки на вкладку «Очередь»), [TopicsTable.tsx](../web-ui/src/components/kafka/TopicsTable.tsx) `waitsByDesign`/`GroupChip`, ключи `kafka.paused.*`, `kafka.topics.role_*`. Тесты: [kafka_monitor_groups_test.go](../internal/web/usecase/kafka_monitor_groups_test.go), `TestKafkaOverview_PausedBacklogJSON` в [kafka_handler_test.go](../internal/web/adapter/in/http/kafka_handler_test.go), integration `TestNodeRepoPausedNodes_E2E`, [PausedBacklog.test.tsx](../web-ui/src/components/kafka/PausedBacklog.test.tsx), [TopicsTable.test.tsx](../web-ui/src/components/kafka/TopicsTable.test.tsx) |
+| §113.8 мелкие баги мониторинга | ✅ Phase 113.9 | p95 публикации в health: `KafkaOverviewResult.ProduceP95ms` → `healthInput.produceP95ms` в [kafka_monitor.go](../internal/web/usecase/kafka_monitor.go); `topFailures` — `errors / max(out, errors)` в [kafka_bynode.go](../internal/web/usecase/kafka_bynode.go); «рост lag» — `steadyGrowthPerSec` (без снижений, покрытие ≥ `lagGrowMinSpan` = 4 мин) в [kafka_monitor.go](../internal/web/usecase/kafka_monitor.go); кеш Kafka без Redis — no-op в [redis/kafka_cache.go](../internal/web/adapter/out/redis/kafka_cache.go). Тесты: `TestKafkaOverview_HealthSignals`, `TestSteadyGrowthPerSec`, `TestTopFailures_Rate` в [kafka_monitor_test.go](../internal/web/usecase/kafka_monitor_test.go), [kafka_cache_test.go](../internal/web/adapter/out/redis/kafka_cache_test.go) |
+| §113.9 очередь sync-узла на паузе | ✅ Phase 113.10 | `usesAsyncQueue` = `root_method ≠ request || status = paused`, `PurgeFailed` пишет tombstone'ы для всех узлов, `List` запрашивает страницу +1 (честный `capped` → «50+») — [async_queue.go](../internal/web/usecase/async_queue.go). UI [QueueTab.tsx](../web-ui/src/components/node/QueueTab.tsx): `hasQueue = isAsync || status === "paused"` (плитка, секция, запрос списка); тексты `queue.banner.state_paused_sync`, `explain_sync`, `disable_confirm`, `queue.failed.no_reprocess_hint` (en/ru). Тесты: `TestAsyncQueue_PausedSyncNode_HasQueue`, `TestAsyncQueue_List_CappedPlus`, `TestAsyncQueue_PurgeFailed_SyncNode_WritesTombstones` (заменил `…DeletesWithoutTombstones`), stub `PeekList` соблюдает limit, integration sync-узел в [async_queue_paused_test.go](../tests/integration/async_queue_paused_test.go), vitest «sync-узел на паузе (§113.9)» в [QueueTab.prefs.test.tsx](../web-ui/src/components/node/QueueTab.prefs.test.tsx). См. уточнение в 4.50 |
+| §113.10 «Повторить все» без потерь | ✅ Phase 113.11 | Не-2xx ответ Receiver'а — неудача: `replayAccepted` в цикле `ReplayFailed` ([replay.go](../internal/web/usecase/replay.go)) и в `sendPeriodBatch` ([replay_period.go](../internal/web/usecase/replay_period.go)) — без отмены оригинала и без очистки, Warn с кодом. Вход повтора — `replayViaAsync`: `/requestAsync` только для async-записи узла `root_method=requestAsync` (§82.3), остальное — `/request` (на паузе 202). Тесты [replay_rejected_test.go](../internal/web/usecase/replay_rejected_test.go): `TestReplay_ReplayFailed_RejectedKeepsRecords` (404/409/500/302), `…_202Accepted`, `TestReplayViaAsync`, `TestReplayPeriod_RejectedIsFailure`; `TestReplay_NewLogIDComesFromBus` получил узлу явный `root_method`. См. 4.98 «Вход повтора» |
+| §113.11 подтверждения смены статуса | ✅ Phase 113.12 | Правила и тексты в одном модуле [statusConfirm.ts](../web-ui/src/components/node/statusConfirm.ts): `hasAsyncQueue` (зеркало `usesAsyncQueue`), `pausesSyncNode`, `disablesQueue`, `pauseSyncConfirm`, `disableConfirm` (число / пусто / неизвестно), `fetchQueueSnapshot` (тот же queryKey `aq-list`, что у вкладки). Форма [NodeSettings.tsx](../web-ui/src/pages/NodeSettings.tsx): `runSave` стал async — валидация → `confirmStatusChange` → mutate, общий для «Сохранить» и «Сохранить и синхронизировать». Вкладка [QueueTab.tsx](../web-ui/src/components/node/QueueTab.tsx): пауза sync-узла через диалог, выключение — число с плитки. Ключи `node.status_confirm.*` (en/ru), `queue.banner.disable_confirm` удалён. Тесты: [statusConfirm.test.ts](../web-ui/src/components/node/statusConfirm.test.ts), [QueueTab.status-confirm.test.tsx](../web-ui/src/components/node/QueueTab.status-confirm.test.tsx), [NodeSettings.status-confirm.test.tsx](../web-ui/src/pages/NodeSettings.status-confirm.test.tsx) — 9 красных на старом коде. См. 4.98 «`count` в i18next» |
+
+**Неочевидности §113:**
+
+- **Офсеты — только из брокера, `kafkapf.Offsets` (§113.4).** `Reader.Stats().Lag` у kafka-go — это
+  HWM последнего полученного пакета минус позиция предвыборки этого reader'а, без номера партиции
+  (`partition=-1`). Он даёт пилу при перезаписи топика и остаётся нулём у зависшего reader'а, который
+  ничего не выбирает. Брокер знает и конец лога, и committed-офсет группы — одинаково для всех реплик.
+- **Семантика `PartitionPosition.Lag`:** `Last − max(committed, First)`, не меньше 0. Некоммиченная
+  партиция (`-1`) читается с `First`, потому что так настроены все reader'ы Nexus
+  (`StartOffset = FirstOffset`). Committed левее `First` (retention срезал хвост) — тоже с `First`.
+  Видимое изменение в Web: раньше некоммиченная партиция потребляющей группы давала lag 0 и прятала,
+  например, бэклог в партиции, добавленной через `--alter`.
+- **Ошибки не прячутся.** Методы возвращают прочитанное ВМЕСТЕ с `errors.Join` ошибок партиций;
+  `OffsetFetchResponse.Error` (ошибка группы целиком) — ошибка. Старый Web-код её игнорировал и
+  читал «группа ничего не коммитила». Integration-тест это и поймал: свежий брокер несколько секунд
+  отвечает `NOT_COORDINATOR` (16). Web остаётся best-effort (Warn + частичные данные), планировщик
+  §113.3 трактует ошибку как «неизвестно».
+- **Отпечаток узлов — `md5(string_agg(id:xmin))`, а не сравнение статусов (§113.3).** xmin меняется
+  при любом UPDATE строки, кто бы его ни сделал: Web, raw SQL, keyrotate, восстановление. Поэтому
+  виден и возврат статуса туда-обратно между двумя тиками (пауза снята и поставлена снова — очередь
+  надо прогнать, а статусы совпадают). `VACUUM FREEZE` xmin не переписывает (с PG 9.4 это бит в
+  infomask) — проверено integration-тестом. Периодических UPDATE по `nodes` в коде нет, иначе
+  отпечаток менялся бы на каждом тике и вернул бы перезапись очереди. **Добавляешь фоновый UPDATE
+  по `nodes` — исключи его колонки из отпечатка**, иначе инцидент 06.10 повторится.
+- **Сигнал отмены поднимает вызывающая сторона, после отметок и один раз на операцию (ревизия
+  §113).** Первая версия двигала сигнал внутри `Cancel` той же транзакцией, что и отметки. Ревизия
+  нашла цену: `ReplayFailed` отменяет оригиналы по одному, «Очистить неудачные» — пачками, и каждая
+  пачка, в том числе у async-узла без очереди паузы, сбрасывала цель раунда — перезапись очереди в
+  темпе до §113 возвращалась на всё время операции. Теперь `Cancel` пишет только отметки, а Web
+  зовёт `signalPausedSweep` ([paused_sweep_signal.go](../internal/web/usecase/paused_sweep_signal.go),
+  порт `PausedSweepSignaler`) после отметок — только у узла на паузе. Порядок «отметки → `Bump`»
+  сохраняет гарантию: увидевший сигнал видит и отметки. Ошибка `Bump` — Warn, операция не падает:
+  отменённое уйдёт на страховочном раунде.
+- **Цель раунда снимается на тике ПОСЛЕ события, поэтому раунд — это два оборота очереди.** Первый
+  проход сразу переписывает очередь в хвост; цель на следующем тике уже включает эти копии. Так в
+  раунд попадают и копии, которые основной consumer записал в момент события (прочитал «пауза» до
+  снятия, записал после). Цена — ≈2×N перезаписей на событие вместо прежних 2880×N в сутки.
+- **Раунд общий для группы.** Каждая реплика читает только свои партиции, а конец раунда считается
+  по committed всей группы. Поэтому старт и backstop поднимают сигнал (`Bump`) — иначе раунд
+  стартовавшей реплики не закончился бы, пока соседняя не пройдёт свои партиции. Свой `Bump`
+  запоминается (`Bump` возвращает новое значение) — иначе на следующем тике он сбросил бы раунд как
+  чужой сигнал.
+- **Застой раунда считается только при холостой перезаписи (`PassDone`).** Первая версия бросала
+  раунд после 3 тиков без продвижения — integration-тест под нагрузкой Docker поймал: reader
+  несколько тиков ничего не читал, раунд бросался, и отмена (или снятие паузы!) ждала бы backstop
+  6 ч. Пустой проход ничего не переписывает, повторять его дёшево; бросать раунд имеет смысл,
+  только когда свои проходы переписывают сообщения, а чужие партиции стоят (реплика без Redis не
+  узнала о раунде).
+- **Раунд, доживший до backstop, не бросается, а перезапускается.** Его старт = `lastRoundAt`,
+  поэтому триггер backstop срабатывает в тот же тик, что и проверка возраста; отдельная ветка
+  «бросить по возрасту» была недостижимой и удалена — вместо неё Warn при перезапуске.
+- **Backstop ≤ retention/4 на лету.** Retention топика перечитывается у брокера раз в 10 минут:
+  оператор может понизить `retention.ms` командой `kafka-configs --alter` (например, освободить
+  диск после инцидента), и backstop обязан подстроиться без рестарта.
+- **Пропавший ответ OffsetFetch в peek-скане** раньше давал старт с offset 0 (нулевое значение карты).
+  Теперь — `liveTailStart`: от `First`.
+- **Lag публикуют все реплики одинаково → в PromQL `max by (group, topic, partition)`, потом `sum`
+  (§113.5).** Раньше каждая реплика публиковала СВОЙ кусок (lag своих reader'ов), и `sum` был
+  верен. Теперь каждая отдаёт lag всей группы из брокера, и голый `sum(nexus_kafka_lag)` удвоил бы
+  очередь на HA-стеке. Метка `instance` у рядов разная, поэтому дедупликация — только через `max by`.
+- **Недоступный брокер не обнуляет lag.** `LagReporter` при ошибке не трогает ряд (последнее
+  значение остаётся) и пишет Debug, а не Warn: падение Kafka видно по её собственным сигналам, Warn
+  каждые 15 с был бы шумом. Частичный ответ (часть партиций без лидера) публикуется.
+- **Сторож решает по экземпляру, а не по группе (§113.6).** ТЗ сначала формулировало условие
+  «все экземпляры ждут в fetch», но оно ломается в двух боевых конфигурациях: при `instances: 8` на
+  4 партиции половина экземпляров законно простаивает без партиций, а на HA-стеке lag может стоять
+  на партиции ДРУГОЙ реплики (она занята долгой отправкой) — ждущие экземпляры этой реплики
+  перезапускались бы зря, и каждый перезапуск — ребаланс всей группы. Поэтому у reader'а свой
+  `client.id`, а сторож берёт назначение из `DescribeGroups`. Проверено integration-тестом:
+  kafka-go отдаёт `Dialer.ClientID` в JoinGroup, брокер показывает его у участника.
+- **Подмена reader'а — только внутри `FetchMessage` или между проходами.** Сторож из своей горутины
+  лишь отменяет ожидание (`RequestRestart`, и только если экземпляр ждёт); закрывает и создаёт reader
+  сам `FetchMessage`. Поэтому `Commit` всегда уходит в reader, выдавший сообщение. Сообщение,
+  пришедшее одновременно с запросом, снимает запрос: reader жив. Close старого reader'а ограничен 30
+  с — `Close` зависшего kafka-go reader'а может не вернуться никогда.
+- **Пауза перезапусков 5 мин — на группу в реплике**, плюс после перезапуска отсчёт «стоит ≥ порога»
+  начинается заново. Цена ошибочного срабатывания — ребаланс и повтор неподтверждённых сообщений
+  (at-least-once), не потеря.
+- **Повторный перенос — не запрос, первое откладывание — запрос (§113.5).** Признак повтора — заголовок
+  `paused_since` у копии (его ставит только `pausedHeaders`). Сообщения из DLQ его не несут, и их
+  переезд в очередь паузы считается первым откладыванием — это честно: из DLQ запрос до узла не
+  дошёл. Фильтр `status!="paused"` стоит в PromQL, а не только в Sender'е: так пересчитывается и
+  накопленная история.
+- **Lag в KPI и алертах — только основная группа.** Очередь узла на паузе и DLQ — отложенная
+  работа: узел на паузе неделями законно копит очередь, и до §113 это поднимало баннер «Высокий
+  lag» (инцидент 06.10.2026). Для них — свой алерт `NexusPausedBacklogStuck` (очередь не пуста, а
+  узлов на паузе нет 30 мин) и отдельная панель Grafana. Группа `-clog-retry` в `NexusKafkaLagHigh`
+  осталась: это логи, не доехавшие до ClickHouse.
+- **Карточка lag читает брокер напрямую, Prometheus — запасной путь (§113.7).** `nexus_kafka_lag`
+  публикует Sender раз в 15 с: значение запаздывает и пропадает вместе с Sender'ом — ровно тогда,
+  когда lag интереснее всего. Поэтому `Overview` сначала кладёт Prometheus-значение, а затем
+  `fillBrokerLag` (с §114 — `applyBrokerView`) перезаписывает его брокерским (`lag_from_broker=true`); ошибка брокера оставляет
+  Prometheus. Порог health сравнивается с итоговым значением (брокерским, если оно есть), а «рост
+  lag» и график — из Prometheus: они про историю, а она там только main-группы (§113.5). Lag кешируется тем же `KafkaCache` (30 с), что и метаданные топиков:
+  без кеша каждая открытая вкладка админа делала бы ListOffsets+OffsetFetch раз в 10 с.
+- **«Узлов на паузе нет» говорится только по прочитанному списку (§113.7).** Список узлов читается
+  из PostgreSQL лишь при непустой очереди паузы (иначе строка не видна, а запрос шёл бы каждые
+  10 с впустую). При ошибке PostgreSQL `paused_nodes_available=false`, и интерфейс показывает только
+  число: warn «очередь не разбирается» при недоступной СУБД был бы ложной тревогой. Роли групп
+  (`markGroupRoles`) проставляются после кеша на каждый запрос — смена имён групп в конфиге не
+  ждёт истечения TTL.
+- **Кеш Kafka без Redis сделан no-op в адаптере, а не проверкой в `web/app.go` (§113.8).**
+  `NewKafkaCacheRedis` вызывается безусловно, и при nil-клиенте `Get` падал на nil-указателе.
+  Guard в самом адаптере закрывает любой будущий вызов и проверяется юнитом; typed-nil в интерфейсе
+  здесь не ловушка — методы `KafkaCacheRedis` с nil-клиентом корректны.
+- **«Рост lag» — по всему ряду, а не по концам (§113.8).** Пила разбираемой очереди (lag
+  скачет 0↔N) при «удачной» фазе давала `(last−first)/300 с` выше 50/с и красный баннер. Теперь
+  любое снижение между соседними точками или дыра в данных (ряд короче 4 мин) — не рост.
+- **«50+» требует пробы на одно сообщение больше страницы (§113.9).** Адаптер `PeekList`, набрав
+  `limit` совпадений, останавливается и `Capped` не ставит (Capped — только упор в `peekCap`
+  прочитанных). Поэтому usecase просит `asyncQueueListLimit+1` и сам обрезает до 50 с `capped=true`;
+  до §113 ровно 50 и 5000 ожидающих выглядели одинаково. Stub `PeekList` в тестах обязан соблюдать
+  limit — иначе тест проверяет фейк, а не контракт адаптера.
+- **Вход повтора — по `root_method` узла, а не «не sync» (§113.10).** План предлагал
+  `orig.Type == requestAsync && node.RootMethod != request`. Это неверно для pull-узла
+  (`RabbitMQAsync`): с §82.3 внешний `/api/v1/requestAsync` принимает ТОЛЬКО `root_method=requestAsync`
+  (`ErrNodeNotAsyncIngress` → 404 «node not found»), а `/api/v1/request` проверяет паузу
+  (`ErrNodePaused` → 202) РАНЬШЕ типа узла. Поэтому `/requestAsync` — только async-запись
+  requestAsync-узла; async-записи sync- и pull-узла — `/request`. Побочная находка: с §82.3 повтор
+  async-записи pull-узла через `/requestAsync` получал 404, и до §113 это засчитывалось успехом —
+  та же тихая потеря, что и у sync-узла. Осталась граница: включённый pull-узел не повторяется ни
+  через один вход; теперь это честная неудача («Неудачные» остаются), обход — пауза узла. Решение
+  4.69 («Повторить все» упирается в гейт §82.3, пока узел sync) этим тоже снято для async-записей:
+  они идут через `/request`.
+- **Параметр «50+» в i18next — не `count` (§113.11).** `count` зарезервирован под плюрализацию и
+  типизирован числом: `t(key, { count: "50+" })` проходит vitest (мок `t` типов не проверяет), но
+  валит `tsc` в `make build-ui`. Для строки с «+» — `waiting`, как у плитки очереди.
+- **«Успех» повтора — только 2xx (§113.10).** 3xx тоже неудача: Receiver сам не редиректит, 3xx
+  означает ответ приёмника, проксированный sync-путём, — запись не доставлена в смысле §36.11.
+- **id новой записи у повтора sync-узла на паузе (ревизия §113).** С §113.10 такой повтор идёт с
+  `Async=false`, а `replayedLogID` тело sync-ответа не разбирал — аудит терял id из 202 queued.
+  Теперь тело разбирается и для sync, но только при 202 и всей форме шины (`result`, `queued`,
+  `node_status`, `id` UUID): `id` в ответе приёмника по-прежнему в аудит не попадает.
+- **Постоянная ошибка переноса в DLQ-репроцессоре — commit, а не retry (ревизия §113).** С 113.2
+  `ReprocessRetry` блокирует проход до успеха. `ErrMessageTooLargeForTopic` (сообщение больше лимита
+  топика паузы/DLQ) успехом не станет никогда — проход стоял бы навсегда. Такое сообщение
+  отпускается (`reprocessDropped`, ErrorWithOp) — как основной consumer поступает с отказом брокера
+  по размеру.
+- **`GroupPositions` при ошибке OffsetFetch отдаёт только партиции с ответом (ревизия §113).**
+  `JoinPositions` кладёт -1 партиции без committed, и `Lag` считает её с `First` — при сбое
+  OffsetFetch Sender публиковал бы lag «вся партиция», а сторож видел бы ложный застой. Партиции
+  без ответа выбрасываются, ошибка возвращается вместе с прочитанным.
+- **Lag группы паузы публикуется при заданном топике, а не при включённом sweeper'е (ревизия
+  §113).** `lagTargets` раньше смотрел на `pausedSweep != nil`: при `disabled: true` очередь паузы
+  копилась без ряда в Prometheus, и `NexusPausedBacklogStuck` молчал. Алерт сработает и при
+  выключенном sweeper'е: `nexus_paused_nodes` тогда не публикуется, и `unless on()` пустого вектора
+  не подавляет.
+- **Дефолт `backstop_sec` подгоняется под retention, выключенный sweeper Validate не проверяет
+  (ревизия §113).** Validate общий для трёх сервисов: инсталляция с `retention_ms` меньше суток после
+  обновления не подняла бы ни Receiver, ни Web — ключа `backstop_sec` у неё нет, а дефолт 6 ч больше
+  retention/4. Ошибку теперь даёт только явно заданное значение (`defaultPausedBackstopSec` в
+  [defaults.go](../internal/platform/config/defaults.go)).
+- **Аварийные переключатели — через `.env` (ревизия §113).** `config.yml` с v1.34.1 приезжает с
+  тегом, правка на сервере затрётся следующим выкатом. `continuous` и `stall_after_sec` читают
+  `${PAUSED_SWEEP_CONTINUOUS:false}` и `${KAFKA_STALL_AFTER_SEC:120}`; после правки `.env` —
+  `docker compose up -d sender` (`restart` `.env` не перечитывает).
+- **Список очереди при ошибке чтения Kafka — `kafka_available=false` (ревизия §113).** `List`
+  отдавал `true`, если хоть один топик прочитан: диалог выключения (§113.11) показал бы «очередь
+  пуста» и выключил узел без вопроса. Тест `TestAsyncQueue_List_TopicFailureDegrades` закреплял
+  старое поведение и переписан.
+- **Дыра в ряду lag — не рост (ревизия §113).** `steadyGrowthPerSec` проверял покрытие окна, но не
+  разрывы: две точки на концах окна давали «рост 5 минут подряд». Теперь разрыв между соседними
+  точками больше двух шагов ряда обнуляет оценку.
+- **Новый integration-тест — сразу в группу Makefile.** Гейт покрытия
+  (`scripts/ci/check_integration_coverage.py`) роняет `make test-integration` за секунду, если тест
+  не попал ни в одну `test-int-*`: `TestKafkaOffsets*` и `TestNodesSnapshot*` попали в группы только
+  на ревизии.
+
+### 4.99 §114 — отвергнутый commit, страница Kafka при недоступном брокере, lag сторонних групп
+
+Раздел [114-kafka-commit-stuck-and-monitor.md](sections/114-kafka-commit-stuck-and-monitor.md).
+Ветка `feature/kafka-commit-stuck-and-monitor` (от `dev`). Миграций, ключей `config.yml` и
+переменных `.env` нет. Повод — три границы ревизии §113.13.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §114 + отметки в §113.13 и §31.3 | ✅ Phase 114.0 | [sections/114-kafka-commit-stuck-and-monitor.md](sections/114-kafka-commit-stuck-and-monitor.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| §114.3 метрика ошибок commit и алерт | ✅ Phase 114.1 | Счётчик `nexus_kafka_commit_errors_total{group}` (`InitKafkaCommitErrors`/`IncKafkaCommitError`, [metrics.go](../internal/platform/metrics/metrics.go)); учёт в `readerSlot.Commit` ([reader_slot.go](../internal/sender/adapter/in/kafka/reader_slot.go)) — через слот идут commit'ы всех четырёх групп; `newReaderSlot(group, idx, guard, …)` берёт имя/часы/счётчик из `StallGuard` (поле `Commits`, в [sender/app.go](../internal/sender/app.go) — `a.metrics`). Алерт `NexusKafkaCommitFailing` ([prometheus.alerts.yml](../deploy/prometheus.alerts.yml)) + promtool-группа «Отвергнутые commit» ([prometheus.alerts.test.yml](../deploy/prometheus.alerts.test.yml)). Тесты `TestReaderSlot_CommitErrorCounted`, `TestKafkaCommitErrors`. DEPLOYMENT §9.1.9 — runbook |
+| §114.2 сторож не трогает дочитавший экземпляр | ✅ Phase 114.2 | Слот помнит `Offset+1` последнего полученного по партиции (`fetched`, `FetchedNext`, сброс в `Recreate`) — [reader_slot.go](../internal/sender/adapter/in/kafka/reader_slot.go); `readUpTo` (позиция ≥ `Last` снимка на всех стоящих партициях), `stallVictim`, `dropCaughtUp`, `reportCommitStuck` (Warn раз в 5 мин) — [stall_watchdog.go](../internal/sender/adapter/in/kafka/stall_watchdog.go); проходной сторож — то же правило + пауза `stallCooldown` между пересозданиями, `ownOrOrphanLagging` — [pass_stall_guard.go](../internal/sender/adapter/in/kafka/pass_stall_guard.go). Тесты: `TestStallWatchdog_CaughtUpNotRestarted`, `…_CaughtUpThenNewMessage`, строки «дочитал» в `TestPassStallGuard`, `TestPassStallGuard_Cooldown`, `TestReaderSlot_FetchedNext`; integration [sender_commit_rejected_test.go](../tests/integration/sender_commit_rejected_test.go) `TestSender_StallWatchdog_CommitRejectedNoRedelivery` (группа `test-int-sender`) |
+| §114.4–114.5 бюджет чтения брокера и честный статус (backend) | ✅ Phase 114.3 | Обобщённое чтение `readBroker[T]` (кеш `brokerRead{value, ok}` вместе с неудачей, singleflight, `WithoutCancel` + бюджет), `KafkaBrokerBudget` 3 с / 10 с, `WithKafkaBrokerBudget`, ключи `v2:topics`/`v2:brokers`/`v2:lag:<g>:<t>` — [kafka_broker_read.go](../internal/web/usecase/kafka_broker_read.go); `readBrokerView` (три чтения брокера параллельно с Prometheus), `applyBrokerView` (флаги и «брокер не ответил»), `lagConfigured`, `listPausedNodes` вместо `fillBrokerLag`/`fillPausedNodes` — [kafka_monitor_groups.go](../internal/web/usecase/kafka_monitor_groups.go); `Topics` через `readBroker` + `cloneTopics` — [kafka_monitor.go](../internal/web/usecase/kafka_monitor.go); `ReasonBrokerUnreachable` первым среди жёлтых — [kafka_health.go](../internal/web/usecase/kafka_health.go). Адаптер: `listGroupIDs` возвращает ошибку, `Topics` — ошибку при истёкшем ctx ([groups.go](../internal/web/adapter/out/kafkaadmin/groups.go), [topics.go](../internal/web/adapter/out/kafkaadmin/topics.go)), `pingBroker` через `ApiVersions` ([ping.go](../internal/web/adapter/out/kafkaadmin/ping.go)). DTO `paused_backlog_available` — [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go). Тесты [kafka_broker_read_test.go](../internal/web/usecase/kafka_broker_read_test.go) (`…_BrokerReadsParallel` на барьере, `…_BrokerHangsWithinBudget`, `…_AvailabilityFlags`, `…_FailureCached`, `TestKafkaTopics_ReadOutlivesCanceledRequest`), строки `broker_unreachable` в `TestEvaluateHealth`, `TestKafkaOverview_BrokerUnreachableJSON`; integration [kafka_admin_test.go](../tests/integration/kafka_admin_test.go) `TestKafkaAdmin_StoppedBrokerNotOnline` (группа `test-int-queue`) |
+| §114.5 UI недоступного брокера | ✅ Phase 114.4 | [PausedBacklog.tsx](../web-ui/src/components/kafka/PausedBacklog.tsx) — при `paused_backlog_available === false` приглушённое «отложено: —» с подсказкой (строка есть и при нуле); [TopicsTable.tsx](../web-ui/src/components/kafka/TopicsTable.tsx) — проп `kafkaAvailable`, «список топиков недоступен» вместо «Топиков нет» (страница передаёт `kafka_available ?? true`: пока ответа нет, «недоступен» не говорим); баннер — существующий [HealthBanner.tsx](../web-ui/src/components/kafka/HealthBanner.tsx) по reason `broker_unreachable`. Ключи `kafka.paused.unavailable(_hint)`, `kafka.topics.unavailable`, `kafka.health.broker_unreachable.{title,details}` в обеих локалях; тип `paused_backlog_available` в [client.ts](../web-ui/src/api/client.ts). Тесты: новый [HealthBanner.test.tsx](../web-ui/src/components/kafka/HealthBanner.test.tsx) (в том числе: у каждого reason бэкенда есть title/details в en и ru), блоки §114.5 в [PausedBacklog.test.tsx](../web-ui/src/components/kafka/PausedBacklog.test.tsx) и [TopicsTable.test.tsx](../web-ui/src/components/kafka/TopicsTable.test.tsx). Бандл пересобран |
+| §114.6 lag сторонних групп без commit | ✅ Phase 114.5 | Адаптер: `splitGroupLag` (части с commit / без commit, партиции без ответа OffsetFetch исключены) — [kafkaadmin/topics.go](../internal/web/adapter/out/kafkaadmin/topics.go); поля `LagUncommitted`, `UncommittedPartitions` в `port.TopicConsumerGroup` ([port/kafka_admin.go](../internal/web/usecase/port/kafka_admin.go)); `applyGroupRoles` (вместо `markGroupRoles`: у посторонней группы вычитает lag без commit и обнуляет вычтенную часть, у группы Nexus прячет счётчик) — [kafka_monitor_groups.go](../internal/web/usecase/kafka_monitor_groups.go); DTO `uncommitted_partitions,omitempty` через явный `topicGroupDTO` — [kafka_handler.go](../internal/web/adapter/in/http/kafka_handler.go). UI: `GroupChip` «· без commit: N парт.» с подсказкой — [TopicsTable.tsx](../web-ui/src/components/kafka/TopicsTable.tsx), ключи `kafka.topics.uncommitted(_hint)`. Тесты `TestSplitGroupLag` ([topics_test.go](../internal/web/adapter/out/kafkaadmin/topics_test.go)), `TestKafkaTopics_ThirdPartyUncommitted` (с кешем и без; ответ адаптера не тронут), `TestKafkaTopics_UncommittedPartitionsJSON`, vitest «посторонняя группа без commit»; integration `TestKafkaAdmin_TopicsThirdPartyUncommitted` (настоящий брокер отвечает -1 по партиции без commit) |
+| Нагрузочный тест: страница Kafka и сторож под нагрузкой | ✅ Phase 114.L | Проба страницы Kafka — опрос `/api/kafka/overview` и `/api/kafka/topics` всю нагрузку и слив (`--kafka-page-every`), FAIL при ответе «брокер не ответил» или overview > 5 с — [cmd/loadtest/kafkapage.go](../cmd/loadtest/kafkapage.go); прирост `nexus_kafka_consumer_restarts_total`/`nexus_kafka_commit_errors_total` Sender'а за прогон (`--sender-metrics-url`, разбор text exposition) — [sendermetrics.go](../cmd/loadtest/sendermetrics.go); информативный `ch_duplicate_rows` (`count() − uniqExact(ID)`) — [noloss.go](../cmd/loadtest/noloss.go); unit [watch_test.go](../cmd/loadtest/watch_test.go). CI job `loadtest`: переменные `LOADTEST_KAFKA_PAGE_EVERY=10s`, `LOADTEST_SENDER_METRICS_URL=http://sender:9091/metrics`, JUnit-кейсы `kafka_page_available_under_load`, `kafka_page_overview_under_5s`, `sender_no_consumer_restarts`, `sender_no_commit_errors`, `ch_duplicate_rows_info` — [.gitlab-ci.yml](../.gitlab-ci.yml); `make loadtest KAFKA_PAGE_EVERY=… SENDER_METRICS_URL=…`; [TESTING.md](../TESTING.md). База до §114 (07.10, pipeline 11216, `dev` f5e83d05): 290 rps из 300, p95 84,2 мс, p99 124,6 мс, ошибок 0/34 819, no-loss 13 766/13 766 |
+| Ревизия перед сдачей | ✅ Phase 114.6 | Топика нет в кластере — `kafkapf.ErrTopicNotFound` из `Offsets.Partitions` ([offsets.go](../internal/platform/kafka/offsets.go)), `kafkaadmin.GroupLag` → lag 0 вместо «брокер не ответил» ([topics.go](../internal/web/adapter/out/kafkaadmin/topics.go)); integration `TestKafkaAdmin_MissingPausedTopicNotUnreachable`. Мёртвая проверка `resp.Error` в `listGroupIDs` убрана, граница описана ([groups.go](../internal/web/adapter/out/kafkaadmin/groups.go), §114.7). Текст баннера `broker_unreachable` и подсказки «отложено: —» — без утверждения, что не прочитано всё сразу (en/ru, godoc `ReasonBrokerUnreachable`). `readBroker`: Debug на неудаче из кеша, `op`/`duration_ms` в Warn. Runbook DEPLOYMENT §9.1.9 — строка `clog-retry commit failed`. Loadtest: опрос, прерванный самим `stop()`, не считается ошибкой страницы (`TestKafkaPageProbe_StopMidPoll`). |
+| Стендовый прогон (07.10.2026, стек `services`, Kafka 3.9.0) | ✅ | **A** — commit отвергнут (`max.message.bytes=10` у `__consumer_offsets`; `min.insync.replicas=2` на 3.9 commit НЕ отвергает): 10 ошибок `[28] Invalid Commit Offset Size`, через 2 мин Warn `kafka commit stuck … not restarting`, далее только Debug; перезапусков 0, echosrv 36/36 без повторов; после отката первый commit догнал позицию. **B** — `docker pause` Kafka: overview 3046 мс, topics 5006 мс (таймаут клиента 5 с), повтор в окне кеша 18/4 мс; баннер «Брокер Kafka ответил не на все запросы», «отложено: —» с подсказкой, «список топиков недоступен»; после `unpause` — healthy; бандл `index-C61sRuo6.js`. **C** — `debug-tool` с позицией только на партиции 0: «debug-tool · lag 17 · без commit: 1 парт.» (3 сообщения партиции без позиции в lag не вошли). |
+
+**Неочевидности §114:**
+
+- **Ряд ошибок commit создаётся нулём при старте слота (`InitKafkaCommitErrors`).** `increase()`
+  не видит первую ошибку ряда, который появился сразу со значением 1: ему не с чем сравнить.
+  Без нулевого ряда разовая ошибка терялась бы для графика, а алерт ждал бы вторую.
+- **Что не считается ошибкой commit:** отменённый ctx вызывающего (shutdown — проверяется
+  `ctx.Err()`, а не тип ошибки: kafka-go возвращает и `Canceled`, и `DeadlineExceeded`) и закрытый
+  reader (`io.ErrClosedPipe` из `CommitMessages` после `Close`). Логирование ошибки остаётся у
+  вызывающих (`ErrorWithOp` с топиком и партицией) — слот только считает.
+- **«Дочитал» — по позиции последнего ПОЛУЧЕННОГО сообщения, а не по committed (§114.2).** У
+  consumer'а, которому брокер отвергает commit, и у зависшего kafka-go reader'а одинаковые снимки
+  брокера: committed стоит, lag > 0, экземпляр ждёт в fetch. Различает их только то, что видит сам
+  экземпляр: получил ли он сообщения до high watermark. Позиция перезаписывается, а не берётся
+  максимум — после внутреннего ребаланса kafka-go перечитывает с committed, и «дочитал» по старой
+  позиции стало бы ложью. Ничья партиция дочитанной не считается никогда: застрявший ребаланс лечит
+  именно перезапуск.
+- **Почему ни одного перезапуска, а не «один за эпизод».** Отвергнутый commit чаще всего означает,
+  что `__consumer_offsets` не принимает запись (ISR < `min.insync.replicas`, диск). `SyncGroup`
+  пишет назначение туда же, поэтому вход нового участника — ребаланс, который не завершится, и
+  группа перестанет читать целиком. Без перезапуска доставка идёт, не сохраняются только позиции.
+  Решение пользователя (07.10.2026).
+- **Проверено на настоящем отказе брокера.** Integration-тест ставит `__consumer_offsets`
+  `min.insync.replicas=2` при RF=1 (`IncrementalAlterConfigs`): запись в `__consumer_offsets` с
+  acks=all не проходит, и брокер отвергает `OffsetCommit`. Heartbeat'ы при этом идут — группа жива.
+  **На стенде (apache/kafka 3.9.0) этот приём commit НЕ отвергает** — проверено 07.10.2026:
+  при топик-уровневом `min.insync.replicas=2` у `__consumer_offsets` позиции группы двигались, ошибок
+  0 (integration идёт на confluent-local 7.5 = Kafka 3.5, там отвергает). Отказ на 3.9
+  воспроизводится `max.message.bytes=10` у `__consumer_offsets`: запись позиции больше лимита —
+  `OffsetCommit` отвергнут, heartbeat'ы идут. Откат — `--alter --delete-config max.message.bytes`.
+- **Почему честный сигнал недоступности — lag, а не `broker_health` (§114.5).** kafka-go отдаёт
+  `Metadata` из кеша транспорта и после смерти брокера (устаревшие метаданные не сбрасываются при
+  ошибке обновления), поэтому `BrokerHealth` продолжает рапортовать «все брокеры онлайн». ListOffsets/
+  OffsetFetch и `ApiVersions` уходят на брокер всегда — их неудача и есть `broker_unreachable`. Без
+  настроенных групп Nexus (`kafka.consumer_group` пуст) недоступность видна только по `topics`.
+- **Неудача кешируется наравне с успехом (§114.4).** Иначе при мёртвом брокере каждое
+  автообновление каждой вкладки платило бы бюджет заново, а реплики Web — каждая свой. Цена — до
+  30 с «не ответил» после восстановления брокера. Ключи сменили префикс (`v2:`), потому что сменилась
+  форма значения: новый Web прочитал бы старый объект `BrokerHealth` как `brokerRead` без ошибки
+  (лишние поля JSON игнорируются) — с `ok=false`, то есть ложное «брокер не ответил» на 30 с.
+- **Чтение отвязано от отмены запроса (`WithoutCancel` + бюджет).** Singleflight отдаёт одно
+  чтение всем ждущим; с ctx первого пришедшего его закрытая вкладка обрывала бы чтение остальным и
+  клала в кеш ложную неудачу на 30 с. Ушедший запрос просто перестаёт ждать (`select` на
+  `ctx.Done()`). Значение singleflight общее — `Topics` правит копию (`cloneTopics`): роли и размеры
+  подмешиваются на каждый запрос.
+- **Истёкший бюджет обхода топиков — ошибка, а не «успех с дырами».** Watermarks/OffsetFetch по
+  отдельным топикам остаются best-effort, но при истёкшем ctx падают все разом — «успешный» обход
+  вернул бы топики без сообщений и групп. Integration-тест останавливает брокер посреди теста: на
+  старом коде ping давал «OK», а `Topics` — топики без групп; проверено красным.
+- **«Без commit» и «не ответил» — разные вещи (§114.6).** Брокер отвечает на `OffsetFetch` по
+  партиции, где группа позицию не сохраняла, значением `-1` без ошибки, а партиции с ошибкой в
+  карте нет совсем. До §114 `JoinPositions` превращал отсутствие в `-1`, и неполный ответ
+  раздувал lag до размера лога даже у групп Nexus. Теперь отсутствующая партиция не считается
+  никуда, а `-1` идёт в отдельную часть: группе Nexus — в lag (reader начнёт с `First`),
+  посторонней — только счётчиком партиций. Делит usecase, а не адаптер: роль группы знает только
+  он, а в кеше лежит сырой ответ адаптера с обеими частями.
+- **Код ошибки отдельного брокера на `ListGroups` kafka-go теряет (ревизия §114).** `Client.ListGroups`
+  рассылает запрос по всем брокерам (`Split`) и склеивает ответы (`listgroups.Response.Merge`) без
+  `ErrorCode`, поэтому `ListGroupsResponse.Error` всегда nil — проверка была мёртвой и убрана. Запросить
+  один брокер штатно нельзя: `Conn.listGroups` не экспортирован, `Transport.RoundTrip` снова разбивает
+  запрос. Видно только сбой запроса целиком; брокер с `COORDINATOR_LOAD_IN_PROGRESS` неотличим от
+  брокера без групп (граница §114.7).
+- **«Топика нет» — ответ брокера, а не его молчание (ревизия §114).** Кеш метаданных kafka-go на
+  неизвестный топик сам отвечает `UnknownTopicOrPartition` (`filterMetadataResponse`), автосоздания нет
+  (`AllowAutoTopicCreation=false`). `Offsets.Partitions` помечает этот случай `ErrTopicNotFound`, и
+  `GroupLag` отдаёт 0: иначе свежая установка до первого старта Sender'а показывала бы
+  `broker_unreachable` при живом брокере. Ловится только шаг метаданных — `UnknownTopicOrPartition`
+  отдельной партиции из `ListOffsets` (переезд лидера) lag не обнуляет.
+- **Web без Kafka невозможен** — `config.Validate` требует `kafka.brokers`, поэтому ветки
+  `admin == nil` в usecase достижимы только в тестах (отдельного «Kafka не настроена» в UI нет).
+- **Loadtest проверяет §114 там, где его не видят unit- и integration-тесты (§114.L).** Бюджет
+  чтения брокера 3 с выбран для мёртвого брокера; под нагрузкой брокер жив, но занят приёмом и
+  сливом бэклога, и ложное «не ответил» означало бы, что бюджет мал. Сторож при бэклоге в тысячи
+  сообщений не должен принимать занятый consumer за зависший — прирост рестартов за прогон обязан
+  быть нулём. Проба страницы считает и `kafka_available=false` в `topics`, и reason
+  `broker_unreachable` в overview: это два независимых чтения с разными бюджетами (10 с и 3 с).
+  Несостоявшийся снимок `/metrics` — провал проверки, а не «нарушений нет»: иначе опечатка в URL
+  тихо выключала бы её.
+
+### 4.100 §115 — выгрузка логов узла в Excel и иконка вкладки
+
+Раздел [115-logs-excel-export.md](sections/115-logs-excel-export.md).
+Ветка `feature/logs-excel-export` (от `dev`). Миграций нет; новые ключи `config.yml` —
+`web.logs_export.*`. Выкат только Web.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §115 | ✅ Phase 115.0, 115.7 | [sections/115-logs-excel-export.md](sections/115-logs-excel-export.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); запись в [CHANGELOG.md](../CHANGELOG.md) `[Unreleased]` (Phase 115.7); эксплуатация — DEPLOYMENT §7.3 и §9.1.10 (Phase 115.5); DEVELOPMENT без изменений (новых Make-целей и шагов генерации нет) |
+| §115.2 иконка вкладки | ✅ Phase 115.1 | Знак сайдбара [web-ui/src/assets/nexus.svg](../web-ui/src/assets/nexus.svg), ссылка `href="/src/assets/nexus.svg"` в [web-ui/index.html](../web-ui/index.html) → Vite выпускает `/assets/nexus-<hash>.svg`; Go не менялся. Тест `TestSPAFallback_FaviconServedFromEmbeddedBundle` ([spa_test.go](../internal/web/adapter/in/http/spa_test.go)) берёт ссылку из НАСТОЯЩЕГО встроенного `index.html` и требует `image/svg+xml` — красный на старом бандле |
+| §115.3 потоковый XLSX-writer | ✅ Phase 115.2 | Пакет [platform/xlsx](../internal/platform/xlsx/writer.go) на stdlib: `NewWriter(w, sheets...)` пишет фиксированные части сразу (`[Content_Types].xml`, связи, стили), листы — строго по очереди (`StartSheet`/`WriteRow`/`EndSheet` в [sheet.go](../internal/platform/xlsx/sheet.go)), `xl/workbook.xml` — последней в `Close` (диапазоны автофильтров `_xlnm._FilterDatabase`, `activeTab`); недописанные листы `Close` дописывает пустыми. Ячейки [cell.go](../internal/platform/xlsx/cell.go): `Str` (всегда `inlineStr`, `<f>` не пишется), `Int/Float/Bool`, `DateTime/Date` по часам зоны значения (нулевое/до 1900 — пусто). Текст [text.go](../internal/platform/xlsx/text.go): экранирование только `& < >` (не `xml.EscapeText`), `\r` → `&#13;`, `_xHHHH_` → `_x005F_xHHHH_`, невалидный UTF-8 и не-XML символы → U+FFFD, срез на `MaxCellChars`=32 767 UTF-16 единиц без разрыва суррогатов; `Truncate(s, max, marker)` для обрезки с видимым маркером. Запись частей — тип `out` с «липкой» ошибкой (errcheck + запрет `_ = err`). Сжатие `flate.BestSpeed` на экземпляре архива. Тесты [writer_test.go](../internal/platform/xlsx/writer_test.go), [text_test.go](../internal/platform/xlsx/text_test.go) (порядок частей, разметка, round-trip через `encoding/xml`, суррогаты, серийные даты, `FuzzWriteText`); книга проверена `openpyxl` 3.1.5 |
+| §115.7 чтение ключей и строк из ClickHouse | ✅ Phase 115.3 | Отдельный порт [port/log_export.go](../internal/web/usecase/port/log_export.go) `LogExportReader` (не расширение `LogReader` — моки его не знают): `ExportStats` / `ExportKeys` / `ExportRows`. Адаптер [clickhouse/log_export.go](../internal/web/adapter/out/clickhouse/log_export.go), всё через общий `searchConds` (атрибуция §61/§64, окно §72.4, фильтры, полнотекст). `ExportStats` — `uniqExact(ID), count(), sum(least(request_size, кап))` с `countTimeout`, тела с диска не читаются. `ExportKeys` — top-N СТРОК `(ID, ts, toString(date_create))` без `LIMIT 1 BY ID`, дедуп по первому вхождению в Go, добор keyset-курсором по последней ПРОЧИТАННОЙ строке; раунд `need+need/8` в пределах 1 024…200 000 строк; нулевой `date_request` — отдельным условием курсора (Phase 115.9, до неё — стоп и ложная «полная»). `ExportRows` — батч ключей: `searchConds` с окном [мин−1 мс, макс] + `ID IN ?` + `date_create IN ?` (значения из ключей) + голый `date_request BETWEEN` + `LIMIT 1 BY ID`; `previewCols`/`scanLogRowPreview` с телами, `listCols` без; батч дочитывается и курсор закрывается до возврата; строки раскладываются в порядке ключей, пропавшие опускаются. Таймаут на вызов ставит usecase. Тесты: unit [log_export_sql_test.go](../internal/web/adapter/out/clickhouse/log_export_sql_test.go) (порядок аргументов, сужение окна, снятие курсора/Unresolved), integration [log_export_test.go](../tests/integration/log_export_test.go) `TestLogReader_Export*` (группа `test-int-ch`): состав, порядок и ПРОГОН совпадают со `Search` под «Все/OK/Ошибки», срез тел по символам, дедуп через раунды (3 000 прогонов одной записи), продолжение за нулевым `date_request` (`TestLogReader_Export_KeysPastZeroDateRequest`, 600 из 600 против 342 на старом коде), замер чтения батча на внешней таблице |
+| §115.6/§115.8/§115.9 usecase: лимиты, полнота, аудит | ✅ Phase 115.4 | [usecase/logs_export.go](../internal/web/usecase/logs_export.go) `LogsExportUsecase` (`NewLogsExportUsecase(LogsExportDeps)`): `Estimate` (кап тела = символы ячейки × 2 байта, частоту и слоты не расходует) и `Export(ctx, actor, nodeID, teamID, q, opts, sink)`. Порядок: разбор поиска → узел (общие `resolveLogsNode`/`setDateCreateAligned`, вынесены из `LogsUsecase`) → снятие `Unresolved/BeforeID/Limit` → СЛОТ реплики (занято → `ErrLogsExportBusy`) → частота `logs_export:<user>` (→ `ErrLogsExportRateLimited`, недоступный лимитер — fail-open) → ключи `rows+1` → `sink.Begin` → батчи ([logs_export_stream.go](../internal/web/usecase/logs_export_stream.go): 100 записей без тел / 50 с телами, таймаут на вызов, бюджет `MaxBytes` по байтам UTF-8 ячеек + 64 на строку — строка сверх бюджета не пишется) → `sink.Finish` → аудит `node.logs_export` в `context.WithoutCancel`. Статусы `complete / limited_rows / limited_bytes / incomplete (timeout|unavailable|query_failed) / aborted (begin|read|write|finish)`; ошибка возвращается только до `Begin`. Sink — интерфейс на стороне usecase (`Begin/Row/Finish`). Тесты [logs_export_test.go](../internal/web/usecase/logs_export_test.go): лимиты строк/байт, размеры батчей, пропавшие и урезанные, неполная с кодом причины, обрыв без `Finish` с аудитом в неотменённом контексте, ошибки до потока без аудита и с освобождённым слотом, слот не расходует частоту, fail-open, детали аудита |
+| §115.5 API, конфиг, маршруты | ✅ Phase 115.5 | Конфиг `web.logs_export` ([config.go](../internal/platform/config/config.go) `LogsExportSection`, дефолты `applyLogsExportDefaults`, границы `validateLogsExport`: строки ≤ 1 048 575, тело ≤ 32 767, объём 1 МиБ…1 ГиБ, таймаут ≤ 300 с — меньше `proxy_read_timeout` nginx); `max_rows`/`max_bytes` в боевом `config.yml` — через `${LOGS_EXPORT_MAX_ROWS}`/`${LOGS_EXPORT_MAX_BYTES}` из `.env` (тест `TestLoad_RepoConfig_LogsExportFromEnv`). Handler [logs_export_handler.go](../internal/web/adapter/in/http/logs_export_handler.go) (интерфейс `logsExportService` на стороне потребителя): `Estimate` (деградация 200 + `logs_configured/logs_available`, лимиты отдаются всегда), `Export` (`rows`, `bodies`, `tz` → `time.LoadLocation`, неизвестный пояс → UTC); отказы до потока — JSON: 400/404/429+`Retry-After: 60`/503+`Retry-After: 30` (занято)/503 `error.logs_unavailable`. Sink [logs_export_xlsx.go](../internal/web/adapter/in/http/logs_export_xlsx.go): заголовки (`Content-Disposition` из пути узла через `safeFilePart`, `X-Accel-Buffering: no`, `X-Nexus-Export-Rows`), шапка = имена колонок ClickHouse, урезанное тело — с маркером полной длины в пределах ячейки, эпоха/ноль даты — пустая ячейка, `done` — 1/0, сброс клиенту каждые 100 строк; лист «Параметры» [logs_export_summary.go](../internal/web/adapter/in/http/logs_export_summary.go) (исход, объём, обрезки, фильтры, кто/когда/пояс/версия), неполная выгрузка открывается на нём. Маршруты `GET /nodes/:id/logs/export.xlsx` и `/logs/export/estimate` — `RequireSessionOnly`, все роли ([routes.go](../internal/web/adapter/in/http/routes.go)); wiring в [app.go](../internal/web/app.go) `logsExportLimits`. i18n `logs_export.*` (backend, en/ru), Swagger. Тесты: [logs_export_handler_test.go](../internal/web/adapter/in/http/logs_export_handler_test.go) (книга разбирается из ответа: шапка, маркер, формула текстом, дата в поясе, пустая эпоха, «Параметры», activeTab; карта ошибок; оценка; пояс; имя файла), `TestLogsExportRoutes_*` (все роли, API-токен 403, маршрут не перекрыт), `TestLogReader_ExportXLSX_EndToEnd` (ClickHouse → usecase → handler: мегабайтное тело урезано, бюджет останавливает, аудит) |
+| §115.4 форма выгрузки (UI) | ✅ Phase 115.6, 115.8, 115.10 | Кнопка «Выгрузить» справа от «Сбросить» — проп `onExport` у [LogsAdvancedFilters.tsx](../web-ui/src/components/node/LogsAdvancedFilters.tsx) (есть только у журнала узла с таблицей логов; у «Метрик» и встроенных в диалоги панелей пропа нет), открывает [LogsExportDialog.tsx](../web-ui/src/components/node/LogsExportDialog.tsx) из [LogsTab.tsx](../web-ui/src/components/node/LogsTab.tsx) — всем ролям. Диалог: сводка фильтров вкладки только для чтения — только заданные, иначе «Фильтры не установлены» (115.8, 115.10; кнопка сперва применяет набранный поиск вкладки); 404 — свой текст `logs.export.err_not_found` (Web без ClickHouse отвечает голым «not found», 115.10); «Строк не более» — список 1 000 / 10 000 / `max_rows` (пресет не меньше потолка не показывается, по умолчанию потолок); тела (по умолчанию включены); живая оценка `GET …/logs/export/estimate` (`useQuery` с `signal`, `keepPreviousData`); выгрузка `api.getBlob` ([client.ts](../web-ui/src/api/client.ts): `timeout: 0`, `signal`, прогресс в байтах, `Accept-Language` = язык интерфейса) → `saveBlob` ([lib/download.ts](../web-ui/src/lib/download.ts), вынесен из резервной копии, URL освобождается через минуту); «Остановить» и закрытие диалога рвут запрос. Чистые функции — [lib/logsExport.ts](../web-ui/src/lib/logsExport.ts) (предел, план «в файл/объём/упор», сводка фильтров, параметры, тексты отказов 400/429/503). Аудит: действие `node.logs_export` в фильтре [AuditLog.tsx](../web-ui/src/pages/AuditLog.tsx). i18n `logs.export.*` (en/ru). Тесты: [logsExport.test.ts](../web-ui/src/lib/logsExport.test.ts) (25), [LogsExportDialog.test.tsx](../web-ui/src/components/node/LogsExportDialog.test.tsx) (14: сводка только заданных фильтров без второй панели, «Фильтры не установлены», параметры выгрузки и язык, пресет/тела, 429, «Остановить» и закрытие, done из дип-линка в сводке и выгрузке, деградация оценки, пусто, предупреждения, упор в объём без числа записей; кнопка у viewer открывает диалог, набранный без Enter поиск попадает в журнал и оценку, у узла без таблицы кнопки нет). Бандл пересобран → `internal/web/static/` |
+
+**Неочевидности §115:**
+
+- **Чтение выгрузки — ключи, потом строки (§115.7).** Ключи — top-N по СТРОКАМ без `LIMIT 1 BY ID`:
+  с ним ClickHouse не применяет top-N-сортировку и сортирует все пары «ID × время» под фильтром.
+  Дубли ID отбрасываются в Go по первому вхождению — это новейший подходящий прогон, та же строка,
+  что выбирает `LIMIT 1 BY ID` списка; integration-тест сверяет с `Search` и состав, и порядок, и
+  сам прогон под «Все/OK/Ошибки».
+- **Батч строк обязан нести `date_create IN (…)` из ключей.** Ключ сортировки таблицы —
+  `(date_create, date_request, method)`; без условия по первому столбцу ClickHouse не отсекает
+  гранулы и по второму — голый `date_request BETWEEN` в одиночку на внешней таблице §64
+  (`DateCreateAligned=false`) читал 200 000 строк из 200 000 на КАЖДЫЙ батч. Значения
+  `date_create` берутся из самих отобранных строк (`toString(date_create)` в запросе ключей),
+  поэтому сужение верно и там, где посторонний писатель ставит `date_create`, не связанный с
+  `date_request`; с ним батч читает одну гранулу (8 192 строки). `date_request` в батче — ГОЛЫЙ:
+  обёрнутый в `toDateTime64` (как в `searchConds`) гранулы внутри дня не отсекает.
+- **Курсор добора ключей — последняя ПРОЧИТАННАЯ строка, а не последний взятый ключ:** хвост
+  страницы может целиком состоять из прогонов уже взятой записи. `date_request = 0` курсором не
+  выразить (`searchConds` читает `UntilMs=0` как «без границы») — добор останавливается, иначе
+  раунд повторял бы ту же страницу.
+- **Слот — раньше частоты.** Занятая реплика отвечает 503, и nginx (`proxy_next_upstream http_503`)
+  повторяет GET на соседней; если бы частота расходовалась первой, одна попытка съедала бы два
+  запуска из пяти. Ошибки до `sink.Begin` (поиск, узел, занятость, частота, отказ ClickHouse при
+  отборе ключей) не пишут аудит — ничего не выгружено; после `Begin` аудит пишется на любой исход.
+- **Причина неполноты — код, а не текст ошибки:** в тексте ошибки ClickHouse бывает SQL с
+  аргументами поиска, а он уходит в файл и в аудит.
+- **Пустая строка — пустая ячейка (`xlsx.Str("")`).** В строке журнала половина колонок обычно
+  пуста (reason, client_host, checksum…), и записанная `<c t="inlineStr"><is><t></t></is></c>` стоила
+  ~60 байт на колонку на КАЖДУЮ строку листа. В Excel пустая строка и отсутствие ячейки неотличимы.
+- **Маркер урезанного тела живёт в пределе ячейки за счёт тела**, а не дописывается сверху: тело
+  режется в ClickHouse до `max_body_chars` символов, и маркер «…[обрезано, всего символов: N]»
+  вытесняет его хвост. При `max_body_chars` меньше длины маркера ячейка — один маркер.
+- **Язык файла — язык интерфейса, а не браузера.** Подписи листа «Параметры» и имена листов
+  переводит backend по `Accept-Language`, а язык интерфейса хранится в `localStorage` и может
+  отличаться; поэтому запрос выгрузки шлёт `Accept-Language: <i18n.language>` (заголовок не
+  входит в запрещённые для XHR). Тем же языком приходит и текст отказа 503 («занято» /
+  «ClickHouse недоступен»), который диалог показывает как есть.
+- **Фильтры в форме — сводка только для чтения, а не вторая панель (Phase 115.8).** Первая версия
+  (115.6) открывала в диалоге копию `LogsAdvancedFilters` с черновиком вкладки — на экране
+  оказывалось два поля «Поиск», а правка в форме расходилась с журналом за ней. Теперь диалог
+  получает применённый `filterState` и рисует его `<dl>`-сводкой (`exportFilterSummary` в
+  [lib/logsExport.ts](../web-ui/src/lib/logsExport.ts)); выгружается ровно то, что показывает
+  журнал. Строк только по заданным фильтрам (115.10, просьба пользователя: «любой/не задан»
+  по каждому полю зашумляли сводку); ничего не задано — одна строка «Фильтры не установлены».
+  Чтобы поиск, набранный без Enter, не потерялся, кнопка «Выгрузить» сначала делает
+  `commitAdv(advForm)` вкладки и только потом открывает форму — он применяется и к журналу, и к
+  выгрузке (тест «поиск, набранный без Enter…» в
+  [LogsExportDialog.test.tsx](../web-ui/src/components/node/LogsExportDialog.test.tsx)). Кнопка
+  гасит `mousedown`, как «Сбросить»: blur поля «Поиск» о неё запустил бы лишний запрос списка.
+- **Оценка в форме — грубая и клиентская.** Сервер отдаёт суммы размеров тел по ВСЕМ прогонам
+  (каждый урезан капом ячейки), форма делит их на число прогонов и добавляет
+  `EXPORT_ROW_META_BYTES`=400 байт на остальные колонки. Это предупреждение «оценка выше лимита
+  объёма», а не обещание: фактический исход — только на листе «Параметры». **Число записей,
+  которые войдут в лимит, форма не называет** (поле `fitRows` убрано в 115.8): записи пишутся от
+  новых к старым, а тела распределены неравномерно — на стенде среднее дало «≈ 397» при
+  фактических 1 579, а при пределе 1 000 строк пугало упором, которого не было. Оценка не пришла
+  (сеть) — выгрузка не блокируется: «все» уходит без `rows`, и сервер берёт свой `max_rows`.
+- **Прогресс — байты, а не проценты:** длины ответа нет (файл пишется по мере чтения журнала),
+  поэтому футер показывает полученный объём и бегущую полосу.
+
+**Ревизия перед сдачей (Phase 115.9)** — что нашлось при перечитывании `git diff dev...HEAD`:
+
+- **Отказ ClickHouse — 500, а не 503.** nginx (`location /`: `proxy_next_upstream … http_502
+  http_503 http_504`, `tries 2`) повторял 503 «ClickHouse недоступен/таймаут» на соседней реплике,
+  а ClickHouse у реплик общий: таймаут тяжёлого отбора ключей (60 с) превращался в два таких
+  запроса подряд и вторую единицу лимита частоты. Правка nginx не понадобилась (конфиг запечён в
+  образ — пересборка балансировщика ради одного кода): 503 остался только у «занято», отказ
+  ClickHouse — 500 ([logs_export_handler.go](../internal/web/adapter/in/http/logs_export_handler.go)
+  `replyExportError`), таймаут — своим текстом `logs_export.timeout` («задайте период или сузьте
+  поиск»). Sentry 500 событием не шлёт — только статус спана, как у 503.
+- **Нулевой `date_request` обрывал отбор ключей.** Курсор `searchConds` считает `UntilMs=0`
+  «без границы», и `ExportKeys` на такой строке останавливался — godoc порта («меньше limit —
+  записей больше нет») лгал, выгрузка выходила «полной». Бывает на внешней таблице §64, где
+  писатель не заполнил колонку (DEFAULT — эпоха). Теперь хвост с временем ≤ 0 идёт отдельным
+  keyset-условием в `exportKeyPage`; положительное время по-прежнему — через `q.UntilMs/BeforeID`
+  (с ним и окно `date_create` §72.4). Integration `TestLogReader_Export_KeysPastZeroDateRequest`:
+  на старом коде 342 записи из 600.
+- **Эмодзи в теле обходили маркер обрезки.** Срез ClickHouse — в символах, предел ячейки — в
+  единицах UTF-16: тело в пределах `max_body_chars`, но с эмодзи, писатель резал молча, без
+  «…[обрезано]» и мимо «Обрезано тел». `bodyCell` теперь проверяет и длину в UTF-16 (только для
+  тел длиннее предела в байтах — байт не меньше единиц UTF-16), такие тела считает сам sink
+  (`unitCut`). Тест `TestLogsExportHandler_AstralBodyOverflowGetsMarker`.
+- **Ложный Warn на каждое закрытие формы.** Адаптер помечает `context.Canceled` и как
+  `ErrLogsBackendUnavailable`, а в `Estimate` проверка «клиент ушёл» стояла после ветки
+  недоступности — оборванная формой оценка писала «ClickHouse unavailable». Проверка перенесена
+  первой (Debug). Тест `TestLogsExportHandler_EstimateClientGoneIsQuiet`.
+- **Формулировка таймаута.** «Таймаут каждого запроса» не соответствовал коду: отбор ключей
+  (все раунды) идёт под одним таймаутом. Исправлено в godoc, конфигах, ТЗ и DEPLOYMENT — «таймаут
+  шага».
+- **Граница, дописанная в ТЗ §115.10:** «Остановить» после того, как сервер дописал файл в сокет,
+  в аудите остаётся завершённой выгрузкой (Web о разрыве не узнаёт) — замечено на стенде.

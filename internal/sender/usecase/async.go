@@ -347,10 +347,23 @@ func (p *AsyncProcessor) handlePaused(ctx context.Context, raw []byte, env Envel
 		p.logger.Str("node_path", env.NodePath),
 		p.logger.Str("paused_topic", p.pausedTopic),
 		p.logger.Str("paused_since", hdrs["paused_since"]))
-	if p.metrics != nil {
-		p.metrics.IncRequest("requestAsync", nodeLabels(node), "paused")
-	}
+	p.countPaused(node, msgHeaders)
 	return HandleRequeued
+}
+
+// countPaused считает откладывание (§113.5). Первое — запрос, отложенный из-за
+// паузы (nexus_requests_total{status="paused"}). Повторный перенос sweeper'ом
+// (у копии уже есть paused_since) запросом не является: до §113 он попадал в
+// nexus_requests_total, и проход каждые 30 с раздувал consumed в сотни раз.
+func (p *AsyncProcessor) countPaused(node *domain.Node, msgHeaders map[string]string) {
+	if p.metrics == nil {
+		return
+	}
+	if msgHeaders["paused_since"] != "" {
+		p.metrics.IncPausedRequeued(nodeLabels(node))
+		return
+	}
+	p.metrics.IncRequest("requestAsync", nodeLabels(node), "paused")
 }
 
 // pausedHeaders собирает заголовки копии в delay-топике. paused_since — время

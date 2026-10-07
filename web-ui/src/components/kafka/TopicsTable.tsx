@@ -1,17 +1,52 @@
 import { useTranslation } from "react-i18next";
 
-import type { KafkaTopic } from "../../api/client";
+import type { KafkaTopic, KafkaTopicGroup } from "../../api/client";
 import { Card, Chip, Pill } from "../ui";
 import { fmtBytes, fmtNum } from "../../lib/format";
 
+// waitsByDesign — lag группы означает сообщения, которые ждут по замыслу, а не
+// отставание обработки (§113.7): очередь узлов на паузе и DLQ, разбираемая по
+// расписанию. До §113 очередь паузы красила топик в «растущий lag».
+function waitsByDesign(g: KafkaTopicGroup): boolean {
+  return g.role === "paused" || g.role === "dlq";
+}
+
 // topicTone — состояние топика: offline → err, under-replicated/растущий lag →
-// warn, иначе ok.
+// warn, иначе ok. Lag групп, ждущих по замыслу, в тон не входит.
 function topicHealth(tp: KafkaTopic): { tone: "ok" | "warn" | "err"; key: string } {
   if (tp.offline_partitions > 0) return { tone: "err", key: "offline" };
   if (tp.under_replicated > 0) return { tone: "warn", key: "under_replicated" };
-  const lag = tp.consumer_groups.reduce((s, g) => s + g.lag_total, 0);
+  const lag = tp.consumer_groups.reduce((s, g) => (waitsByDesign(g) ? s : s + g.lag_total), 0);
   if (lag > 1000) return { tone: "warn", key: "lag" };
   return { tone: "ok", key: "ok" };
+}
+
+// GroupChip — плашка consumer-группы. У групп, ждущих по замыслу, тон
+// нейтральный и вместо «lag» — что именно ждёт; подсказка объясняет почему.
+//
+// §114.6: у посторонней группы партиции без commit в lag не входят — откуда
+// группа начнёт их читать, неизвестно. Их число — на плашке, с подсказкой,
+// иначе lag выглядел бы полным.
+function GroupChip({ g }: { g: KafkaTopicGroup }) {
+  const { t } = useTranslation();
+  const n = g.lag_total.toLocaleString();
+  if (waitsByDesign(g)) {
+    const kind = g.role === "paused" ? "paused" : "dlq";
+    return (
+      <span title={t(`kafka.topics.role_hint.${kind}`)}>
+        <Chip tone="default">{t(`kafka.topics.role_waiting.${kind}`, { group: g.group, n })}</Chip>
+      </span>
+    );
+  }
+  const uncommitted = g.uncommitted_partitions ?? 0;
+  const chip = (
+    <Chip tone={g.lag_total > 1000 ? "warning" : g.lag_total > 0 ? "default" : "success"}>
+      {g.group} · lag {n}
+      {uncommitted > 0 && <> · {t("kafka.topics.uncommitted", { n: uncommitted })}</>}
+    </Chip>
+  );
+  if (uncommitted === 0) return chip;
+  return <span title={t("kafka.topics.uncommitted_hint", { n: uncommitted })}>{chip}</span>;
 }
 
 // topicSize — ячейка «Размер» (§75). Источник размеров отдельный от Kafka Admin
@@ -29,13 +64,17 @@ function topicSize(tp: KafkaTopic, sizesAvailable: boolean, hint: string) {
   );
 }
 
-// TopicsTable — таблица всех топиков кластера (§5.6 spec).
+// TopicsTable — таблица всех топиков кластера (§5.6 spec). kafkaAvailable=false
+// (§114.5) — брокер не ответил: пустой список означает «не прочитан», а не
+// «топиков нет».
 export function TopicsTable({
   topics,
   sizesAvailable,
+  kafkaAvailable,
 }: {
   topics: KafkaTopic[];
   sizesAvailable: boolean;
+  kafkaAvailable: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -74,9 +113,7 @@ export function TopicsTable({
                     ) : (
                       <div className="flex flex-wrap gap-1">
                         {tp.consumer_groups.map((g) => (
-                          <Chip key={g.group} tone={g.lag_total > 1000 ? "warning" : g.lag_total > 0 ? "default" : "success"}>
-                            {g.group} · lag {g.lag_total.toLocaleString()}
-                          </Chip>
+                          <GroupChip key={g.group} g={g} />
                         ))}
                       </div>
                     )}
@@ -90,7 +127,7 @@ export function TopicsTable({
             {topics.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-3 py-6 text-center text-fg-muted">
-                  {t("kafka.topics.empty")}
+                  {kafkaAvailable ? t("kafka.topics.empty") : t("kafka.topics.unavailable")}
                 </td>
               </tr>
             )}

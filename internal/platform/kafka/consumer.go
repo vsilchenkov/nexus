@@ -19,23 +19,38 @@ type Consumer struct {
 	r *kafka.Reader
 }
 
+// ConsumerOption настраивает reader.
+type ConsumerOption func(*kafka.ReaderConfig)
+
+// WithClientID задаёт client.id соединений reader'а (§113.6). Брокер
+// показывает его у участника группы (DescribeGroups), и сторож зависшего
+// consumer'а находит по нему партиции своего reader'а. Без опции все reader'ы
+// процесса получают общий client.id kafka-go ("<программа>@<хост>").
+func WithClientID(id string) ConsumerOption {
+	return func(rc *kafka.ReaderConfig) {
+		if id != "" {
+			rc.Dialer = &kafka.Dialer{ClientID: id, Timeout: 10 * time.Second, DualStack: true}
+		}
+	}
+}
+
 // NewConsumer создаёт consumer для одного топика под основной consumer-group
 // (cfg.Kafka.ConsumerGroup). При множественных инстансах партиции
 // распределяются автоматически.
-func NewConsumer(cfg *config.Config, topic string) *Consumer {
-	return NewConsumerWithGroup(cfg, topic, cfg.Kafka.ConsumerGroup)
+func NewConsumer(cfg *config.Config, topic string, opts ...ConsumerOption) *Consumer {
+	return NewConsumerWithGroup(cfg, topic, cfg.Kafka.ConsumerGroup, opts...)
 }
 
 // NewConsumerWithGroup — как NewConsumer, но с произвольной consumer-group.
 // Используется DLQ-репроцессором (§36.2): отдельная группа
 // "<group>-dlq-reprocess" читает nexus.async.dlq независимо и не конкурирует с
 // основным async-consumer'ом. Пустой groupID → дефолтная группа.
-func NewConsumerWithGroup(cfg *config.Config, topic, groupID string) *Consumer {
+func NewConsumerWithGroup(cfg *config.Config, topic, groupID string, opts ...ConsumerOption) *Consumer {
 	if groupID == "" {
 		groupID = cfg.Kafka.ConsumerGroup
 	}
 	brokers := splitBrokers(cfg.Kafka.Brokers)
-	r := kafka.NewReader(kafka.ReaderConfig{
+	rc := kafka.ReaderConfig{
 		Brokers:           brokers,
 		Topic:             topic,
 		GroupID:           groupID,
@@ -47,8 +62,11 @@ func NewConsumerWithGroup(cfg *config.Config, topic, groupID string) *Consumer {
 		// CommitInterval=0 -> ручной commit через CommitMessages.
 		CommitInterval: 0,
 		StartOffset:    kafka.FirstOffset,
-	})
-	return &Consumer{r: r}
+	}
+	for _, o := range opts {
+		o(&rc)
+	}
+	return &Consumer{r: kafka.NewReader(rc)}
 }
 
 // FetchMessage блокирует до получения следующего сообщения или отмены ctx.
@@ -69,10 +87,4 @@ func (c *Consumer) Commit(ctx context.Context, msg kafka.Message) error {
 // Close корректно завершает consumer.
 func (c *Consumer) Close() error {
 	return c.r.Close()
-}
-
-// Stats возвращает kafka-go ReaderStats — Lag, Topic, Partition.
-// Используется для публикации в Prometheus (nexus_kafka_lag).
-func (c *Consumer) Stats() kafka.ReaderStats {
-	return c.r.Stats()
 }

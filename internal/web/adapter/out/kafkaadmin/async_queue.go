@@ -8,6 +8,7 @@ import (
 
 	kafka "github.com/segmentio/kafka-go"
 
+	kafkapf "nexus/internal/platform/kafka"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -188,8 +189,9 @@ func (c *Client) scanQueue(ctx context.Context, group, topic string, owner port.
 	if !ok {
 		return false, fmt.Errorf("topic %q not found", topic)
 	}
-	first, last := c.partitionWatermarks(ctx, t)
-	committed := c.committedOffsets(ctx, group, topic, partitionIDs(t))
+	parts := partitionIDs(t)
+	wm := c.watermarks(ctx, topic, parts)
+	committed := c.committedOffsets(ctx, group, topic, parts)
 
 	scanCtx, cancel := context.WithTimeout(ctx, peekTimeout)
 	defer cancel()
@@ -197,14 +199,12 @@ func (c *Client) scanQueue(ctx context.Context, group, topic string, owner port.
 	read := 0
 	for _, p := range t.Partitions {
 		pid := p.ID
-		hi, okHi := last[pid]
-		if !okHi || hi <= 0 {
+		w, okW := wm[pid]
+		hi := w.Last
+		if !okW || hi <= 0 {
 			continue
 		}
-		start := committed[pid]
-		if start < 0 {
-			start = first[pid] // группа не коммитила эту партицию → от low watermark
-		}
+		start := liveTailStart(w, committed, pid)
 		if start >= hi {
 			continue // нет неконсюмированных в партиции
 		}
@@ -217,6 +217,19 @@ func (c *Client) scanQueue(ctx context.Context, group, topic string, owner port.
 		}
 	}
 	return false, nil
+}
+
+// liveTailStart — с какого offset начинается неконсюмированный хвост партиции:
+// committed-офсет группы, но не левее low watermark (так же считает lag
+// kafkapf.PartitionPosition). Партиция без committed (группа не коммитила или
+// OffsetFetch не ответил) читается от low watermark — до §113 пропавший ответ
+// давал старт с 0.
+func liveTailStart(w kafkapf.Watermark, committed map[int]int64, pid int) int64 {
+	c, ok := committed[pid]
+	if !ok {
+		return w.First
+	}
+	return max(c, w.First)
 }
 
 // scanPartition читает партицию от start до hi-1, отбирая сообщения owner. read —
@@ -268,21 +281,4 @@ func (c *Client) topicMeta(ctx context.Context, topic string) (kafka.Topic, bool
 		}
 	}
 	return kafka.Topic{}, false
-}
-
-// committedOffsets — committed offset группы по каждой партиции топика
-// (-1, если группа не коммитила). Best-effort: при ошибке — пустая карта (старт
-// тогда с low watermark).
-func (c *Client) committedOffsets(ctx context.Context, group, topic string, parts []int) map[int]int64 {
-	out := map[int]int64{}
-	resp, err := c.kc.OffsetFetch(ctx, &kafka.OffsetFetchRequest{GroupID: group, Topics: map[string][]int{topic: parts}})
-	if err != nil {
-		c.logger.Warn("kafka peek offset fetch failed",
-			c.logger.Str("op", "web.kafkaAdmin.peek"), c.logger.Str("group", group), c.logger.Err(err))
-		return out
-	}
-	for _, p := range resp.Topics[topic] {
-		out[p.Partition] = p.CommittedOffset
-	}
-	return out
 }

@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { Download } from "lucide-react";
 
 import { DateTimeField, LabelHint, SearchInput } from "../ui";
 import { LogMethodFilter } from "./LogMethodFilter";
@@ -47,6 +48,7 @@ export function LogsAdvancedFilters({
   dateRange,
   onOpenDate,
   clientWindow,
+  onExport,
 }: {
   nodeId: string;
   draft: LogsAdvForm;
@@ -56,6 +58,9 @@ export function LogsAdvancedFilters({
   badQuery?: boolean;
   dateRange?: { min: number; max: number } | null;
   onOpenDate?: () => void;
+  /** §115: кнопка «Выгрузить» рядом со «Сбросить» — только у журнала узла
+   * (не у «Метрик» и не у диалогов, где панель встроена). */
+  onExport?: () => void;
 } & DatesProps) {
   const { t } = useTranslation();
   const minDate = dateRange && dateRange.min > 0 ? new Date(dateRange.min) : undefined;
@@ -200,6 +205,19 @@ export function LogsAdvancedFilters({
           >
             {t("logs.advanced.reset")}
           </button>
+          {/* §115: тот же mousedown, что у «Сбросить» — фокус остаётся в поле;
+              набранный поиск применяет сам обработчик кнопки (LogsTab). */}
+          {onExport && (
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={onExport}
+              className="inline-flex items-center gap-1.5 rounded-md bg-bg-muted px-3 py-1.5 text-sm hover:bg-bg-3"
+            >
+              <Download className="h-3.5 w-3.5" />
+              {t("logs.export.button")}
+            </button>
+          )}
         </div>
       </div>
     </div>

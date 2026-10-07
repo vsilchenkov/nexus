@@ -1010,6 +1010,7 @@ func TestReplayFailed_SkipsClientCanceled(t *testing.T) {
 // idDispatcher — отдаёт заданные заголовки и тело, чтобы проверить, откуда
 // повтор берёт идентификатор новой записи.
 type idDispatcher struct {
+	status  int
 	headers map[string]string
 	body    string
 	gotReq  port.DispatchRequest
@@ -1017,7 +1018,11 @@ type idDispatcher struct {
 
 func (d *idDispatcher) Dispatch(_ context.Context, req port.DispatchRequest) (*port.DispatchResponse, error) {
 	d.gotReq = req
-	return &port.DispatchResponse{StatusCode: 200, Body: []byte(d.body), Headers: d.headers}, nil
+	status := d.status
+	if status == 0 {
+		status = 200
+	}
+	return &port.DispatchResponse{StatusCode: status, Body: []byte(d.body), Headers: d.headers}, nil
 }
 
 // TestReplay_NewLogIDComesFromBus — §85.10: идентификатор новой записи берётся из
@@ -1032,13 +1037,14 @@ func TestReplay_NewLogIDComesFromBus(t *testing.T) {
 	const busID = "3f2a1c9e-11aa-4bb2-8cc3-99dd77ee5566"
 
 	tests := []struct {
-		name    string
-		recType domain.RootMethod
-		sync    bool
-		headers map[string]string
-		body    string
-		want    string
-		why     string
+		name     string
+		recType  domain.RootMethod
+		syncNode bool
+		status   int
+		headers  map[string]string
+		body     string
+		want     string
+		why      string
 	}{
 		{
 			name:    "async: штатный ответ шины",
@@ -1069,6 +1075,35 @@ func TestReplay_NewLogIDComesFromBus(t *testing.T) {
 			want:    "",
 			why:     "поле id принадлежит приёмнику; принять его за запись журнала нельзя",
 		},
+		// Ревизия §113: с §113.10 отложенная запись sync-узла повторяется через
+		// /request, и узел на паузе отвечает 202 queued формой шины. До правки
+		// тело sync-ответа не разбиралось — аудит терял id новой записи.
+		{
+			name:     "sync-узел на паузе: 202 queued от шины",
+			recType:  domain.RootMethodRequestAsync,
+			syncNode: true,
+			status:   202,
+			body:     `{"result":true,"id":"` + busID + `","queued":true,"node_status":"paused"}`,
+			want:     busID,
+			why:      "202 queued — ответ шины, приёмник запроса не видел",
+		},
+		{
+			name:     "sync: 202 приёмника без формы шины",
+			recType:  domain.RootMethodRequest,
+			syncNode: true,
+			status:   202,
+			body:     `{"id":"` + busID + `","accepted":true}`,
+			want:     "",
+			why:      "202 сам по себе не признак шины — нужна вся форма queued",
+		},
+		{
+			name:     "sync: 200 с формой queued не принимается",
+			recType:  domain.RootMethodRequest,
+			syncNode: true,
+			body:     `{"result":true,"id":"` + busID + `","queued":true,"node_status":"paused"}`,
+			want:     "",
+			why:      "шина отвечает queued только с 202",
+		},
 		{
 			name:    "async: чужой нечисловой id из тела отвергается",
 			recType: domain.RootMethodRequestAsync,
@@ -1081,15 +1116,21 @@ func TestReplay_NewLogIDComesFromBus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			// §113.10: async-вход выбирается по root_method узла, поэтому он
+			// задан явно — async-узел, у которого бывают и sync-записи (§3.6).
 			node := &domain.Node{
 				ID: "n1", Path: "demo/x", Status: domain.NodeStatusEnabled,
 				ClickHouseTable: "t.t", IncomingMethod: domain.HTTPMethodPOST,
+				RootMethod: domain.RootMethodRequestAsync,
+			}
+			if tt.syncNode {
+				node.RootMethod = domain.RootMethodRequest
 			}
 			log := &domain.LogRecord{
 				ID: "log1", Type: tt.recType, Request: `{"a":1}`,
 				DateRequest: time.Now(), Done: true,
 			}
-			disp := &idDispatcher{headers: tt.headers, body: tt.body}
+			disp := &idDispatcher{status: tt.status, headers: tt.headers, body: tt.body}
 			auditRepo := &stubAuditRepo{}
 			uc := NewReplayUsecase(
 				&stubLogReader{log: log},

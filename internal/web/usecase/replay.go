@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
@@ -73,7 +74,10 @@ type ReplayUsecase struct {
 	audit      *AuditUsecase
 	cancel     port.QueueCancelWriter // §36.11: отмена оригиналов при «Повторить все» (nil без Redis)
 	cleaner    port.FailedLogsCleaner // §79.2: уборка строк done=0 после успешного повтора (nil без CH)
-	teams      ReplayTeamResolver     // §18: слаг команды узла для пути реинъекции (nil = без слага)
+	// sweepSignal — сигнал прохода очереди паузы после отмены оригиналов
+	// «Повторить все» у узла на паузе (§113.3). nil — страховочный проход.
+	sweepSignal port.PausedSweepSignaler
+	teams       ReplayTeamResolver // §18: слаг команды узла для пути реинъекции (nil = без слага)
 	// originals — §96: источник ПОЛНОГО тела для повтора (оригинальный конверт в
 	// очереди Kafka). nil без Kafka — тогда источником остаётся журнальная
 	// копия, и усечённая запись честно отклоняется.
@@ -101,6 +105,12 @@ type ReplayOption func(*ReplayUsecase)
 // сообщения уходят, но записи остаются в «Неудачных доставках» до очистки.
 func WithFailedCleaner(c port.FailedLogsCleaner) ReplayOption {
 	return func(u *ReplayUsecase) { u.cleaner = c }
+}
+
+// WithReplaySweepSignal подключает сигнал прохода очереди паузы (§113.3) — один
+// на операцию «Повторить все», после отмены оригиналов, и только у узла на паузе.
+func WithReplaySweepSignal(s port.PausedSweepSignaler) ReplayOption {
+	return func(u *ReplayUsecase) { u.sweepSignal = s }
 }
 
 // WithQueueOriginals подключает §96: тело для повтора берётся из оригинального
@@ -391,7 +401,7 @@ func (u *ReplayUsecase) replayOne(
 	// записи, порождённые прошлыми повторами.
 	q.Set(domain.ReplayOfParam, logID)
 
-	async := orig.Type == domain.RootMethodRequestAsync && !opts.SyncOverride
+	async := replayViaAsync(node, orig) && !opts.SyncOverride
 
 	// §96.5: заголовки исходного запроса живут только в конверте — журнал их не
 	// хранит вовсе. Берём Content-Type и то, что узел пробрасывает дальше;
@@ -470,6 +480,31 @@ func (u *ReplayUsecase) replayOne(
 type replaySource struct {
 	original *port.AsyncOriginal
 	searched bool
+}
+
+// replayViaAsync — повторять ли запись через async-вход Receiver'а
+// (/requestAsync), §113.10.
+//
+// Внешний /requestAsync принимает только узлы root_method=requestAsync (§82.3,
+// ErrNodeNotAsyncIngress → 404 «node not found»). Async-запись sync-узла — это
+// запрос, принятый с 202 во время паузы (§3.6): на /requestAsync он получал
+// 404, а массовый повтор до §113 считал этот ответ успехом, отменял оригинал и
+// стирал записи — запросы пропадали молча. Через /request узел на паузе снова
+// ответит 202 и поставит запрос в очередь, а включённый — доставит синхронно.
+//
+// Pull-узел (RabbitMQAsync) тоже идёт через /request: на паузе он так же
+// отвечает 202. Включённый pull-узел не принимает повтор ни одним входом
+// (§82.3 и «node is RabbitMQAsync, not request») — это граница §113.10: повтор
+// честно считается неудачей, запись остаётся, но доставить её отсюда нельзя.
+func replayViaAsync(node *domain.Node, orig *domain.LogRecord) bool {
+	return orig.Type == domain.RootMethodRequestAsync && node.RootMethod == domain.RootMethodRequestAsync
+}
+
+// replayAccepted — шина приняла повтор (§113.10): 2xx от Receiver'а. Только
+// такой исход разрешает массовым повторам отменить оригинал и убрать запись
+// из «Неудачных доставок». Остальное — неудача повтора, запись остаётся.
+func replayAccepted(r *ReplayResult) bool {
+	return r != nil && r.StatusCode >= 200 && r.StatusCode < 300
 }
 
 // queueLookupSkew — запас назад от времени приёма записи при поиске конверта.
@@ -625,24 +660,38 @@ func replayHeaders(node *domain.Node, env *port.AsyncOriginal) map[string]string
 //
 //   - заголовок X-Nexus-Id — его Receiver ставит, когда отвечает по шаблону
 //     §83: тело там пишет оператор, и идентификатора в нём может не быть вовсе;
-//   - тело штатного async-ответа `{"result":true,"id":"<uuid>"}` (и 202 узла на
-//     паузе, §3.6) — собственная форма шины.
+//   - тело штатного async-ответа `{"result":true,"id":"<uuid>"}` и ответа узла
+//     на паузе `{"result":true,"id":"<uuid>","queued":true,"node_status":…}`
+//     со статусом 202 (§3.6) — собственная форма шины.
 //
-// Тело SYNC-ответа не разбирается никогда: это ответ ПРИЁМНИКА, и его
+// Тело остального SYNC-ответа не разбирается: это ответ ПРИЁМНИКА, и его
 // собственное поле `id` (заказ, документ, что угодно) уехало бы в аудит как
 // идентификатор записи журнала. По той же причине значение из тела обязано быть
 // валидным UUID — форма шины гарантирует именно его.
+//
+// Исключение для sync — ответ узла на паузе: с §113.10 повтор sync-узла идёт
+// через /request и при паузе получает 202 queued от самой шины, а не от
+// приёмника (до него запрос не дошёл). Отличаем его по всем признакам формы
+// сразу — 202, result, queued и node_status. Граница: приёмник, сам отвечающий
+// ровно такой формой с 202, будет принят за шину; другой отметки
+// «ответ проксирован» Receiver наружу не отдаёт.
 func replayedLogID(resp *port.DispatchResponse, async bool) string {
 	if id := resp.Headers["X-Nexus-Id"]; id != "" {
 		return id
 	}
-	if !async {
+	var ack struct {
+		Result     bool   `json:"result"`
+		ID         string `json:"id"`
+		Queued     bool   `json:"queued"`
+		NodeStatus string `json:"node_status"`
+	}
+	if !async && resp.StatusCode != http.StatusAccepted {
 		return ""
 	}
-	var ack struct {
-		ID string `json:"id"`
-	}
 	if err := json.Unmarshal(resp.Body, &ack); err != nil || ack.ID == "" {
+		return ""
+	}
+	if !async && (!ack.Result || !ack.Queued || ack.NodeStatus == "") {
 		return ""
 	}
 	if _, err := uuid.Parse(ack.ID); err != nil {
@@ -749,7 +798,8 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 			if env, ok := found[id]; ok {
 				src.original = &env
 			}
-			if _, rerr := u.replayOne(ctx, node, id, ReplayOptions{UseNodeAuth: true}, src); rerr != nil {
+			r, rerr := u.replayOne(ctx, node, id, ReplayOptions{UseNodeAuth: true}, src)
+			if rerr != nil {
 				// §96.4: конверта нет, копия обрезана — запись пропускается
 				// БЕЗ отмены оригинала и без очистки строк. Иначе операция
 				// уничтожала бы последний след полного тела (боевой инцидент).
@@ -767,6 +817,15 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 					u.logger.Str("log_id", id), u.logger.Err(rerr))
 				continue
 			}
+			// §113.10: не-2xx — неудача повтора. Без отмены оригинала и без
+			// очистки: до §113 404 считался успехом, и запись пропадала.
+			if !replayAccepted(r) {
+				res.Failed++
+				u.logger.Warn("replay-all: receiver rejected replay, record kept",
+					u.logger.Str("log_id", id), u.logger.Str("node", node.Path),
+					u.logger.Int("status", r.StatusCode))
+				continue
+			}
 			// Успех → отменяем оригинал в DLQ: авто-репроцессор дропнет его по
 			// tombstone, иначе при восстановлении адреса сообщение доставилось бы
 			// дважды (replay-копия + авто-повтор оригинала).
@@ -779,6 +838,9 @@ func (u *ReplayUsecase) ReplayFailed(ctx context.Context, actor Actor, nodeID, t
 			replayed = append(replayed, id)
 			res.Replayed++
 		}
+	}
+	if u.cancel != nil && len(replayed) > 0 {
+		signalPausedSweep(ctx, u.sweepSignal, node, u.logger)
 	}
 	res.Cleaned = u.cleanupReplayed(ctx, q, replayed)
 	u.audit.Log(ctx, actor, domain.ActionNodeReplay, "node", node.ID, map[string]any{

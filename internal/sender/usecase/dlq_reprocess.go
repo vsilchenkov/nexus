@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -253,6 +254,17 @@ func (r *DLQReprocessor) republish(ctx context.Context, raw []byte, env Envelope
 		hdrs["next_attempt_at"] = p.nextAttemptAt.UTC().Format(time.RFC3339Nano)
 	}
 	if err := r.dlq.Produce(ctx, r.dlqTopic, env.NodePath, raw, hdrs); err != nil {
+		if errors.Is(err, domain.ErrMessageTooLargeForTopic) {
+			// Постоянная ошибка (см. publishDLQ в async.go): с переносом растут
+			// заголовки, лимит топика могли понизить на ходу. С §113.2 Retry —
+			// повтор на месте, и одно такое сообщение навсегда остановило бы
+			// разбор DLQ реплики. Отпускаем его с ERROR.
+			r.logger.ErrorWithOp("dlq republish dropped: message exceeds topic limit", err, "dlq.reprocess",
+				r.logger.Str("node_path", env.NodePath), r.logger.Str("id", env.ID),
+				r.logger.Int("bytes", len(raw)))
+			r.record(nodeLabels(node), reprocessDropped)
+			return ReprocessCommit
+		}
 		r.logger.ErrorWithOp("dlq republish failed", err, "dlq.reprocess",
 			r.logger.Str("node_path", env.NodePath), r.logger.Str("id", env.ID))
 		return ReprocessRetry

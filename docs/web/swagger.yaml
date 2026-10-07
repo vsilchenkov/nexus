@@ -743,6 +743,31 @@ definitions:
       url:
         type: string
     type: object
+  internal_web_adapter_in_http.LogsExportEstimateResponse:
+    properties:
+      logs_available:
+        type: boolean
+      logs_configured:
+        type: boolean
+      max_body_chars:
+        type: integer
+      max_bytes:
+        type: integer
+      max_rows:
+        type: integer
+      records:
+        description: уникальные записи под фильтром
+        type: integer
+      request_bytes:
+        description: сумма размеров тел запроса, каждый урезан капом ячейки
+        type: integer
+      response_bytes:
+        description: то же для тел ответа
+        type: integer
+      rows:
+        description: строки-прогоны под фильтром
+        type: integer
+    type: object
   internal_web_adapter_in_http.MoveNodeRequest:
     properties:
       target_team_slug:
@@ -2029,13 +2054,49 @@ definitions:
       health:
         $ref: '#/definitions/internal_web_adapter_in_http.kafkaHealthDTO'
       kafka_available:
+        description: |-
+          KafkaAvailable (§114.5) — все чтения брокера удались (состояние брокеров,
+          lag основной группы и очереди паузы).
         type: boolean
+      lag_from_broker:
+        description: LagFromBroker (§113.7) — current_lag прочитан из брокера, а не
+          из Prometheus.
+        type: boolean
+      paused_backlog_available:
+        description: |-
+          PausedBacklogAvailable (§114.5) — summary.paused_backlog известен. false —
+          очередь паузы настроена, но брокер не ответил: 0 не значит «пусто».
+        type: boolean
+      paused_nodes:
+        description: |-
+          PausedNodes (§113.7) — узлы на паузе, не больше 20; заполнен только при
+          summary.paused_backlog > 0 и paused_nodes_available=true. Всегда массив.
+        items:
+          $ref: '#/definitions/internal_web_adapter_in_http.kafkaPausedNodeDTO'
+        type: array
+      paused_nodes_available:
+        description: |-
+          PausedNodesAvailable (§113.7) — список узлов на паузе прочитан; false при
+          пустой очереди паузы или ошибке PostgreSQL.
+        type: boolean
+      paused_nodes_total:
+        description: PausedNodesTotal (§113.7) — сколько узлов на паузе всего.
+        type: integer
       period:
         $ref: '#/definitions/internal_web_adapter_in_http.kafkaPeriodDTO'
       prometheus_available:
         type: boolean
       summary:
         $ref: '#/definitions/internal_web_adapter_in_http.kafkaSummaryDTO'
+    type: object
+  internal_web_adapter_in_http.kafkaPausedNodeDTO:
+    properties:
+      id:
+        type: string
+      path:
+        type: string
+      team:
+        type: string
     type: object
   internal_web_adapter_in_http.kafkaPeriodDTO:
     properties:
@@ -2075,6 +2136,11 @@ definitions:
       failed_produced:
         type: integer
       in_flight_now:
+        type: integer
+      paused_backlog:
+        description: |-
+          PausedBacklog (§113.7) — сообщения узлов на паузе в nexus.async.paused; в
+          current_lag не входят. 0 — очереди нет или брокер не ответил.
         type: integer
       produced_total:
         type: integer
@@ -2122,6 +2188,17 @@ definitions:
       lag_total:
         type: integer
       members:
+        type: integer
+      role:
+        description: |-
+          Role (§113.7) — main | paused | dlq | retry у групп Nexus; у посторонней
+          группы поля нет.
+        type: string
+      uncommitted_partitions:
+        description: |-
+          UncommittedPartitions (§114.6) — у посторонней группы: партиций топика
+          без сохранённой позиции; их lag в lag_total не входит. У групп Nexus поля
+          нет — их lag без commit настоящий и уже в lag_total.
         type: integer
     type: object
   internal_web_adapter_in_http.latencyPointDTO:
@@ -5159,9 +5236,15 @@ paths:
       - kafka
   /api/kafka/overview:
     get:
-      description: KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему
+      description: 'KPI produced/consumed/failed/lag/in-flight, дельта к предыдущему
         периоду, broker_health и severity health-banner. Источники деградируют (флаги
-        *_available). Admin-only, rate-limit 60/мин.
+        *_available). current_lag (§113.7) — отставание основной группы из брокера
+        (lag_from_broker=true), при его недоступности из Prometheus. paused_backlog
+        — сообщения узлов на паузе, в lag не входят; при paused_backlog>0 — список
+        узлов на паузе (paused_nodes, не больше 20, всего paused_nodes_total). §114:
+        каждое чтение брокера ограничено 3 с, неудача кешируется на 30 с; paused_backlog_available=false
+        — очередь паузы не прочитана; kafka_available=false и health.reason=broker_unreachable
+        — брокер не ответил. Admin-only, rate-limit 60/мин.'
       parameters:
       - description: 1h | 3h | 24h | 7d | 14d | 30d (default 1h)
         in: query
@@ -5255,10 +5338,13 @@ paths:
       - kafka
   /api/kafka/topics:
     get:
-      description: Партиции, RF, оценка числа сообщений, consumer-группы с lag, состояние
-        реплик. Размер на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера,
-        сумма по всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false.
-        Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. Admin-only.
+      description: 'Партиции, RF, оценка числа сообщений, consumer-группы с lag и
+        ролью группы Nexus (§113.7: main/paused/dlq/retry), состояние реплик. Размер
+        на диске (§75) — из метрики kafka_log_log_size JMX-агента брокера, сумма по
+        всем репликам; при недоступном источнике size_bytes=0 и sizes_available=false.
+        Метаданные кешируются в Redis 30с, размеры запрашиваются каждый раз. §114:
+        обход брокера ограничен 10 с, неудача кешируется на 30 с; kafka_available=false
+        — брокер не ответил (список топиков недоступен, а не пуст). Admin-only.'
       produces:
       - application/json
       responses:
@@ -7285,6 +7371,186 @@ paths:
       - CookieAuth: []
       - ApiTokenAuth: []
       summary: Диапазон дат логов узла (min/max date_request, UnixMilli) (§48.3).
+      tags:
+      - logs
+  /api/nodes/{id}/logs/export.xlsx:
+    get:
+      description: 'Файл .xlsx потоком: лист «Логи» — колонки таблицы ClickHouse (запись
+        = новейший подходящий прогон, порядок как в журнале), лист «Параметры» — фильтры,
+        лимиты и статус полноты. Неполнота после начала потока (ClickHouse отказал,
+        исчерпан объём) видна только в файле. Фильтры — те же, что у /logs. Тела не
+        маскируются; выгрузка пишется в аудит (node.logs_export). Только session-cookie.'
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: предел записей (по умолчанию и сверх лимита — max_rows)
+        in: query
+        name: rows
+        type: integer
+      - description: выгружать тела request/response
+        in: query
+        name: bodies
+        type: boolean
+      - description: часовой пояс дат (IANA, напр. Europe/Moscow); по умолчанию UTC
+        in: query
+        name: tz
+        type: string
+      - description: нижняя граница date_request (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        type: string
+      - description: верхняя граница date_request (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        type: string
+      - description: поиск (§48)
+        in: query
+        name: q
+        type: string
+      - description: регистрозависимый поиск
+        in: query
+        name: q_case
+        type: boolean
+      - description: целое слово
+        in: query
+        name: q_word
+        type: boolean
+      - description: RE2-выражение
+        in: query
+        name: q_regex
+        type: boolean
+      - description: подпуть запроса
+        in: query
+        name: method
+        type: string
+      - description: ok | err
+        in: query
+        name: status
+        type: string
+      - description: yes | no
+        in: query
+        name: done
+        type: string
+      - description: IP клиента
+        in: query
+        name: ip
+        type: string
+      - description: имя клиента (PTR)
+        in: query
+        name: client_host
+        type: string
+      produces:
+      - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "400":
+          description: синтаксис поиска
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "429":
+          description: превышена частота запусков (Retry-After)
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "500":
+          description: ClickHouse недоступен или не успел отобрать записи (не 503
+            — nginx не повторяет)
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "503":
+          description: все слоты реплики заняты (Retry-After; nginx повторяет на соседней
+            реплике)
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Выгрузка журнала узла в Excel (§115.5).
+      tags:
+      - logs
+  /api/nodes/{id}/logs/export/estimate:
+    get:
+      description: Сколько записей и строк подходит под фильтры журнала и сколько
+        весят тела (суммы request_size/response_size, каждый урезан капом ячейки —
+        верхняя граница). Фильтры — те же, что у /logs. Плюс действующие лимиты выгрузки.
+        Узел без таблицы → logs_configured=false, ClickHouse недоступен или таймаут
+        10 с → logs_available=false (оба — 200). Только session-cookie.
+      parameters:
+      - description: node id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: нижняя граница date_request (RFC3339 или UnixMilli)
+        in: query
+        name: from
+        type: string
+      - description: верхняя граница date_request (RFC3339 или UnixMilli)
+        in: query
+        name: to
+        type: string
+      - description: поиск (§48)
+        in: query
+        name: q
+        type: string
+      - description: регистрозависимый поиск
+        in: query
+        name: q_case
+        type: boolean
+      - description: целое слово
+        in: query
+        name: q_word
+        type: boolean
+      - description: RE2-выражение
+        in: query
+        name: q_regex
+        type: boolean
+      - description: подпуть запроса
+        in: query
+        name: method
+        type: string
+      - description: ok | err
+        in: query
+        name: status
+        type: string
+      - description: yes | no
+        in: query
+        name: done
+        type: string
+      - description: IP клиента
+        in: query
+        name: ip
+        type: string
+      - description: имя клиента (PTR)
+        in: query
+        name: client_host
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.LogsExportEstimateResponse'
+        "400":
+          description: синтаксис поиска
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_web_adapter_in_http.ErrorResponse'
+      security:
+      - CookieAuth: []
+      summary: Оценка выгрузки журнала узла в Excel (§115.5).
       tags:
       - logs
   /api/nodes/{id}/logs/failed-count:

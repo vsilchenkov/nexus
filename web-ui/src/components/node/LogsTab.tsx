@@ -25,6 +25,7 @@ import { ReplayDialog } from "../ReplayDialog";
 import { LogAckBlock } from "./LogAckBlock";
 import { LogUrlCell } from "./LogUrlCell";
 import { LogsAdvancedFilters } from "./LogsAdvancedFilters";
+import { LogsExportDialog } from "./LogsExportDialog";
 import { type LogRow, type LogsResp, type LogDetail, type LogBodyChunk } from "./types";
 
 type StatusFilter = "all" | "ok" | "err";
@@ -575,6 +576,14 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
   // operator+. viewer видит кнопку disabled с tooltip «Нет прав» (бэкенд тоже
   // отдаёт 403). Скрывать не будем — так понятно, что действие существует.
   const canReplay = useRoleAtLeast("operator");
+  // §115: выгрузка в Excel — всем ролям (чтение журнала доступно всем).
+  const [exportOpen, setExportOpen] = useState(false);
+  // Набранный без Enter поиск сначала применяется (коммит идемпотентен, §77.3):
+  // иначе форма показала бы и выгрузила фильтр, которого нет в поле.
+  const openExport = () => {
+    commitAdv(advForm);
+    setExportOpen(true);
+  };
 
   const scrollToTop = () => {
     if (tableWrapRef.current) {
@@ -685,7 +694,13 @@ export function LogsTab({ node, initialFilter }: { node: Node; initialFilter?: L
           badQuery={badQuery}
           dateRange={dateRange}
           onOpenDate={fetchDateRange}
+          onExport={hasLogsTable ? openExport : undefined}
         />
+      )}
+      {/* §115: форма показывает применённые фильтры журнала — выгружается
+          ровно то, что видно списком. */}
+      {exportOpen && (
+        <LogsExportDialog node={node} filter={filterState} onClose={() => setExportOpen(false)} />
       )}
 
       {/* §77.3: затянувшийся поиск — с возможностью прервать его. Отмена рвёт

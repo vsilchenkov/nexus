@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +17,8 @@ import (
 )
 
 // fakeKafkaAdmin — конфигурируемый port.KafkaAdmin для тестов usecase.
+// Методы зовутся из горутин чтения брокера (§114.4), поэтому счётчики
+// атомарные, а wait — общий для обоих чтений хук «брокер завис».
 type fakeKafkaAdmin struct {
 	topics    []port.TopicInfo
 	topicsErr error
@@ -22,12 +26,28 @@ type fakeKafkaAdmin struct {
 	healthErr error
 	pings     []port.BrokerPing
 	pingErr   error
+
+	wait        func(context.Context) error // nil — ответ сразу
+	topicsCalls atomic.Int32
+	healthCalls atomic.Int32
 }
 
-func (f *fakeKafkaAdmin) Topics(context.Context) ([]port.TopicInfo, error) {
+func (f *fakeKafkaAdmin) Topics(ctx context.Context) ([]port.TopicInfo, error) {
+	f.topicsCalls.Add(1)
+	if f.wait != nil {
+		if err := f.wait(ctx); err != nil {
+			return nil, err
+		}
+	}
 	return f.topics, f.topicsErr
 }
-func (f *fakeKafkaAdmin) BrokerHealth(context.Context) (port.BrokerHealth, error) {
+func (f *fakeKafkaAdmin) BrokerHealth(ctx context.Context) (port.BrokerHealth, error) {
+	f.healthCalls.Add(1)
+	if f.wait != nil {
+		if err := f.wait(ctx); err != nil {
+			return port.BrokerHealth{}, err
+		}
+	}
 	return f.health, f.healthErr
 }
 func (f *fakeKafkaAdmin) Ping(context.Context) ([]port.BrokerPing, error) {
@@ -37,17 +57,26 @@ func (f *fakeKafkaAdmin) Ping(context.Context) ([]port.BrokerPing, error) {
 // memKafkaCache — in-memory port.KafkaCache без TTL: для тестов важно лишь то,
 // что второй вызов попадает в кеш. Значения гоняются через JSON, как в
 // Redis-адаптере, — иначе тест хранил бы указатель на тот же слайс и не заметил
-// бы, что в кеш уехали размеры.
-type memKafkaCache struct{ data map[string][]byte }
+// бы, что в кеш уехали размеры. Нечитаемое значение — промах, как в
+// Redis-адаптере. Под mutex: чтения брокера идут из горутин (§114.4).
+type memKafkaCache struct {
+	mu   sync.Mutex
+	data map[string][]byte
+}
 
 func newMemKafkaCache() *memKafkaCache { return &memKafkaCache{data: map[string][]byte{}} }
 
 func (c *memKafkaCache) Get(_ context.Context, key string, dst any) (bool, error) {
+	c.mu.Lock()
 	raw, ok := c.data[key]
+	c.mu.Unlock()
 	if !ok {
 		return false, nil
 	}
-	return true, json.Unmarshal(raw, dst)
+	if json.Unmarshal(raw, dst) != nil {
+		return false, nil //nolint:nilerr // повреждённый кеш = промах, как в Redis-адаптере
+	}
+	return true, nil
 }
 
 func (c *memKafkaCache) Set(_ context.Context, key string, val any) error {
@@ -55,8 +84,17 @@ func (c *memKafkaCache) Set(_ context.Context, key string, val any) error {
 	if err != nil {
 		return err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.data[key] = raw
 	return nil
+}
+
+func (c *memKafkaCache) has(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.data[key]
+	return ok
 }
 
 func kafkaWindow() (time.Time, time.Time) {
@@ -223,7 +261,7 @@ func TestKafkaTopics_SizesDegradeOnPromError(t *testing.T) {
 
 func TestKafkaByNode_TopProducersAndFailures(t *testing.T) {
 	t.Parallel()
-	prom := &fakeProm{throughput: map[port.NodeKey]port.NodeThroughput{
+	prom := &fakeProm{asyncThroughput: map[port.NodeKey]port.NodeThroughput{
 		{Team: "fin", Path: "billing"}:    {Out: 800, Errors: 0},
 		{Team: "geo", Path: "geo/notify"}: {Out: 200, Errors: 0},
 		{Team: "old", Path: "old/legacy"}: {Out: 100, Errors: 50},
@@ -238,7 +276,31 @@ func TestKafkaByNode_TopProducersAndFailures(t *testing.T) {
 	assert.InDelta(t, 800.0/1100.0, r.TopProducers[0].Share, 1e-9)
 	require.Len(t, r.TopFailures, 1)
 	assert.Equal(t, "old/legacy", r.TopFailures[0].NodePath)
-	assert.InDelta(t, 50.0/150.0, r.TopFailures[0].Rate, 1e-9)
+	// §113.8: ошибки — подмножество исходящих, знаменатель — Out.
+	assert.InDelta(t, 50.0/100.0, r.TopFailures[0].Rate, 1e-9)
+}
+
+// TestTopFailures_Rate (§113.8): доля ошибок — errors/out, не выше 100%.
+func TestTopFailures_Rate(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		out, err float64
+		want     float64
+	}{
+		{name: "половина исходящих провалилась", out: 100, err: 50, want: 0.5},
+		{name: "все исходящие провалились", out: 40, err: 40, want: 1},
+		{name: "экстраполяция increase(): ошибок больше исходящих", out: 9.6, err: 10.2, want: 1},
+		{name: "исходящих нет", out: 0, err: 3, want: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rows := topFailures(map[port.NodeKey]port.NodeThroughput{{Team: "t", Path: "p"}: {Out: tt.out, Errors: tt.err}})
+			require.Len(t, rows, 1)
+			assert.InDelta(t, tt.want, rows[0].Rate, 1e-9)
+		})
+	}
 }
 
 func TestKafkaTest_AllBrokersOK(t *testing.T) {
@@ -262,4 +324,82 @@ func TestKafkaTest_OneBrokerDown(t *testing.T) {
 	r := uc.Test(context.Background())
 	assert.False(t, r.OK)
 	assert.True(t, r.KafkaAvailable)
+}
+
+// lagSeries — ряд lag с шагом 30 с от момента 0.
+func lagSeries(vals ...float64) []port.KafkaPoint {
+	pts := make([]port.KafkaPoint, len(vals))
+	for i, v := range vals {
+		pts[i] = port.KafkaPoint{TsMs: int64(i) * 30_000, V: v}
+	}
+	return pts
+}
+
+// TestSteadyGrowthPerSec (§113.8): «lag растёт» — только рост без единого
+// снижения на всём окне; пила разбираемой очереди тревогой не считается.
+func TestSteadyGrowthPerSec(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		pts  []port.KafkaPoint
+		want float64
+	}{
+		{name: "рост все 5 минут", pts: lagSeries(0, 300, 600, 900, 1200, 1500, 1800, 2100, 2400, 2700, 3000), want: 10},
+		{name: "плато внутри роста — всё ещё рост", pts: lagSeries(0, 300, 300, 900, 1200, 1500, 1800, 2100, 2400, 2700, 3000), want: 10},
+		{name: "пила: концы выше начала, но был спад",
+			pts: lagSeries(0, 3000, 100, 3000, 100, 3000, 100, 3000, 100, 3000, 3000)},
+		{name: "дыра в данных — меньше 4 минут", pts: lagSeries(0, 3000, 6000)},
+		// Ревизия §113: крайние точки покрывают окно, но внутри пропуск 3 минуты
+		// (рестарт Sender'а) — спад мог прийтись на него, это не «рост».
+		{name: "разрыв внутри окна", pts: func() []port.KafkaPoint {
+			pts := lagSeries(0, 300, 600, 900, 1200, 1500, 1800, 2100, 2400, 2700, 3000)
+			return append(pts[:3], pts[9:]...)
+		}()},
+		{name: "одна точка", pts: lagSeries(5)},
+		{name: "пусто"},
+		{name: "убывает", pts: lagSeries(3000, 2700, 2400, 2100, 1800, 1500, 1200, 900, 600, 300, 0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.InDelta(t, tt.want, steadyGrowthPerSec(tt.pts, lagGrowMinSpan, 2*lagGrowStep), 1e-9)
+		})
+	}
+}
+
+// TestKafkaOverview_HealthSignals (§113.8): p95 публикации и устойчивый рост
+// lag доходят до health-баннера; пила lag — нет.
+func TestKafkaOverview_HealthSignals(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		prom       *fakeProm
+		wantSev    string
+		wantReason string
+	}{
+		{name: "p95 публикации выше критического порога",
+			prom:    &fakeProm{kafkaOv: port.KafkaSummary{ProduceP95ms: 800}},
+			wantSev: SeverityErr, wantReason: ReasonProduceLatency},
+		{name: "p95 выше порога предупреждения",
+			prom:    &fakeProm{kafkaOv: port.KafkaSummary{ProduceP95ms: 150}},
+			wantSev: SeverityWarn, wantReason: ReasonProduceLatency},
+		{name: "lag растёт все 5 минут",
+			prom: &fakeProm{kafkaSeries: map[string][]port.KafkaPoint{
+				"lag": lagSeries(0, 3000, 6000, 9000, 12000, 15000, 18000, 21000, 24000, 27000, 30000)}},
+			wantSev: SeverityErr, wantReason: ReasonLagGrowing},
+		{name: "пила lag — не рост",
+			prom: &fakeProm{kafkaSeries: map[string][]port.KafkaPoint{
+				"lag": lagSeries(0, 30000, 0, 30000, 0, 30000, 0, 30000, 0, 30000, 30000)}},
+			wantSev: SeverityOK, wantReason: ReasonHealthy},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			uc := NewKafkaMonitorUsecase(tt.prom, nil, nil, nil, defaultTh(), logging.NewNoop())
+			since, until := kafkaWindow()
+			r := uc.Overview(context.Background(), since, until)
+			assert.Equal(t, tt.wantSev, r.Health.Severity)
+			assert.Equal(t, tt.wantReason, r.Health.Reason)
+		})
+	}
 }

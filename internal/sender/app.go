@@ -47,6 +47,7 @@ import (
 	"nexus/internal/sender/adapter/out/chlog"
 	"nexus/internal/sender/adapter/out/chlogretry"
 	"nexus/internal/sender/adapter/out/httpclient"
+	"nexus/internal/sender/adapter/out/kafkaoffsets"
 	"nexus/internal/sender/adapter/out/maskpg"
 	"nexus/internal/sender/adapter/out/nodepg"
 	"nexus/internal/sender/usecase"
@@ -74,6 +75,7 @@ type App struct {
 	chMgr         *chpf.Manager
 	chWriter      *chlog.WriterManager
 	producer      *kafkapf.Producer
+	kafkaOffsets  *kafkapf.Offsets // §113.4: офсеты из брокера — lag и планировщик очереди паузы
 	consumer      *kafkaadapter.ConsumerGroup
 	retryConsumer *kafkaadapter.ChLogRetryConsumer // §38: дренаж nexus.logs.retry в CH (nil если retry выключен)
 	dlqReproc     *kafkaadapter.DLQReprocessor     // §36: авто-репроцессор DLQ (nil если выключен)
@@ -211,6 +213,7 @@ func (a *App) initClickHouseAndProducer() *chpf.Guard {
 	// §38: Kafka-продьюсер нужен и async/DLQ, и retrier'у проваленных CH-батчей —
 	// создаём ДО chWriter (раньше создавался ниже, в секции async-consumer).
 	a.producer = kafkapf.NewProducer(a.cfg, kafkapf.WithMetrics(a.metrics))
+	a.kafkaOffsets = kafkapf.NewOffsetsForBrokers(a.cfg.Kafka.Brokers, 10*time.Second)
 	var chRetrier chlog.BatchRetrier
 	if a.cfg.Kafka.RetryTopic != "" {
 		chRetrier = chlogretry.New(a.producer, a.cfg.Kafka.RetryTopic, a.cfg.Kafka.Topic.MaxMessageBytes, a.logger)
@@ -390,7 +393,9 @@ func (a *App) startAsyncPipeline(
 	// партицию основного топика (в ней по хешу node_path лежат ДРУГИЕ узлы).
 	pausedRequeue := usecase.WithPausedRequeue(a.cfg.Kafka.PausedTopic)
 	asyncProc := usecase.NewAsyncProcessor(nodeReader, sendUC, a.producer, cancelSet, nodeStatus, a.cfg.Kafka.DLQTopic, a.metrics, a.logger, pausedRequeue)
-	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger, kafkaadapter.WithMetrics(a.metrics))
+	guard := a.stallGuard()
+	a.consumer = kafkaadapter.NewConsumerGroup(a.cfg, a.cfg.Kafka.AsyncTopic, asyncProc, a.logger,
+		kafkaadapter.WithMetrics(a.metrics), kafkaadapter.WithStallGuard(guard))
 	a.consumer.Start(ctx)
 
 	// §38: retry-консьюмер дренит nexus.logs.retry обратно в CH. Отдельная
@@ -400,8 +405,8 @@ func (a *App) startAsyncPipeline(
 	if a.cfg.Kafka.RetryTopic != "" {
 		retryHandler := kafkaadapter.NewChLogRetryHandler(a.chWriter, a.metrics, a.logger)
 		a.retryConsumer = kafkaadapter.NewChLogRetryConsumer(
-			a.cfg, a.cfg.Kafka.RetryTopic, a.cfg.Kafka.ConsumerGroup+"-clog-retry",
-			retryHandler, a.logger)
+			a.cfg, a.cfg.Kafka.RetryTopic, a.cfg.Kafka.ClogRetryGroup(),
+			retryHandler, a.logger, kafkaadapter.WithRetryStallGuard(guard))
 		a.retryConsumer.Start(ctx)
 	}
 
@@ -415,7 +420,7 @@ func (a *App) startAsyncPipeline(
 		a.dlqReproc = kafkaadapter.NewDLQReprocessor(
 			a.cfg, reprocUC,
 			time.Duration(a.cfg.Sender.Reprocessor.IntervalSec)*time.Second,
-			a.cfg.Sender.Reprocessor.MaxScan, a.metrics, a.logger)
+			a.cfg.Sender.Reprocessor.MaxScan, a.metrics, a.logger, kafkaadapter.WithDLQStallGuard(guard))
 		a.dlqReprocDone = safego.Go(a.logger, "sender.dlqReprocessor", func() {
 			a.dlqReproc.Run(ctx)
 		})
@@ -430,12 +435,44 @@ func (a *App) startAsyncPipeline(
 		a.pausedSweep = kafkaadapter.NewPausedSweeper(
 			a.cfg, asyncProc,
 			time.Duration(a.cfg.Sender.PausedSweep.IntervalSec)*time.Second,
-			a.cfg.Sender.PausedSweep.MaxScan, a.metrics, a.logger)
+			a.cfg.Sender.PausedSweep.MaxScan, a.metrics, a.logger,
+			kafkaadapter.WithSweepPlanner(a.newPausedSweepPlanner(nodeReader)),
+			kafkaadapter.WithSweeperStallGuard(guard))
 		a.pausedSweepDone = safego.Go(a.logger, "sender.pausedSweep", func() {
 			a.pausedSweep.Run(ctx)
 		})
 	}
 
+}
+
+// stallGuard — сторож зависших reader'ов Sender'а (§113.6). client.id reader'ов
+// несёт имя реплики: участники двух реплик в одной группе не должны совпадать,
+// иначе сторож не отличит свои партиции от чужих.
+func (a *App) stallGuard() kafkaadapter.StallGuard {
+	return kafkaadapter.StallGuard{
+		Inspector:    a.kafkaOffsets,
+		After:        a.cfg.Kafka.Consumer.StallAfter(),
+		ClientPrefix: bootstrap.ReplicaName(),
+		Metrics:      a.metrics,
+		Commits:      a.metrics, // §114.3
+	}
+}
+
+// newPausedSweepPlanner собирает планировщик прохода очереди паузы (§113.3):
+// отпечаток узлов из PG, сигнал отмены из Redis (без Redis триггер выключен),
+// офсеты и retention delay-топика из брокера.
+func (a *App) newPausedSweepPlanner(nodeReader *nodepg.Reader) *usecase.PausedSweepPlanner {
+	var signal usecase.PausedSweepSignaler
+	if a.redis != nil {
+		signal = queuecancel.New(a.redis)
+	}
+	offsets := kafkaoffsets.NewPausedTopic(a.kafkaOffsets, a.cfg.Kafka.PausedGroup(), a.cfg.Kafka.PausedTopic)
+	ps := a.cfg.Sender.PausedSweep
+	return usecase.NewPausedSweepPlanner(nodeReader, signal, offsets, usecase.PausedSweepPlannerConfig{
+		Backstop:          time.Duration(ps.BackstopSec) * time.Second,
+		FallbackRetention: time.Duration(a.cfg.Kafka.Topic.RetentionMs) * time.Millisecond,
+		Continuous:        ps.Continuous,
+	}, a.metrics, a.logger)
 }
 
 // startBackgroundJobs запускает периодические задачи, не связанные с очередями:
@@ -452,10 +489,11 @@ func (a *App) startBackgroundJobs(ctx context.Context, nodeReader *nodepg.Reader
 		hk.Run(ctx)
 	})
 
-	// Kafka lag reporter (§6 ТЗ): раз в 15 секунд снимаем Stats() со всех
-	// инстансов consumer-группы и пушим в Prometheus.
+	// Kafka lag reporter (§6, §113.4): раз в 15 секунд lag групп Sender'а из
+	// брокера (ListOffsets − OffsetFetch) по реальным партициям → Prometheus.
+	lagReporter := kafkaoffsets.NewLagReporter(a.kafkaOffsets, a.metrics.KafkaLag, a.lagTargets(), a.logger)
 	a.kafkaLagDone = safego.Go(a.logger, "sender.reportKafkaLag", func() {
-		a.reportKafkaLag(ctx)
+		reportEvery(ctx, 15*time.Second, lagReporter.Report)
 	})
 
 	// Hot-reload Sentry и ClickHouse (§14.5 / §8.4 ТЗ, Phase 6.3.2 + 6.3.2.5).
@@ -687,46 +725,38 @@ func (a *App) startAdminHTTP() error {
 	return nil
 }
 
-// reportKafkaLag — фоновый цикл (§6 ТЗ nexus_kafka_lag).
-// Опрашивает все consumer-инстансы группы и публикует Lag в Prometheus.
-// Интервал 15 секунд — компромисс между актуальностью и нагрузкой.
-func (a *App) reportKafkaLag(ctx context.Context) {
-	t := time.NewTicker(15 * time.Second)
+// lagTargets — группы Sender'а, чей lag публикуется (§113.4): основная,
+// повтор записи в ClickHouse (§38) и DLQ-репроцессор (§36) — только
+// запущенные; очередь паузы (§3.6) — всегда, когда задан её топик. Lag паузы =
+// объём отложенных сообщений. Пишет в топик consumer (handlePaused), а не
+// sweeper, поэтому при выключенном sweeper'е очередь копится и не разбирается
+// вовсе — именно тогда её lag нужнее всего (алерт NexusPausedBacklogStuck).
+func (a *App) lagTargets() []kafkaoffsets.LagTarget {
+	k := a.cfg.Kafka
+	targets := []kafkaoffsets.LagTarget{{Group: k.ConsumerGroup, Topic: k.AsyncTopic}}
+	if a.retryConsumer != nil {
+		targets = append(targets, kafkaoffsets.LagTarget{Group: k.ClogRetryGroup(), Topic: k.RetryTopic})
+	}
+	if a.dlqReproc != nil {
+		targets = append(targets, kafkaoffsets.LagTarget{Group: k.DLQGroup(), Topic: k.DLQTopic})
+	}
+	if k.PausedTopic != "" {
+		targets = append(targets, kafkaoffsets.LagTarget{Group: k.PausedGroup(), Topic: k.PausedTopic})
+	}
+	return targets
+}
+
+// reportEvery вызывает report раз в every до отмены ctx.
+func reportEvery(ctx context.Context, every time.Duration, report func(context.Context)) {
+	t := time.NewTicker(every)
 	defer t.Stop()
-	group := a.consumer.Group()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			a.publishLag(a.consumer.Snapshot(), group, a.cfg.Kafka.AsyncTopic)
-			// §38: lag retry-топика = объём проваленных батчей, ждущих CH.
-			if a.retryConsumer != nil {
-				a.publishLag(a.retryConsumer.Snapshot(), a.retryConsumer.Group(), a.cfg.Kafka.RetryTopic)
-			}
-			// §3.6: lag delay-топика = объём бэклога paused-узлов. Растёт, пока
-			// узлы на паузе; НЕ убывающий после снятия пауз lag означает, что
-			// sweeper не работает и бэклог протухнет по retention — повод для алерта.
-			if a.pausedSweep != nil {
-				a.publishLag(a.pausedSweep.Snapshot(), a.pausedSweep.Group(), a.cfg.Kafka.PausedTopic)
-			}
+			report(ctx)
 		}
-	}
-}
-
-// publishLag пушит снимки lag в Prometheus. Пустые topic/partition в
-// kafka-go ReaderStats заменяются на конфигурационный топик и "all".
-func (a *App) publishLag(snaps []kafkaadapter.LagSnapshot, group, defaultTopic string) {
-	for _, snap := range snaps {
-		topic := snap.Topic
-		if topic == "" {
-			topic = defaultTopic
-		}
-		part := snap.Partition
-		if part == "" {
-			part = "all"
-		}
-		a.metrics.KafkaLag.WithLabelValues(topic, part, group).Set(float64(snap.Lag))
 	}
 }
 

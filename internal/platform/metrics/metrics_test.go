@@ -255,3 +255,18 @@ func TestSetSchemaState(t *testing.T) {
 	requireSample(t, dump, `nexus_pg_schema_version{service="receiver"} 32`)
 	requireSample(t, dump, `nexus_pg_schema_ahead{service="receiver"} 0`)
 }
+
+// TestKafkaCommitErrors (§114.3): Init создаёт ряд группы нулём — без него
+// increase() в алерте NexusKafkaCommitFailing не увидел бы первую ошибку, —
+// Inc увеличивает именно этот ряд.
+func TestKafkaCommitErrors(t *testing.T) {
+	t.Parallel()
+	m := metrics.New("sender")
+
+	m.InitKafkaCommitErrors("nexus-sender")
+	requireSample(t, dumpMetrics(t, m.Handler()), `nexus_kafka_commit_errors_total{group="nexus-sender",service="sender"} 0`)
+
+	m.IncKafkaCommitError("nexus-sender")
+	m.IncKafkaCommitError("nexus-sender")
+	requireSample(t, dumpMetrics(t, m.Handler()), `nexus_kafka_commit_errors_total{group="nexus-sender",service="sender"} 2`)
+}

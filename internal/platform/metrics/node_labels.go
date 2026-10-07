@@ -23,6 +23,12 @@ func (m *Metrics) IncRequest(method string, n NodeLabels, status string) {
 	m.RequestsTotal.WithLabelValues(method, n.Team, n.Node, status).Inc()
 }
 
+// IncPausedRequeued — сообщение узла на паузе снова переложено в хвост очереди
+// паузы (§113.5). Первое откладывание — IncRequest(..., "paused").
+func (m *Metrics) IncPausedRequeued(n NodeLabels) {
+	m.PausedRequeuedTotal.WithLabelValues(n.Team, n.Node).Inc()
+}
+
 // ObserveRequestDuration — длительность запроса к узлу в секундах.
 func (m *Metrics) ObserveRequestDuration(method string, n NodeLabels, seconds float64) {
 	m.RequestDuration.WithLabelValues(method, n.Team, n.Node).Observe(seconds)

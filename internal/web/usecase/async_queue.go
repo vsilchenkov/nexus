@@ -50,6 +50,19 @@ type AsyncQueueUsecase struct {
 	retention   time.Duration
 	peekCap     int
 	logger      logging.Logger
+	// sweepSignal — сигнал прохода очереди паузы после отмены у узла на паузе
+	// (§113.3). nil — отменённое снимется страховочным проходом.
+	sweepSignal port.PausedSweepSignaler
+}
+
+// AsyncQueueOption — необязательная зависимость AsyncQueueUsecase.
+type AsyncQueueOption func(*AsyncQueueUsecase)
+
+// WithQueueSweepSignal подключает сигнал прохода очереди паузы (§113.3): без
+// него удалённые с вкладки сообщения узла на паузе снимаются с очереди только
+// страховочным проходом Sender'а.
+func WithQueueSweepSignal(s port.PausedSweepSignaler) AsyncQueueOption {
+	return func(u *AsyncQueueUsecase) { u.sweepSignal = s }
 }
 
 func NewAsyncQueueUsecase(
@@ -64,6 +77,7 @@ func NewAsyncQueueUsecase(
 	retention time.Duration,
 	peekCap int,
 	logger logging.Logger,
+	opts ...AsyncQueueOption,
 ) *AsyncQueueUsecase {
 	if peekCap <= 0 {
 		peekCap = 1000
@@ -71,7 +85,7 @@ func NewAsyncQueueUsecase(
 	if retention <= 0 {
 		retention = 7 * 24 * time.Hour
 	}
-	return &AsyncQueueUsecase{
+	u := &AsyncQueueUsecase{
 		peeker:      peeker,
 		cancel:      cancel,
 		failed:      failed,
@@ -86,6 +100,10 @@ func NewAsyncQueueUsecase(
 		peekCap:     peekCap,
 		logger:      logger,
 	}
+	for _, opt := range opts {
+		opt(u)
+	}
+	return u
 }
 
 // queueSource — пара (группа, топик), из которых складывается очередь узла.
@@ -106,8 +124,11 @@ func (u *AsyncQueueUsecase) sources() []queueSource {
 
 // QueueListResult — первые N сообщений очереди узла.
 type QueueListResult struct {
-	Items          []port.QueueMessageMeta
-	Capped         bool
+	Items  []port.QueueMessageMeta
+	Capped bool
+	// KafkaAvailable — список полон: Kafka сконфигурирована и оба топика
+	// очереди прочитаны. false — Items может быть неполным (или пустым при
+	// непустой очереди): «пусто» из такого ответа не следует.
 	KafkaAvailable bool
 	// OriginalWindowHours — §96.7: сколько часов оригинальный конверт живёт в
 	// топике, то есть как долго повтор записи узла может отправить ПОЛНОЕ тело,
@@ -129,8 +150,14 @@ type QueuePurgeResult struct {
 // иначе на каждое открытие вкладки уходил бы бесполезный скан обоих топиков до
 // peekCap сообщений. requestAsync и pull-узлы (RabbitMQAsync) идут через один и
 // тот же топик nexus.async — очередь есть у обоих.
+//
+// §113.9: у sync-узла НА ПАУЗЕ очередь тоже есть. Receiver отвечает на его
+// запросы 202 и кладёт их в nexus.async → nexus.async.paused (§3.6), и до §113
+// вкладка их не видела: ни посмотреть, ни очистить — инцидент 06.10.2026, 960
+// запросов за 4 дня. Включённый sync-узел по-прежнему без скана: после
+// возобновления остаток очереди уходит за один проход sweeper'а.
 func usesAsyncQueue(node *domain.Node) bool {
-	return node.RootMethod != domain.RootMethodRequest
+	return node.RootMethod != domain.RootMethodRequest || node.Status == domain.NodeStatusPaused
 }
 
 // resolveNode возвращает узел по id с проверкой team-scope (§34.4 / Phase 10).
@@ -186,7 +213,8 @@ func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (Qu
 	if !usesAsyncQueue(node) {
 		u.logger.Debug("async queue list skipped: sync node",
 			u.logger.Str("node_path", node.Path),
-			u.logger.Str("root_method", string(node.RootMethod)))
+			u.logger.Str("root_method", string(node.RootMethod)),
+			u.logger.Str("status", string(node.Status)))
 		return QueueListResult{
 			Items: []port.QueueMessageMeta{}, KafkaAvailable: u.peeker != nil,
 			OriginalWindowHours: int(u.retention.Hours()),
@@ -200,8 +228,12 @@ func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (Qu
 	items := make([]port.QueueMessageMeta, 0, asyncQueueListLimit)
 	seen := make(map[string]bool, asyncQueueListLimit)
 	capped := false
+	readAll := true
 	for _, src := range u.sources() {
-		r, err := u.peeker.PeekList(ctx, src.group, src.topic, owner, asyncQueueListLimit, u.peekCap)
+		// +1 — проба «есть ли ещё» (§113.9): адаптер останавливается, набрав
+		// страницу, и при ровно limit совпадениях Capped не ставит. Без пробы
+		// 50 и 5000 ожидающих выглядели одинаково — «50».
+		r, err := u.peeker.PeekList(ctx, src.group, src.topic, owner, asyncQueueListLimit+1, u.peekCap)
 		if err != nil {
 			// Деградация, а не ошибка: один недоступный топик не должен ронять
 			// всю вкладку (Kafka-пик — вспомогательная функция, §34.4).
@@ -209,6 +241,7 @@ func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (Qu
 				u.logger.Str("node_path", node.Path),
 				u.logger.Str("topic", src.topic),
 				u.logger.Err(err))
+			readAll = false
 			continue
 		}
 		capped = capped || r.Capped
@@ -230,8 +263,11 @@ func (u *AsyncQueueUsecase) List(ctx context.Context, nodeID, teamID string) (Qu
 		items = items[:asyncQueueListLimit]
 		capped = true
 	}
+	// Недочитанный топик — KafkaAvailable=false (ревизия §113): пустой список
+	// при упавшем чтении выглядел как «очередь пуста», и подтверждение
+	// выключения узла (§113.11) не спрашивало, хотя очередь удалялась.
 	return QueueListResult{
-		Items: items, Capped: capped, KafkaAvailable: true,
+		Items: items, Capped: capped, KafkaAvailable: readAll,
 		OriginalWindowHours: int(u.retention.Hours()),
 	}, nil
 }
@@ -294,6 +330,7 @@ func (u *AsyncQueueUsecase) DeleteOne(ctx context.Context, actor Actor, nodeID, 
 	if err != nil {
 		return fmt.Errorf("cancel message: %w", err)
 	}
+	signalPausedSweep(ctx, u.sweepSignal, node, u.logger)
 	u.audit.Log(ctx, actor, domain.ActionAsyncQueuePurge, "node", node.ID, map[string]any{
 		"op": "delete_one", "msg_id": msgID, "cancelled": n,
 	})
@@ -321,7 +358,8 @@ func (u *AsyncQueueUsecase) purge(ctx context.Context, actor Actor, nodeID, team
 		return QueuePurgeResult{}, err
 	}
 	if !usesAsyncQueue(node) {
-		// §69.1: у sync-узла очереди нет — чистить нечего, скан топиков не нужен.
+		// §69.1: у включённого sync-узла очереди нет — чистить нечего, скан
+		// топиков не нужен (у sync-узла на паузе есть, §113.9).
 		u.logger.Debug("async queue purge skipped: sync node",
 			u.logger.Str("node_path", node.Path), u.logger.Str("op", op))
 		return QueuePurgeResult{}, nil
@@ -356,6 +394,7 @@ func (u *AsyncQueueUsecase) purge(ctx context.Context, actor Actor, nodeID, team
 		if err != nil {
 			return QueuePurgeResult{}, fmt.Errorf("async queue cancel: %w", err)
 		}
+		signalPausedSweep(ctx, u.sweepSignal, node, u.logger)
 	}
 	u.audit.Log(ctx, actor, domain.ActionAsyncQueuePurge, "node", node.ID, map[string]any{
 		"op": op, "cancelled": cancelled, "capped": capped,
@@ -457,9 +496,13 @@ func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID
 		prevFirstID = ids[0]
 
 		// 1) Снимаем повторную доставку: репроцессор дропнет эти ID по tombstone.
-		// Для sync-узла шаг пропускаем: DLQ-репроцессора у него нет, tombstone'ы
-		// были бы записью в Redis впустую (§69.1).
-		if u.cancel != nil && usesAsyncQueue(node) {
+		// §113.9: для ЛЮБОГО узла. До §113 sync-узел пропускался («DLQ у него
+		// нет»), но его запросы, отложенные во время паузы, доставляются через
+		// Kafka и при неудаче уходят в DLQ — без tombstone «очищенная» запись
+		// возвращалась бы повтором. Лишний tombstone на sync-запись безвреден:
+		// он живёт retention и ни с чем не совпадает. Сигнал прохода очереди
+		// паузы — один на всю очистку, после цикла (ревизия §113).
+		if u.cancel != nil {
 			cancelled, cErr := u.cancel.Cancel(ctx, ids, u.retention)
 			if cErr != nil {
 				return QueuePurgeResult{}, fmt.Errorf("async queue cancel failed: %w", cErr)
@@ -496,6 +539,9 @@ func (u *AsyncQueueUsecase) PurgeFailed(ctx context.Context, actor Actor, nodeID
 		}
 	}
 
+	if totalCancelled > 0 {
+		signalPausedSweep(ctx, u.sweepSignal, node, u.logger)
+	}
 	if totalDeleted == 0 {
 		u.logger.Debug("async queue purge failed: nothing to clean",
 			u.logger.Str("node_path", node.Path), u.logger.Str("op", op))

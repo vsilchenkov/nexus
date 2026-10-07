@@ -40,8 +40,9 @@ type Handlers struct {
 	Instances     *PeerInstanceHandler
 	Breaker       *BreakerHandler
 	NodeRuntime   *NodeRuntimeHandler
-	Rejected      *RejectedHandler // §94: журнал отказов на входе
-	Backup        *BackupHandler   // §110: резервная копия конфигурации
+	Rejected      *RejectedHandler   // §94: журнал отказов на входе
+	Backup        *BackupHandler     // §110: резервная копия конфигурации
+	LogsExport    *LogsExportHandler // §115: выгрузка журнала узла в Excel
 }
 
 // Middlewares — общие middleware (auth-check, role-check, API token-check).
@@ -220,6 +221,13 @@ func RegisterAPI(r *gin.Engine, h Handlers, mw Middlewares) {
 			// SSE доступен только UI-сессиям (§7.14: для API-токенов — только
 			// snapshot).
 			authed.GET("/nodes/:id/logs/stream", RequireSessionOnly(), h.Logs.Stream)
+		}
+		// §115: выгрузка журнала в Excel и её оценка. Все роли (как чтение
+		// журнала), но только браузерная сессия: массовая выгрузка тел по
+		// API-токену вне рамок (§115.11).
+		if h.LogsExport != nil {
+			authed.GET("/nodes/:id/logs/export.xlsx", RequireSessionOnly(), h.LogsExport.Export)
+			authed.GET("/nodes/:id/logs/export/estimate", RequireSessionOnly(), h.LogsExport.Estimate)
 		}
 
 		// Метрики панели (§21): KPI/throughput/график. Read-only, scope

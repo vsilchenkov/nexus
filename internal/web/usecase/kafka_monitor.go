@@ -2,7 +2,10 @@ package usecase
 
 import (
 	"context"
+	"slices"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"nexus/internal/platform/logging"
 	"nexus/internal/web/usecase/port"
@@ -23,13 +26,33 @@ type KafkaMonitorUsecase struct {
 	nodes  port.NodeKeyResolver
 	th     KafkaThresholds
 	logger logging.Logger
+
+	// §113.7: lag из брокера по основной группе, очередь паузы и роли групп.
+	// Все три необязательны (опции): без них экран ведёт себя как до §113.
+	groups      KafkaGroupNames
+	lagReader   port.KafkaGroupLagReader
+	pausedNodes port.PausedNodeLister
+
+	// §114.4: бюджет чтения брокера и одно чтение на ключ в пределах реплики.
+	budget KafkaBrokerBudget
+	flight singleflight.Group
 }
 
-func NewKafkaMonitorUsecase(prom port.PromMetrics, admin port.KafkaAdmin, cache port.KafkaCache, nodes port.NodeKeyResolver, th KafkaThresholds, logger logging.Logger) *KafkaMonitorUsecase {
-	return &KafkaMonitorUsecase{prom: prom, admin: admin, cache: cache, nodes: nodes, th: th, logger: logger}
+func NewKafkaMonitorUsecase(prom port.PromMetrics, admin port.KafkaAdmin, cache port.KafkaCache, nodes port.NodeKeyResolver, th KafkaThresholds, logger logging.Logger, opts ...KafkaMonitorOption) *KafkaMonitorUsecase {
+	u := &KafkaMonitorUsecase{prom: prom, admin: admin, cache: cache, nodes: nodes, th: th, logger: logger,
+		budget: DefaultKafkaBrokerBudget()}
+	for _, o := range opts {
+		o(u)
+	}
+	return u
 }
 
 // KafkaSummaryView — числовая сводка за период (§4.1 spec, поле summary).
+//
+// CurrentLag (§113.7) — отставание ОСНОВНОЙ группы: из брокера, а при его
+// недоступности из Prometheus. PausedBacklog — сообщения узлов на паузе в
+// `nexus.async.paused`: они ждут по замыслу и в lag не входят; 0 — очереди нет
+// или брокер не ответил (различает KafkaOverviewResult.PausedBacklogAvailable).
 type KafkaSummaryView struct {
 	ProducedTotal  uint64
 	ConsumedTotal  uint64
@@ -37,6 +60,7 @@ type KafkaSummaryView struct {
 	FailedConsumed uint64
 	CurrentLag     uint64
 	InFlightNow    uint64
+	PausedBacklog  uint64
 }
 
 // KafkaOverviewResult — ответ §4.1: сводка, дельты, broker_health, health-banner.
@@ -50,31 +74,54 @@ type KafkaOverviewResult struct {
 	BrokerHealth        port.BrokerHealth
 	Health              HealthBanner
 	PrometheusAvailable bool
-	KafkaAvailable      bool
+	// KafkaAvailable (§114.5) — все чтения брокера удались: состояние брокеров,
+	// lag основной группы и очереди паузы (те, что настроены). До §114 — только
+	// состояние брокеров, которое kafka-go отдаёт из кеша метаданных и после
+	// смерти брокера.
+	KafkaAvailable bool
+	// PausedBacklogAvailable (§114.5) — Summary.PausedBacklog известен. false —
+	// очередь паузы настроена, но брокер не ответил, и 0 там не значит «пусто».
+	// Без настроенной очереди — true: ждать там нечему.
+	PausedBacklogAvailable bool
+	// ProduceP95ms — p95 публикации в Kafka за период, мс (Prometheus); вход
+	// health-баннера (§6 spec, причина produce_latency).
+	ProduceP95ms float64
+
+	// §113.7: LagFromBroker — Summary.CurrentLag прочитан из брокера, а не из
+	// Prometheus. PausedNodes — узлы на паузе (не больше maxPausedNodesListed),
+	// PausedNodesTotal — сколько их всего; заполняются только при непустой
+	// очереди паузы и PausedNodesAvailable=true (список прочитан).
+	LagFromBroker        bool
+	PausedNodes          []port.NodeKeyRef
+	PausedNodesTotal     int
+	PausedNodesAvailable bool
 }
 
 // Overview — сводка экрана за период (since, until]. Деградирует поблочно.
+//
+// §114.4: чтения брокера идут параллельно с запросами Prometheus, каждое — в
+// пределах бюджета; склеиваются после. При мёртвом брокере ответ занимает
+// бюджет плюс время Prometheus, а не сумму таймаутов клиента kafka-go.
 func (u *KafkaMonitorUsecase) Overview(ctx context.Context, since, until time.Time) KafkaOverviewResult {
 	res := KafkaOverviewResult{From: since, To: until}
-	if u.prom != nil {
-		u.fillPromOverview(ctx, since, until, &res)
-	}
-	if u.admin != nil {
-		if bh, err := u.brokerHealth(ctx); err != nil {
-			u.logger.Warn("kafka broker health failed", u.logger.Err(err))
-		} else {
-			res.BrokerHealth = bh
-			res.KafkaAvailable = true
+	var growth float64
+	bv := u.readBrokerView(ctx, func() {
+		if u.prom != nil {
+			u.fillPromOverview(ctx, since, until, &res)
+			growth = u.lagGrowthPerSec(ctx, until)
 		}
-	}
+	})
+	unreachable := u.applyBrokerView(bv, &res)
 	res.Health = evaluateHealth(healthInput{
-		currentLag:       int64(res.Summary.CurrentLag),
-		lagGrowthPerSec:  u.lagGrowthPerSec(ctx, until),
-		errorRate:        res.ErrorRate,
-		brokersTotal:     res.BrokerHealth.BrokersTotal,
-		brokersOnline:    res.BrokerHealth.BrokersOnline,
-		underReplicated:  res.BrokerHealth.UnderReplicatedPartitions,
-		offlinePartition: res.BrokerHealth.OfflinePartitions,
+		currentLag:        int64(res.Summary.CurrentLag),
+		lagGrowthPerSec:   growth,
+		errorRate:         res.ErrorRate,
+		produceP95ms:      res.ProduceP95ms,
+		brokersTotal:      res.BrokerHealth.BrokersTotal,
+		brokersOnline:     res.BrokerHealth.BrokersOnline,
+		underReplicated:   res.BrokerHealth.UnderReplicatedPartitions,
+		offlinePartition:  res.BrokerHealth.OfflinePartitions,
+		brokerUnreachable: unreachable,
 	}, u.th)
 	return res
 }
@@ -96,6 +143,9 @@ func (u *KafkaMonitorUsecase) fillPromOverview(ctx context.Context, since, until
 		CurrentLag:     f2u(cur.CurrentLag),
 		InFlightNow:    f2u(cur.InFlight),
 	}
+	// §113.8: до §113 p95 публикации считался, но в health не передавался —
+	// пороги produce_p95_*_ms не срабатывали никогда.
+	res.ProduceP95ms = cur.ProduceP95ms
 	total := cur.Produced + cur.Consumed
 	failed := cur.FailedProduced + cur.FailedConsumed
 	if total > 0 {
@@ -113,27 +163,59 @@ func (u *KafkaMonitorUsecase) fillPromOverview(ctx context.Context, since, until
 	res.HasDelta = okP || okC
 }
 
-// lagGrowthPerSec оценивает прирост lag/сек за последние 5 минут (для триггера
-// «lag растёт», §6). Без Prometheus или при недостатке точек → 0.
+// lagGrowWindow / lagGrowStep / lagGrowMinSpan — окно, шаг и минимальное
+// покрытие ряда для триггера «lag растёт» (§6 spec): рост должен длиться все 5
+// минут, а не мелькнуть на двух соседних точках.
+const (
+	lagGrowWindow  = 5 * time.Minute
+	lagGrowStep    = 30 * time.Second
+	lagGrowMinSpan = lagGrowWindow - 2*lagGrowStep
+)
+
+// lagGrowthPerSec — средний прирост lag/сек за последние 5 минут, если lag всё
+// это время рос (триггер «lag растёт», §6). 0 — без Prometheus, при ошибке,
+// если ряд покрывает меньше lagGrowMinSpan (дыры в данных) или lag хоть раз
+// снижался.
+//
+// До §113 считалось (last−first)/время по двум крайним точкам: пила очереди,
+// которую разбирает consumer, при неудачной фазе давала «рост» и красный баннер
+// (§113.8).
 func (u *KafkaMonitorUsecase) lagGrowthPerSec(ctx context.Context, until time.Time) float64 {
 	if u.prom == nil {
 		return 0
 	}
-	const window = 5 * time.Minute
-	series, err := u.prom.KafkaTimeseries(ctx, until.Add(-window), until, 30*time.Second, []string{"lag"})
+	series, err := u.prom.KafkaTimeseries(ctx, until.Add(-lagGrowWindow), until, lagGrowStep, []string{"lag"})
 	if err != nil {
+		u.logger.Debug("kafka lag growth skipped: prometheus error",
+			u.logger.Str("op", "web.kafkaMonitor.lagGrowth"), u.logger.Err(err))
 		return 0
 	}
-	pts := series["lag"]
+	return steadyGrowthPerSec(series["lag"], lagGrowMinSpan, 2*lagGrowStep)
+}
+
+// steadyGrowthPerSec — средний прирост в секунду по ряду, если ряд покрывает
+// не меньше minSpan без разрывов длиннее maxGap и ни разу не убывает; иначе 0.
+// Разрыв внутри ряда (рестарт Sender'а, пропуск скрейпа) — тоже «дыра в
+// данных» (ревизия §113): по крайним точкам его не видно, а спад мог прийтись
+// ровно на пропуск.
+func steadyGrowthPerSec(pts []port.KafkaPoint, minSpan, maxGap time.Duration) float64 {
 	if len(pts) < 2 {
 		return 0
 	}
 	first, last := pts[0], pts[len(pts)-1]
-	secs := float64(last.TsMs-first.TsMs) / 1000
-	if secs <= 0 {
+	span := time.Duration(last.TsMs-first.TsMs) * time.Millisecond
+	if span < minSpan {
 		return 0
 	}
-	return (last.V - first.V) / secs
+	for i := 1; i < len(pts); i++ {
+		if pts[i].V < pts[i-1].V {
+			return 0
+		}
+		if time.Duration(pts[i].TsMs-pts[i-1].TsMs)*time.Millisecond > maxGap {
+			return 0
+		}
+	}
+	return (last.V - first.V) / span.Seconds()
 }
 
 // KafkaTimeseriesResult — ответ §4.2: ряды + выбранный шаг.
@@ -176,39 +258,41 @@ type KafkaTopicsResult struct {
 }
 
 // Topics — список топиков (§4.3). Кешируется в Redis (TTL адаптера) для
-// снижения нагрузки на брокеры при автообновлении экрана.
+// снижения нагрузки на брокеры при автообновлении экрана; §114.4 — вместе с
+// неудачей, в пределах бюджета u.budget.Topics.
+//
+// В кеше лежат метаданные БЕЗ размеров и ролей (§75, §113.7): размер живёт в
+// другом источнике, роль выводится из конфига, и оба подмешиваются в копию на
+// каждый запрос. Иначе при пропаже метрики UI до конца TTL показывал бы
+// размеры из кеша, противореча флагу SizesAvailable=false.
 func (u *KafkaMonitorUsecase) Topics(ctx context.Context) KafkaTopicsResult {
 	res := KafkaTopicsResult{Topics: []port.TopicInfo{}}
 	if u.admin == nil {
 		return res
 	}
-	var topics []port.TopicInfo
-	if u.cache != nil {
-		var cached []port.TopicInfo
-		if ok, _ := u.cache.Get(ctx, "topics", &cached); ok {
-			topics = cached
-		}
+	shared, ok := readBroker(ctx, u, brokerKeyTopics, u.budget.Topics, u.admin.Topics)
+	if !ok {
+		return res
 	}
-	if topics == nil {
-		fresh, err := u.admin.Topics(ctx)
-		if err != nil {
-			u.logger.Warn("kafka topics failed", u.logger.Err(err))
-			return res
-		}
-		topics = fresh
-		if u.cache != nil {
-			// В кеш кладём метаданные БЕЗ размеров (§75): размер живёт в другом
-			// источнике и подмешивается ниже на каждый запрос. Иначе при пропаже
-			// метрики UI до конца TTL показывал бы размеры из кеша, противореча
-			// флагу SizesAvailable=false.
-			_ = u.cache.Set(ctx, "topics", topics)
-		}
-	}
+	// Срез общий для всех ждущих singleflight — правим копию.
+	topics := cloneTopics(shared)
+	u.applyGroupRoles(topics)
 	return KafkaTopicsResult{
 		Topics:         topics,
 		KafkaAvailable: true,
 		SizesAvailable: u.fillTopicSizes(ctx, topics),
 	}
+}
+
+// cloneTopics — глубокая копия топиков вместе со срезами групп. nil-вход даёт
+// пустой срез: в JSON — [], а не null.
+func cloneTopics(src []port.TopicInfo) []port.TopicInfo {
+	out := make([]port.TopicInfo, len(src))
+	for i, t := range src {
+		t.ConsumerGroups = slices.Clone(t.ConsumerGroups)
+		out[i] = t
+	}
+	return out
 }
 
 // fillTopicSizes проставляет топикам размер на диске из Prometheus (§75):
@@ -253,22 +337,4 @@ func (u *KafkaMonitorUsecase) fillTopicSizes(ctx context.Context, topics []port.
 		u.logger.Int("with_size", filled),
 		u.logger.Int("series", len(sizes)))
 	return len(sizes) > 0
-}
-
-// brokerHealth — состояние брокеров с кешированием (Redis TTL адаптера).
-func (u *KafkaMonitorUsecase) brokerHealth(ctx context.Context) (port.BrokerHealth, error) {
-	if u.cache != nil {
-		var cached port.BrokerHealth
-		if ok, _ := u.cache.Get(ctx, "brokers", &cached); ok {
-			return cached, nil
-		}
-	}
-	bh, err := u.admin.BrokerHealth(ctx)
-	if err != nil {
-		return port.BrokerHealth{}, err
-	}
-	if u.cache != nil {
-		_ = u.cache.Set(ctx, "brokers", bh)
-	}
-	return bh, nil
 }
