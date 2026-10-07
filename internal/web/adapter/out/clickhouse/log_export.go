@@ -83,10 +83,11 @@ func (r *LogReaderCH) ExportKeys(ctx context.Context, q port.LogQuery, limit int
 	q.BeforeID, q.Unresolved, q.Limit = "", false, 0
 	keys := make([]port.LogExportKey, 0, min(limit, exportKeysMaxFetch))
 	seen := make(map[string]struct{}, min(limit, exportKeysMaxFetch))
+	var tail *port.LogExportKey
 	for round := 1; ; round++ {
 		need := limit - len(keys)
 		fetch := min(max(need+need/8, exportKeysMinFetch), exportKeysMaxFetch)
-		page, err := r.exportKeyPage(ctx, q, fetch)
+		page, err := r.exportKeyPage(ctx, q, tail, fetch)
 		if err != nil {
 			return nil, err
 		}
@@ -111,24 +112,35 @@ func (r *LogReaderCH) ExportKeys(ctx context.Context, q port.LogQuery, limit int
 		// Курсор — последняя ПРОЧИТАННАЯ строка, а не последний взятый ключ:
 		// хвост страницы мог целиком состоять из дублей.
 		last := page[len(page)-1]
-		if last.TsMs <= 0 {
-			// Нулевое время курсором не выражается (searchConds считает UntilMs=0
-			// «без границы») — раунд повторил бы ту же страницу.
-			r.logger.Debug("logs export: keys stopped at zero date_request",
+		if last.TsMs > 0 {
+			q.UntilMs, q.BeforeID = last.TsMs, last.ID
+		} else {
+			// Нулевое время (date_request, не заполненный писателем внешней
+			// таблицы §64) курсором searchConds не выражается — UntilMs=0 там
+			// «без границы». Раньше чтение здесь останавливалось, и выгрузка
+			// молча выходила «полной»; теперь хвост идёт отдельным условием.
+			tail = &last
+			r.logger.Debug("logs export: keys continue past zero date_request",
 				r.logger.Str("table", q.Table), r.logger.Int("keys", len(keys)))
-			return keys, nil
 		}
-		q.UntilMs, q.BeforeID = last.TsMs, last.ID
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 	}
 }
 
-// exportKeyPage — одна страница строк-ключей под фильтрами q (с keyset-курсором,
-// если он задан в q.UntilMs/q.BeforeID), новые сверху.
-func (r *LogReaderCH) exportKeyPage(ctx context.Context, q port.LogQuery, fetch int) ([]port.LogExportKey, error) {
+// exportKeyPage — одна страница строк-ключей под фильтрами q, новые сверху.
+// Keyset-курсор — в q.UntilMs/q.BeforeID, а для времени ≤ 0 — в tail (тот же
+// предикат, что у searchConds, но без правила «0 — без границы»).
+func (r *LogReaderCH) exportKeyPage(
+	ctx context.Context, q port.LogQuery, tail *port.LogExportKey, fetch int,
+) ([]port.LogExportKey, error) {
 	conds, args := r.searchConds(ctx, q)
+	if tail != nil {
+		conds = append(conds, "(toUnixTimestamp64Milli(toDateTime64(date_request, 3)) < ? "+
+			"OR (toUnixTimestamp64Milli(toDateTime64(date_request, 3)) = ? AND ID < ?))")
+		args = append(args, tail.TsMs, tail.TsMs, tail.ID)
+	}
 	conn, err := r.liveConn()
 	if err != nil {
 		return nil, err

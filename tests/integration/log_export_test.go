@@ -230,6 +230,44 @@ func TestLogReader_Export_KeysDedupAcrossRounds(t *testing.T) {
 	require.Equal(t, want, exportKeyIDs(all), "меньше лимита — значит, записей больше нет")
 }
 
+// TestLogReader_Export_KeysPastZeroDateRequest — date_request = 0 (писатель
+// внешней таблицы §64 не заполнил колонку). Курсор searchConds такое время не
+// выражает (UntilMs=0 — «без границы»), и до ревизии §115 отбор ключей здесь
+// останавливался: 342 записи из 600, а выгрузка выходила «полной».
+func TestLogReader_Export_KeysPastZeroDateRequest(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+	conn, _, cleanup := startClickHouse(t, ctx)
+	defer cleanup()
+
+	const table = "nexus_default.test_export_zero_ts"
+	createNodeLogTable(t, ctx, conn, table)
+	// 600 записей по 3 прогона, все с нулевым временем: первая страница
+	// (1 024 строки) берёт 342 записи, остальное — только продолжением.
+	const records, runsPer = 600, 3
+	require.NoError(t, conn.Exec(ctx, fmt.Sprintf(`
+		INSERT INTO %s SELECT concat('z', leftPad(toString(intDiv(number, %d)), 4, '0')), 'request', 'POST', 'u', '', '', 'req', 'resp',
+			200, '', toDate(0), toDateTime(0), toDateTime(0),
+			1, 1, repeat('a', 32), repeat('b', 32), '', '', '', 1, '[]', '%s', 3, 4
+		FROM numbers(%d)`, table, runsPer, exportNodeID, records*runsPer)))
+	waitRows(t, ctx, conn, table, records*runsPer)
+
+	reader := webch.NewLogReader(clickhouse.StaticProvider(conn), logging.NewNoop())
+	q := port.LogQuery{Table: table, NodeID: exportNodeID}
+	keys, err := reader.ExportKeys(ctx, q, records)
+	require.NoError(t, err)
+	require.Len(t, keys, records, "отбор не останавливается на нулевом времени")
+	ids := exportKeyIDs(keys)
+	require.Equal(t, "z0599", ids[0])
+	require.Equal(t, "z0000", ids[len(ids)-1])
+	require.Len(t, uniqueStrings(ids), records, "каждая запись — один раз")
+
+	rows, err := reader.ExportRows(ctx, q, keys[:50], 100)
+	require.NoError(t, err)
+	require.Len(t, rows, 50, "строки ключей с нулевым временем находятся")
+	require.Equal(t, "req", rows[0].Rec.Request)
+}
+
 // TestLogReader_Export_RowsPrunedOnExternalTable — батч строк читает узкое
 // окно, а не таблицу (§115.7). Внешняя таблица §64 — худший случай: окна по
 // date_create из периода нет (DateCreateAligned=false), а без условия по
@@ -392,4 +430,13 @@ func TestLogReader_ExportXLSX_EndToEnd(t *testing.T) {
 	require.Len(t, audit.details, 1)
 	require.Equal(t, "limited_bytes", audit.details[0]["result"])
 	require.Equal(t, rowsInSheet, audit.details[0]["rows"])
+}
+
+// uniqueStrings — различные значения среза.
+func uniqueStrings(xs []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(xs))
+	for _, x := range xs {
+		out[x] = struct{}{}
+	}
+	return out
 }

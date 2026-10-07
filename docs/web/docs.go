@@ -5516,8 +5516,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }
                     },
+                    "500": {
+                        "description": "ClickHouse недоступен или не успел отобрать записи (не 503 — nginx не повторяет)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
+                        }
+                    },
                     "503": {
-                        "description": "все слоты реплики заняты (Retry-After) или ClickHouse недоступен",
+                        "description": "все слоты реплики заняты (Retry-After; nginx повторяет на соседней реплике)",
                         "schema": {
                             "$ref": "#/definitions/internal_web_adapter_in_http.ErrorResponse"
                         }

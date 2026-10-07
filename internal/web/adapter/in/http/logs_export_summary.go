@@ -42,7 +42,7 @@ func (s *xlsxLogSink) resultRows(sum usecase.LogsExportSummary) []paramRow {
 		{s.t("logs_export.p.more"), xlsx.Str(s.yesNo(m.More))},
 		{s.t("logs_export.p.bytes"), xlsx.Int(sum.Bytes)},
 		{s.t("logs_export.p.bodies"), xlsx.Str(bodies)},
-		{s.t("logs_export.p.truncated_bodies"), xlsx.Int(int64(sum.TruncatedBodies))},
+		{s.t("logs_export.p.truncated_bodies"), xlsx.Int(int64(sum.TruncatedBodies + s.unitCut))},
 		{s.t("logs_export.p.truncated_cells"), xlsx.Int(int64(s.w.TruncatedCells()))},
 		{s.t("logs_export.p.vanished"), xlsx.Int(int64(sum.Vanished))},
 		{s.t("logs_export.p.max_rows"), xlsx.Int(int64(m.Rows))},

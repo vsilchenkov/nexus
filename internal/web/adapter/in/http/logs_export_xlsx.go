@@ -61,6 +61,10 @@ type xlsxLogSink struct {
 	meta  usecase.LogsExportMeta
 	rows  int
 	cells []xlsx.Cell
+	// unitCut — тела, урезанные только по пределу ячейки в UTF-16 (символов
+	// не больше BodyChars, но с эмодзи): usecase считает обрезку по символам
+	// и их не видит.
+	unitCut int
 }
 
 var _ usecase.LogsExportSink = (*xlsxLogSink)(nil)
@@ -142,9 +146,18 @@ func (s *xlsxLogSink) rowCells(r port.LogExportRow) []xlsx.Cell {
 // bodyCell — тело, урезанное в ClickHouse до BodyChars символов. Урезанное
 // получает видимый маркер с полной длиной: иначе по ячейке не понять, что
 // тело неполное. Маркер помещается в предел ячейки за счёт тела.
+//
+// Предел ячейки Excel считается в единицах UTF-16, а срез ClickHouse — в
+// символах: тело из BodyChars символов с эмодзи (две единицы на символ) в
+// ячейку не влезает, и без проверки писатель обрезал бы его молча, без маркера.
+// Длина в байтах не меньше длины в UTF-16, поэтому короткие тела не считаются.
 func (s *xlsxLogSink) bodyCell(body string, fullRunes int64) xlsx.Cell {
+	fits := len(body) <= xlsx.MaxCellChars || xlsx.UTF16Len(body) <= xlsx.MaxCellChars
 	if fullRunes <= int64(s.meta.BodyChars) {
-		return xlsx.Str(body)
+		if fits {
+			return xlsx.Str(body)
+		}
+		s.unitCut++
 	}
 	marker := fmt.Sprintf(s.t("logs_export.cell_truncated"), fullRunes)
 	limit := min(s.meta.BodyChars, xlsx.MaxCellChars)

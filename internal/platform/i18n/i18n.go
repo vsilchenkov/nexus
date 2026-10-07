@@ -212,6 +212,7 @@ var translations = map[Lang]map[string]string{
 		"backup.clickhouse_failed":      "failed to create ClickHouse databases or tables; PostgreSQL was not changed, the restore can be repeated",
 		// logs export (§115)
 		"logs_export.busy":                 "other log exports are running on this server — try again in half a minute",
+		"logs_export.timeout":              "ClickHouse did not select the records in time — set a period or narrow the search",
 		"logs_export.sheet_logs":           "Logs",
 		"logs_export.sheet_params":         "Parameters",
 		"logs_export.param":                "Parameter",
@@ -444,6 +445,7 @@ var translations = map[Lang]map[string]string{
 		"backup.clickhouse_failed":      "не удалось создать базы или таблицы ClickHouse; PostgreSQL не изменён, восстановление можно повторить",
 		// logs export (§115)
 		"logs_export.busy":                 "на этом сервере уже идут другие выгрузки логов — повторите через полминуты",
+		"logs_export.timeout":              "ClickHouse не успел отобрать записи — задайте период или сузьте поиск",
 		"logs_export.sheet_logs":           "Логи",
 		"logs_export.sheet_params":         "Параметры",
 		"logs_export.param":                "Параметр",

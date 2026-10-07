@@ -657,7 +657,8 @@ type LogsExportSection struct {
 	MaxConcurrent int `yaml:"max_concurrent"`
 	// RateLimitPerUserPerMin — запусков выгрузки на пользователя в минуту.
 	RateLimitPerUserPerMin int `yaml:"rate_limit_per_user_per_min"`
-	// QueryTimeoutSec — таймаут каждого запроса к ClickHouse.
+	// QueryTimeoutSec — таймаут шага в ClickHouse: отбор ключей целиком (все
+	// раунды) и каждый батч строк.
 	QueryTimeoutSec int `yaml:"query_timeout_sec"`
 }
 

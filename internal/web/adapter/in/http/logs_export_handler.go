@@ -89,6 +89,12 @@ func (h *LogsExportHandler) Estimate(c *gin.Context) {
 	switch {
 	case err == nil:
 		resp.Records, resp.Rows, resp.RequestBytes, resp.ResponseBytes = st.Records, st.Rows, st.ReqBytes, st.RespBytes
+	case clientgone.Is(c.Request.Context(), err):
+		// Первым: адаптер помечает отмену и как ErrLogsBackendUnavailable, а
+		// форма рвёт оценку при каждом закрытии — иначе ложный Warn «ClickHouse
+		// недоступен» на каждое закрытие.
+		h.logger.Debug("logs export estimate: client gone", h.logger.Str("node_id", nodeID))
+		return
 	case errors.Is(err, logsearch.ErrBadQuery):
 		localizedError(c, http.StatusBadRequest, "error.bad_search_query")
 		return
@@ -101,8 +107,6 @@ func (h *LogsExportHandler) Estimate(c *gin.Context) {
 		h.logger.Warn("logs export estimate degraded: clickhouse unavailable or slow",
 			h.logger.Str("node_id", nodeID), h.logger.Err(err))
 		resp.LogsAvailable = false
-	case clientgone.Is(c.Request.Context(), err):
-		return
 	default:
 		logServerError(c, h.logger, "logs export estimate failed", err, "logs.export.estimate",
 			h.logger.Str("node_id", nodeID))
@@ -136,7 +140,8 @@ func (h *LogsExportHandler) Estimate(c *gin.Context) {
 // @Failure  400  {object}  ErrorResponse  "синтаксис поиска"
 // @Failure  404  {object}  ErrorResponse
 // @Failure  429  {object}  ErrorResponse  "превышена частота запусков (Retry-After)"
-// @Failure  503  {object}  ErrorResponse  "все слоты реплики заняты (Retry-After) или ClickHouse недоступен"
+// @Failure  500  {object}  ErrorResponse  "ClickHouse недоступен или не успел отобрать записи (не 503 — nginx не повторяет)"
+// @Failure  503  {object}  ErrorResponse  "все слоты реплики заняты (Retry-After; nginx повторяет на соседней реплике)"
 // @Security CookieAuth
 // @Router   /api/nodes/{id}/logs/export.xlsx [get]
 func (h *LogsExportHandler) Export(c *gin.Context) {
@@ -161,7 +166,8 @@ func (h *LogsExportHandler) Export(c *gin.Context) {
 }
 
 // replyExportError — отказ ДО начала потока (§115.5): ответ ещё не начат,
-// поэтому обычный JSON.
+// поэтому обычный JSON. Код 503 — только у «занято» (повтор nginx на соседней
+// реплике имеет смысл); отказ общего ClickHouse — 500, чтобы его не повторяли.
 func (h *LogsExportHandler) replyExportError(c *gin.Context, nodeID string, err error) {
 	switch {
 	case clientgone.Is(c.Request.Context(), err):
@@ -177,9 +183,17 @@ func (h *LogsExportHandler) replyExportError(c *gin.Context, nodeID string, err 
 		c.Header("Retry-After", logsExportBusyRetrySec)
 		localizedError(c, http.StatusServiceUnavailable, "logs_export.busy")
 	case errors.Is(err, domain.ErrLogsBackendUnavailable), errors.Is(err, context.DeadlineExceeded):
+		// Не 502/503/504: их nginx (proxy_next_upstream) повторяет на соседней
+		// реплике, а ClickHouse у реплик общий — тот же тяжёлый отбор ключей
+		// ушёл бы второй раз и съел вторую единицу частоты. 503 остаётся только
+		// у «занято», где соседняя реплика действительно может помочь.
 		h.logger.Warn("logs export refused: clickhouse unavailable or slow",
 			h.logger.Str("node_id", nodeID), h.logger.Err(err))
-		localizedError(c, http.StatusServiceUnavailable, "error.logs_unavailable")
+		key := "error.logs_unavailable"
+		if errors.Is(err, context.DeadlineExceeded) {
+			key = "logs_export.timeout"
+		}
+		localizedError(c, http.StatusInternalServerError, key)
 	default:
 		logServerError(c, h.logger, "logs export failed", err, "logs.export", h.logger.Str("node_id", nodeID))
 		localizedError(c, http.StatusInternalServerError, "error.internal")

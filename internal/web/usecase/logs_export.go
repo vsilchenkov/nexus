@@ -46,7 +46,7 @@ type LogsExportLimits struct {
 	MaxBodyChars  int           // символов тела в ячейке
 	MaxConcurrent int           // одновременных выгрузок на реплику
 	RatePerMinute int           // запусков на пользователя в минуту; 0 — без лимита
-	QueryTimeout  time.Duration // таймаут каждого вызова ClickHouse; 0 — без своего
+	QueryTimeout  time.Duration // таймаут шага: отбор ключей целиком и каждый батч строк; 0 — без своего
 }
 
 // LogsExportAuditor — запись в журнал аудита (реализует *AuditUsecase).

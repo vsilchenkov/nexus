@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -68,13 +69,17 @@ func (f *exportServiceFake) Export(ctx context.Context, actor usecase.Actor, _, 
 }
 
 func exportEngine(svc logsExportService) *gin.Engine {
+	return exportEngineLog(svc, logging.NewNoop())
+}
+
+func exportEngineLog(svc logsExportService, logger logging.Logger) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(i18n.GinMiddleware(), func(c *gin.Context) {
 		c.Set(ctxSessionKey, &domain.Session{UserID: "u1", Login: "alice", CurrentTeamID: "t1"})
 		c.Next()
 	})
-	h := NewLogsExportHandler(svc, "v1.41.0", logging.NewNoop())
+	h := NewLogsExportHandler(svc, "v1.41.0", logger)
 	r.GET("/api/nodes/:id/logs/export.xlsx", h.Export)
 	r.GET("/api/nodes/:id/logs/export/estimate", h.Estimate)
 	return r
@@ -172,6 +177,30 @@ func TestLogsExportHandler_StreamsWorkbook(t *testing.T) {
 	assert.Contains(t, parts["xl/workbook.xml"], `activeTab="1"`, "неполная выгрузка открывается на «Параметрах»")
 }
 
+// TestLogsExportHandler_AstralBodyOverflowGetsMarker — тело в пределах
+// max_body_chars по символам, но длиннее ячейки Excel в UTF-16 (эмодзи — две
+// единицы): до ревизии §115 писатель обрезал его молча, без маркера и мимо
+// счётчика урезанных тел.
+func TestLogsExportHandler_AstralBodyOverflowGetsMarker(t *testing.T) {
+	t.Parallel()
+	meta := exportMeta(true)
+	meta.BodyChars = 32_767
+	body := strings.Repeat("😀", 20_000) // 20 000 символов, 40 000 единиц UTF-16
+	svc := &exportServiceFake{
+		meta: meta,
+		rows: []port.LogExportRow{{Rec: domain.LogRecord{ID: "a", Request: body}, ReqRunes: 20_000}},
+		sum:  usecase.LogsExportSummary{Status: usecase.LogsExportComplete, Written: 1},
+	}
+	w := exportGet(exportEngine(svc), "/api/nodes/n1/logs/export.xlsx?bodies=1")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	parts := bookParts(t, w.Body.Bytes())
+	assert.Contains(t, parts["xl/worksheets/sheet1.xml"], "…[обрезано, всего символов: 20000]</t>")
+	params := parts["xl/worksheets/sheet2.xml"]
+	assert.Regexp(t, `Обрезано тел</t></is></c><c r="B\d+"><v>1</v>`, params, "тело учтено в урезанных")
+	assert.Regexp(t, `Ячеек обрезано по пределу Excel</t></is></c><c r="B\d+"><v>0</v>`, params, "писателю резать нечего")
+}
+
 func TestLogsExportHandler_WithoutBodies(t *testing.T) {
 	t.Parallel()
 	svc := &exportServiceFake{
@@ -200,8 +229,10 @@ func TestLogsExportHandler_ErrorsBeforeStream(t *testing.T) {
 		{"logs not configured", domain.ErrNodeLogsNotConfigured, http.StatusNotFound, ""},
 		{"rate limited", usecase.ErrLogsExportRateLimited, http.StatusTooManyRequests, "60"},
 		{"busy", usecase.ErrLogsExportBusy, http.StatusServiceUnavailable, "30"},
-		{"clickhouse unavailable", domain.ErrLogsBackendUnavailable, http.StatusServiceUnavailable, ""},
-		{"keys timeout", context.DeadlineExceeded, http.StatusServiceUnavailable, ""},
+		// Отказ общего ClickHouse — не 502/503/504: их nginx повторил бы на
+		// соседней реплике тем же тяжёлым запросом (ревизия §115).
+		{"clickhouse unavailable", domain.ErrLogsBackendUnavailable, http.StatusInternalServerError, ""},
+		{"keys timeout", context.DeadlineExceeded, http.StatusInternalServerError, ""},
 		{"other", errors.New("boom"), http.StatusInternalServerError, ""},
 	}
 	for _, tt := range tests {
@@ -213,6 +244,39 @@ func TestLogsExportHandler_ErrorsBeforeStream(t *testing.T) {
 			assert.Contains(t, w.Header().Get("Content-Type"), "application/json", "отказ до потока — обычный JSON")
 		})
 	}
+}
+
+// TestLogsExportHandler_ClickHouseFailureText — таймаут отбора ключей (адаптер
+// помечает его и как недоступность) подсказывает сузить выгрузку, а не
+// сообщает о недоступном ClickHouse.
+func TestLogsExportHandler_ClickHouseFailureText(t *testing.T) {
+	t.Parallel()
+	timeout := errors.Join(fmt.Errorf("export keys: %w", context.DeadlineExceeded), domain.ErrLogsBackendUnavailable)
+	w := exportGet(exportEngine(&exportServiceFake{err: timeout}), "/api/nodes/n1/logs/export.xlsx")
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "задайте период или сузьте поиск")
+
+	w = exportGet(exportEngine(&exportServiceFake{err: domain.ErrLogsBackendUnavailable}), "/api/nodes/n1/logs/export.xlsx")
+	assert.Contains(t, w.Body.String(), "временно недоступен")
+}
+
+// TestLogsExportHandler_EstimateClientGoneIsQuiet — форма рвёт оценку при
+// закрытии; адаптер помечает отмену и как ErrLogsBackendUnavailable, и до
+// ревизии §115 каждое закрытие давало Warn «ClickHouse недоступен».
+func TestLogsExportHandler_EstimateClientGoneIsQuiet(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	canceled := errors.Join(fmt.Errorf("export stats: %w", context.Canceled), domain.ErrLogsBackendUnavailable)
+	r := exportEngineLog(&exportServiceFake{err: canceled}, bufferLogger(&buf))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/nodes/n1/logs/export/estimate", nil).WithContext(ctx))
+
+	assert.NotContains(t, buf.String(), `"level":"WARN"`)
+	assert.Contains(t, buf.String(), "client gone")
+	assert.Empty(t, w.Body.String(), "клиенту, который ушёл, ответ не пишется")
 }
 
 func TestLogsExportHandler_Estimate(t *testing.T) {
