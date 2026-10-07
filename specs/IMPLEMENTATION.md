@@ -7726,7 +7726,27 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | ТЗ §115 | ✅ Phase 115.0 | [sections/115-logs-excel-export.md](sections/115-logs-excel-export.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
 | §115.2 иконка вкладки | ✅ Phase 115.1 | Знак сайдбара [web-ui/src/assets/nexus.svg](../web-ui/src/assets/nexus.svg), ссылка `href="/src/assets/nexus.svg"` в [web-ui/index.html](../web-ui/index.html) → Vite выпускает `/assets/nexus-<hash>.svg`; Go не менялся. Тест `TestSPAFallback_FaviconServedFromEmbeddedBundle` ([spa_test.go](../internal/web/adapter/in/http/spa_test.go)) берёт ссылку из НАСТОЯЩЕГО встроенного `index.html` и требует `image/svg+xml` — красный на старом бандле |
 | §115.3 потоковый XLSX-writer | ✅ Phase 115.2 | Пакет [platform/xlsx](../internal/platform/xlsx/writer.go) на stdlib: `NewWriter(w, sheets...)` пишет фиксированные части сразу (`[Content_Types].xml`, связи, стили), листы — строго по очереди (`StartSheet`/`WriteRow`/`EndSheet` в [sheet.go](../internal/platform/xlsx/sheet.go)), `xl/workbook.xml` — последней в `Close` (диапазоны автофильтров `_xlnm._FilterDatabase`, `activeTab`); недописанные листы `Close` дописывает пустыми. Ячейки [cell.go](../internal/platform/xlsx/cell.go): `Str` (всегда `inlineStr`, `<f>` не пишется), `Int/Float/Bool`, `DateTime/Date` по часам зоны значения (нулевое/до 1900 — пусто). Текст [text.go](../internal/platform/xlsx/text.go): экранирование только `& < >` (не `xml.EscapeText`), `\r` → `&#13;`, `_xHHHH_` → `_x005F_xHHHH_`, невалидный UTF-8 и не-XML символы → U+FFFD, срез на `MaxCellChars`=32 767 UTF-16 единиц без разрыва суррогатов; `Truncate(s, max, marker)` для обрезки с видимым маркером. Запись частей — тип `out` с «липкой» ошибкой (errcheck + запрет `_ = err`). Сжатие `flate.BestSpeed` на экземпляре архива. Тесты [writer_test.go](../internal/platform/xlsx/writer_test.go), [text_test.go](../internal/platform/xlsx/text_test.go) (порядок частей, разметка, round-trip через `encoding/xml`, суррогаты, серийные даты, `FuzzWriteText`); книга проверена `openpyxl` 3.1.5 |
-| §115.7 чтение ключей и строк из ClickHouse | ⛔ | — |
+| §115.7 чтение ключей и строк из ClickHouse | ✅ Phase 115.3 | Отдельный порт [port/log_export.go](../internal/web/usecase/port/log_export.go) `LogExportReader` (не расширение `LogReader` — моки его не знают): `ExportStats` / `ExportKeys` / `ExportRows`. Адаптер [clickhouse/log_export.go](../internal/web/adapter/out/clickhouse/log_export.go), всё через общий `searchConds` (атрибуция §61/§64, окно §72.4, фильтры, полнотекст). `ExportStats` — `uniqExact(ID), count(), sum(least(request_size, кап))` с `countTimeout`, тела с диска не читаются. `ExportKeys` — top-N СТРОК `(ID, ts, toString(date_create))` без `LIMIT 1 BY ID`, дедуп по первому вхождению в Go, добор keyset-курсором по последней ПРОЧИТАННОЙ строке; раунд `need+need/8` в пределах 1 024…200 000 строк; нулевой `date_request` курсором не выразить — стоп. `ExportRows` — батч ключей: `searchConds` с окном [мин−1 мс, макс] + `ID IN ?` + `date_create IN ?` (значения из ключей) + голый `date_request BETWEEN` + `LIMIT 1 BY ID`; `previewCols`/`scanLogRowPreview` с телами, `listCols` без; батч дочитывается и курсор закрывается до возврата; строки раскладываются в порядке ключей, пропавшие опускаются. Таймаут на вызов ставит usecase. Тесты: unit [log_export_sql_test.go](../internal/web/adapter/out/clickhouse/log_export_sql_test.go) (порядок аргументов, сужение окна, снятие курсора/Unresolved), integration [log_export_test.go](../tests/integration/log_export_test.go) `TestLogReader_Export*` (группа `test-int-ch`): состав, порядок и ПРОГОН совпадают со `Search` под «Все/OK/Ошибки», срез тел по символам, дедуп через раунды (3 000 прогонов одной записи), замер чтения батча на внешней таблице |
 | §115.6/§115.8/§115.9 usecase: лимиты, полнота, аудит | ⛔ | — |
 | §115.5 API, конфиг, маршруты | ⛔ | — |
 | §115.4 форма выгрузки (UI) | ⛔ | — |
+
+**Неочевидности §115:**
+
+- **Чтение выгрузки — ключи, потом строки (§115.7).** Ключи — top-N по СТРОКАМ без `LIMIT 1 BY ID`:
+  с ним ClickHouse не применяет top-N-сортировку и сортирует все пары «ID × время» под фильтром.
+  Дубли ID отбрасываются в Go по первому вхождению — это новейший подходящий прогон, та же строка,
+  что выбирает `LIMIT 1 BY ID` списка; integration-тест сверяет с `Search` и состав, и порядок, и
+  сам прогон под «Все/OK/Ошибки».
+- **Батч строк обязан нести `date_create IN (…)` из ключей.** Ключ сортировки таблицы —
+  `(date_create, date_request, method)`; без условия по первому столбцу ClickHouse не отсекает
+  гранулы и по второму — голый `date_request BETWEEN` в одиночку на внешней таблице §64
+  (`DateCreateAligned=false`) читал 200 000 строк из 200 000 на КАЖДЫЙ батч. Значения
+  `date_create` берутся из самих отобранных строк (`toString(date_create)` в запросе ключей),
+  поэтому сужение верно и там, где посторонний писатель ставит `date_create`, не связанный с
+  `date_request`; с ним батч читает одну гранулу (8 192 строки). `date_request` в батче — ГОЛЫЙ:
+  обёрнутый в `toDateTime64` (как в `searchConds`) гранулы внутри дня не отсекает.
+- **Курсор добора ключей — последняя ПРОЧИТАННАЯ строка, а не последний взятый ключ:** хвост
+  страницы может целиком состоять из прогонов уже взятой записи. `date_request = 0` курсором не
+  выразить (`searchConds` читает `UntilMs=0` как «без границы») — добор останавливается, иначе
+  раунд повторял бы ту же страницу.
