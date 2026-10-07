@@ -23,9 +23,21 @@ import { withNodeTab } from "../../lib/nodeTabUrl";
 // проверять Sender, а не утверждает «не разбирается»; алерт
 // NexusPausedBacklogStuck ждёт те же 30 минут. Если список узлов не прочитан,
 // вывода не делаем — показываем только число.
+//
+// §114.5: брокер не ответил — очередь паузы не прочитана, и 0 в paused_backlog
+// не значит «пусто». Тогда строка есть всегда: приглушённое «отложено: —» с
+// подсказкой, а не пустота, которую не отличить от пустой очереди.
 export function PausedBacklog({ ov }: { ov: KafkaOverview }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  if (ov.paused_backlog_available === false) {
+    return (
+      <div className="mt-1.5 flex items-center gap-1 text-[11.5px] text-fg-subtle" title={t("kafka.paused.unavailable_hint")}>
+        <Pause className="h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span>{t("kafka.paused.unavailable")}</span>
+      </div>
+    );
+  }
   const backlog = ov.summary.paused_backlog ?? 0;
   if (backlog <= 0) return null;
   const n = backlog.toLocaleString();

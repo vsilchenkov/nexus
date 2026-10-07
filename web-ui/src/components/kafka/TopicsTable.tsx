@@ -56,13 +56,17 @@ function topicSize(tp: KafkaTopic, sizesAvailable: boolean, hint: string) {
   );
 }
 
-// TopicsTable — таблица всех топиков кластера (§5.6 spec).
+// TopicsTable — таблица всех топиков кластера (§5.6 spec). kafkaAvailable=false
+// (§114.5) — брокер не ответил: пустой список означает «не прочитан», а не
+// «топиков нет».
 export function TopicsTable({
   topics,
   sizesAvailable,
+  kafkaAvailable,
 }: {
   topics: KafkaTopic[];
   sizesAvailable: boolean;
+  kafkaAvailable: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -115,7 +119,7 @@ export function TopicsTable({
             {topics.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-3 py-6 text-center text-fg-muted">
-                  {t("kafka.topics.empty")}
+                  {kafkaAvailable ? t("kafka.topics.empty") : t("kafka.topics.unavailable")}
                 </td>
               </tr>
             )}

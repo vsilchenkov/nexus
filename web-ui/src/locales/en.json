@@ -323,7 +323,9 @@
       "nodes": "paused nodes: {{n}}",
       "more": "and {{n}} more",
       "stuck": "deferred: {{n}}, no paused nodes — should drain within minutes; if it does not shrink, check the Sender",
-      "hint": "Requests of paused nodes wait in nexus.async.paused and are delivered after the node is resumed. They are not consumer lag."
+      "hint": "Requests of paused nodes wait in nexus.async.paused and are delivered after the node is resumed. They are not consumer lag.",
+      "unavailable": "deferred: — (Kafka broker did not respond)",
+      "unavailable_hint": "The paused queue was not read: the broker did not respond within 3 s. Messages are not lost."
     },
     "topics": {
       "title": "Topics",
@@ -336,6 +338,7 @@
       "groups": "Consumer groups",
       "health": "State",
       "empty": "No topics",
+      "unavailable": "Kafka broker did not respond — topic list unavailable",
       "state": {
         "ok": "OK",
         "under_replicated": "under-replicated",
@@ -414,6 +417,10 @@
       "produce_latency_high": {
         "title": "Produce latency elevated",
         "details": "Processing p95 latency is above the threshold. Check broker and Sender load."
+      },
+      "broker_unreachable": {
+        "title": "Kafka broker does not answer offset requests",
+        "details": "Lag is the last value from Prometheus; the paused queue and topics were not read. Check the broker."
       }
     },
     "rate_limited": "Too many requests, try again in a minute.",

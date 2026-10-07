@@ -495,7 +495,12 @@ export type KafkaOverview = {
   };
   health: { severity: KafkaSeverity; reason: string };
   prometheus_available: boolean;
+  // §114.5: kafka_available — все чтения брокера удались (состояние брокеров,
+  // lag основной группы и очереди паузы). paused_backlog_available=false —
+  // очередь паузы настроена, но брокер не ответил: paused_backlog=0 там не
+  // значит «пусто».
   kafka_available: boolean;
+  paused_backlog_available: boolean;
   // §113.7: узлы на паузе (не больше 20, всего — paused_nodes_total). Заполнены
   // только при paused_backlog > 0 и paused_nodes_available: при false список не
   // прочитан, и утверждать «узлов на паузе нет» нельзя.
@@ -529,6 +534,7 @@ export type KafkaTopic = {
 // sizes_available (§75): источник размеров (метрика kafka_log_log_size JMX-агента
 // брокера) ответил. При false нули в size_bytes означают «источника нет», при
 // true — «топик пуст».
+// kafka_available=false (§114.5) — брокер не ответил: список не прочитан, а не пуст.
 export type KafkaTopicsResp = {
   topics: KafkaTopic[];
   kafka_available: boolean;
