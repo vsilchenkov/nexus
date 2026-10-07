@@ -657,6 +657,7 @@ func (a *App) Start(ctx context.Context) error {
 	var (
 		replayHandler  *httpadapter.ReplayHandler
 		logsHandler    *httpadapter.LogsHandler
+		logsExportH    *httpadapter.LogsExportHandler // §115: выгрузка журнала в Excel (nil без CH)
 		orphanHandler  *httpadapter.OrphanHandler
 		teamHandler    *httpadapter.TeamHandler
 		nodeLogMetrics webport.NodeLogMetrics   // §21: per-node KPI/график из CH (nil без CH)
@@ -724,6 +725,12 @@ func (a *App) Start(ctx context.Context) error {
 		logsUC := usecase.NewLogsUsecase(logReader, nodeRepo, a.logger)
 		replayHandler = httpadapter.NewReplayHandler(replayUC, a.logger)
 		logsHandler = httpadapter.NewLogsHandler(logsUC, a.logger)
+		// §115: выгрузка журнала в Excel — тот же читатель через свой порт.
+		// Слоты — на процесс, частота — общим Redis-лимитером (fail-open).
+		logsExportH = httpadapter.NewLogsExportHandler(usecase.NewLogsExportUsecase(usecase.LogsExportDeps{
+			Reader: logReader, Nodes: nodeRepo, Limiter: rl, Audit: auditUC,
+			Limits: logsExportLimits(a.cfg.Web.LogsExport), Logger: a.logger,
+		}), a.cfg.Build.Version, a.logger)
 
 		// Orphan-сканер (Phase 6.7 + 10.D.2 multi-tenancy): таблицы в CH
 		// без узла в Postgres. Сканирует и дропает только в БД allow-list'а
@@ -884,6 +891,7 @@ func (a *App) Start(ctx context.Context) error {
 		DryRun:        dryRunHandler,
 		Replay:        replayHandler,
 		Logs:          logsHandler,
+		LogsExport:    logsExportH,
 		Metrics:       metricsHandler,
 		AppSettings:   appSettingsHandler,
 		Orphan:        orphanHandler,
@@ -1086,5 +1094,17 @@ func kafkaThresholds(c *config.KafkaAlertsSection) usecase.KafkaThresholds {
 		ErrorRateCritical:       c.ErrorRateCritical,
 		ProduceP95WarningMs:     c.ProduceLatencyP95WarningMs,
 		ProduceP95CriticalMs:    c.ProduceLatencyP95CriticalMs,
+	}
+}
+
+// logsExportLimits — секция web.logs_export (§115.6) в лимиты usecase.
+func logsExportLimits(c config.LogsExportSection) usecase.LogsExportLimits {
+	return usecase.LogsExportLimits{
+		MaxRows:       c.MaxRows,
+		MaxBytes:      c.MaxBytes,
+		MaxBodyChars:  c.MaxBodyChars,
+		MaxConcurrent: c.MaxConcurrent,
+		RatePerMinute: c.RateLimitPerUserPerMin,
+		QueryTimeout:  time.Duration(c.QueryTimeoutSec) * time.Second,
 	}
 }

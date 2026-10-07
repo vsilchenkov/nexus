@@ -136,6 +136,33 @@ func Validate(c *Config) error {
 		return fmt.Errorf("web.node_default_max_body_size=%d: must be 1..10000000", c.Web.NodeDefaultMaxBodySize)
 	}
 
+	return validateLogsExport(&c.Web.LogsExport)
+}
+
+// validateLogsExport — web.logs_export (§115.6). Нули сюда не доходят: их
+// заменяют дефолты.
+//
+// Границы не вкусовые. max_rows — строк листа Excel без шапки; max_body_chars —
+// предел ячейки Excel. max_bytes снизу — одна строка с двумя телами по 32 767
+// символов до 4 байт (≈ 256 КиБ) обязана влезать, сверху — файл собирается в
+// памяти браузера. query_timeout_sec сверху — запрос обязан закончиться задолго
+// до proxy_read_timeout nginx (600 с), иначе вместо статуса «НЕПОЛНАЯ» в файле
+// клиент получит оборванный ответ.
+func validateLogsExport(e *LogsExportSection) error {
+	switch {
+	case e.MaxRows < 1 || e.MaxRows > 1_048_575:
+		return fmt.Errorf("web.logs_export.max_rows=%d: must be 1..1048575", e.MaxRows)
+	case e.MaxBytes < 1<<20 || e.MaxBytes > 1<<30:
+		return fmt.Errorf("web.logs_export.max_bytes=%d: must be 1048576..1073741824", e.MaxBytes)
+	case e.MaxBodyChars < 1 || e.MaxBodyChars > 32_767:
+		return fmt.Errorf("web.logs_export.max_body_chars=%d: must be 1..32767", e.MaxBodyChars)
+	case e.MaxConcurrent < 1 || e.MaxConcurrent > 32:
+		return fmt.Errorf("web.logs_export.max_concurrent=%d: must be 1..32", e.MaxConcurrent)
+	case e.RateLimitPerUserPerMin < 1 || e.RateLimitPerUserPerMin > 600:
+		return fmt.Errorf("web.logs_export.rate_limit_per_user_per_min=%d: must be 1..600", e.RateLimitPerUserPerMin)
+	case e.QueryTimeoutSec < 1 || e.QueryTimeoutSec > 300:
+		return fmt.Errorf("web.logs_export.query_timeout_sec=%d: must be 1..300", e.QueryTimeoutSec)
+	}
 	return nil
 }
 

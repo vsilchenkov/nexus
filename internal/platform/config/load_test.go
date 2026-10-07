@@ -271,6 +271,23 @@ func TestValidate(t *testing.T) {
 		{"netbios_suffix_too_long",
 			func(c *Config) { c.Sender.RDNS.NetBIOS.Suffix = strings.Repeat("a", 238) },
 			"sender.rdns.netbios.suffix"},
+		// §115.6: потолки выгрузки журнала в Excel — пределы листа и ячейки
+		// Excel и таймаут запроса заметно меньше proxy_read_timeout nginx.
+		{"logs_export_rows_over_excel_sheet",
+			func(c *Config) { c.Web.LogsExport.MaxRows = 1_048_576 },
+			"web.logs_export.max_rows"},
+		{"logs_export_body_over_excel_cell",
+			func(c *Config) { c.Web.LogsExport.MaxBodyChars = 32_768 },
+			"web.logs_export.max_body_chars"},
+		{"logs_export_bytes_below_one_row",
+			func(c *Config) { c.Web.LogsExport.MaxBytes = 1 << 19 },
+			"web.logs_export.max_bytes"},
+		{"logs_export_timeout_near_nginx",
+			func(c *Config) { c.Web.LogsExport.QueryTimeoutSec = 600 },
+			"web.logs_export.query_timeout_sec"},
+		{"logs_export_negative_concurrency",
+			func(c *Config) { c.Web.LogsExport.MaxConcurrent = -1 },
+			"web.logs_export.max_concurrent"},
 		{"grpc_keepalive_client_disabled_ok",
 			func(c *Config) {
 				c.Receiver.SenderGRPC.KeepaliveTimeSec = 0
@@ -499,6 +516,44 @@ func TestLoad_RepoConfig_NetBIOSFromEnv(t *testing.T) {
 			assert.Equal(t, tc.wantEnabled, cfg.Sender.RDNS.NetBIOS.Enabled)
 			assert.Equal(t, tc.wantSuffix, cfg.Sender.RDNS.NetBIOS.Suffix)
 			assert.Equal(t, 137, cfg.Sender.RDNS.NetBIOS.Port)
+		})
+	}
+}
+
+// §115.6: «сколько выгружать» оператор меняет через .env, а не правкой
+// config/config.yml (файл приезжает с тегом). Без переменных — дефолты ТЗ.
+func TestLoad_RepoConfig_LogsExportFromEnv(t *testing.T) {
+	// t.Parallel() несовместим с t.Setenv.
+	repoConfig := filepath.Join("..", "..", "..", "config", "config.yml")
+	tests := []struct {
+		name      string
+		rows      string
+		bytes     string
+		wantRows  int
+		wantBytes int64
+	}{
+		{name: "env_absent_defaults", wantRows: 50_000, wantBytes: 100 << 20},
+		{name: "env_set", rows: "200000", bytes: "524288000", wantRows: 200_000, wantBytes: 500 << 20},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range map[string]string{"LOGS_EXPORT_MAX_ROWS": tc.rows, "LOGS_EXPORT_MAX_BYTES": tc.bytes} {
+				if v == "" {
+					t.Setenv(k, "") // регистрирует восстановление прежнего значения
+					require.NoError(t, os.Unsetenv(k))
+					continue
+				}
+				t.Setenv(k, v)
+			}
+			cfg, _, err := Load(Flags{ConfigPath: repoConfig}, t.TempDir())
+			require.NoError(t, err)
+			e := cfg.Web.LogsExport
+			assert.Equal(t, tc.wantRows, e.MaxRows)
+			assert.Equal(t, tc.wantBytes, e.MaxBytes)
+			assert.Equal(t, 32_767, e.MaxBodyChars)
+			assert.Equal(t, 2, e.MaxConcurrent)
+			assert.Equal(t, 5, e.RateLimitPerUserPerMin)
+			assert.Equal(t, 60, e.QueryTimeoutSec)
 		})
 	}
 }

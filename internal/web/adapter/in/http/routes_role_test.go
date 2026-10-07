@@ -71,6 +71,8 @@ func newRoleEngine(role domain.UserRole, viaToken bool) *gin.Engine {
 		Team:          &TeamHandler{},
 		AuditRevert:   &AuditRevertHandler{},
 		Backup:        &BackupHandler{},
+		Logs:          &LogsHandler{},
+		LogsExport:    &LogsExportHandler{},
 	}
 	RegisterAPI(r, h, mw)
 	return r
@@ -318,6 +320,44 @@ func TestBackupRoutes_APITokenForbidden(t *testing.T) {
 	for _, rt := range backupRoutes {
 		t.Run(rt.path, func(t *testing.T) {
 			assert.Equal(t, http.StatusForbidden, roleStatus(r, rt.method, rt.path))
+		})
+	}
+}
+
+// logsExportRoutes — выгрузка журнала в Excel и её оценка (§115.5).
+var logsExportRoutes = []string{
+	"/api/nodes/n1/logs/export.xlsx",
+	"/api/nodes/n1/logs/export/estimate",
+}
+
+// TestLogsExportRoutes_OpenToEverySession: выгрузка доступна любой роли, как и
+// чтение журнала, которое она повторяет (§115.5). ≠404 — маршрут
+// зарегистрирован и не перекрыт соседним `/nodes/:id/logs/...`.
+func TestLogsExportRoutes_OpenToEverySession(t *testing.T) {
+	t.Parallel()
+	for _, role := range []domain.UserRole{
+		domain.UserRoleViewer, domain.UserRoleOperator,
+		domain.UserRoleManager, domain.UserRoleAdmin,
+	} {
+		r := roleEngine(role)
+		for _, path := range logsExportRoutes {
+			t.Run(string(role)+" "+path, func(t *testing.T) {
+				code := roleStatus(r, http.MethodGet, path)
+				assert.NotEqual(t, http.StatusForbidden, code, "%s обязан выгружать журнал", role)
+				assert.NotEqual(t, http.StatusNotFound, code, "маршрут %s не зарегистрирован", path)
+			})
+		}
+	}
+}
+
+// TestLogsExportRoutes_APITokenForbidden: массовая выгрузка тел по API-токену
+// вне рамок (§115.11) — только браузерная сессия, как live-tail.
+func TestLogsExportRoutes_APITokenForbidden(t *testing.T) {
+	t.Parallel()
+	r := newRoleEngine(domain.UserRoleAdmin, true)
+	for _, path := range logsExportRoutes {
+		t.Run(path, func(t *testing.T) {
+			assert.Equal(t, http.StatusForbidden, roleStatus(r, http.MethodGet, path))
 		})
 	}
 }

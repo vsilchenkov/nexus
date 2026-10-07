@@ -639,6 +639,26 @@ type WebSection struct {
 	// работает как прежде — Web не обязан знать про Sender ради базового
 	// сценария. Тип общий с receiver.sender_grpc.
 	SenderGRPC ReceiverSenderGRPCConfig `yaml:"sender_grpc"`
+	// LogsExport — выгрузка журнала узла в Excel (§115.6).
+	LogsExport LogsExportSection `yaml:"logs_export"`
+}
+
+// LogsExportSection — потолки выгрузки журнала узла в Excel (§115.6). Ноль
+// поля → дефолт (defaults.go). Меняется только конфигом, нужен рестарт Web.
+type LogsExportSection struct {
+	// MaxRows — записей в файле (≤ 1 048 575 — строк листа Excel без шапки).
+	MaxRows int `yaml:"max_rows"`
+	// MaxBytes — бюджет текста ячеек, байт UTF-8: на исчерпании выгрузка
+	// останавливается со статусом «ограничена объёмом».
+	MaxBytes int64 `yaml:"max_bytes"`
+	// MaxBodyChars — символов тела в ячейке (≤ 32 767 — предел ячейки Excel).
+	MaxBodyChars int `yaml:"max_body_chars"`
+	// MaxConcurrent — одновременных выгрузок на реплику Web.
+	MaxConcurrent int `yaml:"max_concurrent"`
+	// RateLimitPerUserPerMin — запусков выгрузки на пользователя в минуту.
+	RateLimitPerUserPerMin int `yaml:"rate_limit_per_user_per_min"`
+	// QueryTimeoutSec — таймаут каждого запроса к ClickHouse.
+	QueryTimeoutSec int `yaml:"query_timeout_sec"`
 }
 
 // KafkaAlertsSection — пороги индикации (жёлтый/красный) для экрана

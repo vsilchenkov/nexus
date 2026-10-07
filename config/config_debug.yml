@@ -240,3 +240,12 @@ web:
   swagger_enabled: true
   allow_version_override: true                   # §34.3: dev — разрешаем ручной override версии в настройках.
   dev_mode: true                                 # §85.8: стенд — форма входа подставляет логин `admin` (на бою префилла нет).
+  # §115: выгрузка журнала в Excel. Для проверки статусов «ограничена строками/объёмом»
+  # на стенде понижать max_rows / max_bytes (min 1048576).
+  logs_export:
+    max_rows: 50000
+    max_bytes: 104857600
+    max_body_chars: 32767
+    max_concurrent: 2
+    rate_limit_per_user_per_min: 100
+    query_timeout_sec: 60

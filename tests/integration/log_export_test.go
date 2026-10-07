@@ -3,8 +3,13 @@
 package integration
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -12,11 +17,16 @@ import (
 
 	chgo "github.com/ClickHouse/clickhouse-go/v2"
 	chdriver "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	"nexus/internal/domain"
 	"nexus/internal/platform/clickhouse"
+	"nexus/internal/platform/i18n"
 	"nexus/internal/platform/logging"
+	httpadapter "nexus/internal/web/adapter/in/http"
 	webch "nexus/internal/web/adapter/out/clickhouse"
+	"nexus/internal/web/usecase"
 	"nexus/internal/web/usecase/port"
 )
 
@@ -297,4 +307,89 @@ func TestLogReader_Export_RowsPrunedOnExternalTable(t *testing.T) {
 	// а не сутки (86 400) и не таблица (200 000).
 	require.Less(t, readRows*10, uint64(total),
 		"батч обязан читать гранулы окна ключей, а не день или всю внешнюю таблицу")
+}
+
+// exportNodeGetter — узел выгрузки без PostgreSQL.
+type exportNodeGetter struct{ node *domain.Node }
+
+func (g exportNodeGetter) Get(context.Context, string) (*domain.Node, error) { return g.node, nil }
+
+// exportAuditSpy — запись аудита выгрузки.
+type exportAuditSpy struct{ details []map[string]any }
+
+func (a *exportAuditSpy) Log(_ context.Context, _ usecase.Actor, action, _, _ string, details map[string]any) {
+	if action == domain.ActionNodeLogsExport {
+		a.details = append(a.details, details)
+	}
+}
+
+// TestLogReader_ExportXLSX_EndToEnd — §115 целиком: ClickHouse → usecase →
+// handler → книга XLSX в ответе. Мегабайтное тело приезжает в ячейку
+// урезанным с маркером, бюджет объёма останавливает выгрузку, лист
+// «Параметры» говорит, почему файл неполный, аудит записан.
+func TestLogReader_ExportXLSX_EndToEnd(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+	conn, _, cleanup := startClickHouse(t, ctx)
+	defer cleanup()
+
+	const table = "nexus_default.test_export_xlsx"
+	createNodeLogTable(t, ctx, conn, table)
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	runs := []exportRun{
+		{id: "small", at: base, done: true, status: 200, req: `{"a":1}`},
+		{id: "huge", at: base.Add(time.Second), done: false, status: 500, req: strings.Repeat("я", 1<<20)},
+	}
+	for i := range 40 {
+		runs = append(runs, exportRun{id: fmt.Sprintf("bulk-%02d", i), at: base.Add(-time.Duration(i+1) * time.Minute),
+			done: true, status: 200, req: strings.Repeat("x", 30_000)})
+	}
+	insertExportRuns(t, ctx, conn, table, runs)
+
+	audit := &exportAuditSpy{}
+	uc := usecase.NewLogsExportUsecase(usecase.LogsExportDeps{
+		Reader: webch.NewLogReader(clickhouse.StaticProvider(conn), logging.NewNoop()),
+		Nodes:  exportNodeGetter{node: &domain.Node{ID: exportNodeID, Path: "gate/xlsx", ClickHouseTable: table}},
+		Audit:  audit,
+		Limits: usecase.LogsExportLimits{
+			MaxRows: 1000, MaxBytes: 1 << 20, MaxBodyChars: 32_767, MaxConcurrent: 1, QueryTimeout: time.Minute,
+		},
+		Logger: logging.NewNoop(),
+	})
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(i18n.GinMiddleware())
+	r.GET("/api/nodes/:id/logs/export.xlsx", httpadapter.NewLogsExportHandler(uc, "test", logging.NewNoop()).Export)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes/"+exportNodeID+"/logs/export.xlsx?bodies=1&tz=Europe/Moscow", nil)
+	req.Header.Set("Accept-Language", "ru")
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, "42", w.Header().Get("X-Nexus-Export-Rows"))
+
+	zr, err := zip.NewReader(bytes.NewReader(w.Body.Bytes()), int64(w.Body.Len()))
+	require.NoError(t, err)
+	parts := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		require.NoError(t, err)
+		data, err := io.ReadAll(rc)
+		require.NoError(t, err)
+		require.NoError(t, rc.Close())
+		parts[f.Name] = string(data)
+	}
+	logs := parts["xl/worksheets/sheet1.xml"]
+	require.Contains(t, logs, "…[обрезано, всего символов: 1048576]", "мегабайтное тело урезано с маркером")
+	require.Less(t, len(logs), 2<<20, "в лист попадает урезанное тело, а не мегабайты")
+	require.Contains(t, logs, `{"a":1}`)
+	// Бюджет 1 МиБ: huge (~64 КиБ ячейки) + small + ~32 строки по 30 000 байт.
+	rowsInSheet := strings.Count(logs, "<row ") - 1
+	require.Greater(t, rowsInSheet, 2)
+	require.Less(t, rowsInSheet, 42, "бюджет объёма останавливает выгрузку")
+	require.Contains(t, parts["xl/worksheets/sheet2.xml"], "ограничена объёмом")
+
+	require.Len(t, audit.details, 1)
+	require.Equal(t, "limited_bytes", audit.details[0]["result"])
+	require.Equal(t, rowsInSheet, audit.details[0]["rows"])
 }

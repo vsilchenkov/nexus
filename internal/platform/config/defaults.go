@@ -414,6 +414,30 @@ func applyDefaults(c *Config) {
 		c.Web.KafkaMonitorRateLimitPerMin = 60 // §9 spec: лимит /api/kafka/* на пользователя
 	}
 	applyKafkaAlertsDefaults(&c.Web.KafkaAlerts)
+	applyLogsExportDefaults(&c.Web.LogsExport)
+}
+
+// applyLogsExportDefaults — потолки выгрузки журнала в Excel (§115.6).
+// Нулевое значение поля → дефолт ТЗ.
+func applyLogsExportDefaults(e *LogsExportSection) {
+	if e.MaxRows == 0 {
+		e.MaxRows = 50_000
+	}
+	if e.MaxBytes == 0 {
+		e.MaxBytes = 100 << 20 // 100 МиБ текста ячеек
+	}
+	if e.MaxBodyChars == 0 {
+		e.MaxBodyChars = 32_767 // предел ячейки Excel
+	}
+	if e.MaxConcurrent == 0 {
+		e.MaxConcurrent = 2
+	}
+	if e.RateLimitPerUserPerMin == 0 {
+		e.RateLimitPerUserPerMin = 5
+	}
+	if e.QueryTimeoutSec == 0 {
+		e.QueryTimeoutSec = 60
+	}
 }
 
 // applyKafkaAlertsDefaults — пороги индикации экрана Kafka-мониторинга (§6 spec).

@@ -32,8 +32,14 @@ func Empty() Cell { return Cell{} }
 
 // Str — текст. Длиннее MaxCellChars обрезается (см. Writer.TruncatedCells);
 // чтобы обрезка была видна в самой ячейке, урежьте значение заранее через
-// Truncate с маркером.
-func Str(s string) Cell { return Cell{k: kStr, s: s} }
+// Truncate с маркером. Пустая строка — пустая ячейка: в Excel они неотличимы,
+// а записанная пустая строка стоит ~60 байт разметки на каждую строку листа.
+func Str(s string) Cell {
+	if s == "" {
+		return Empty()
+	}
+	return Cell{k: kStr, s: s}
+}
 
 // Int — целое число.
 func Int(n int64) Cell { return Cell{k: kInt, n: n} }

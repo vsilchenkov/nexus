@@ -202,6 +202,7 @@ func TestSerialAndTimeCells(t *testing.T) {
 	assert.Equal(t, kEmpty, DateTime(time.Time{}).k)
 	assert.Equal(t, kEmpty, Date(time.Date(1899, 12, 31, 0, 0, 0, 0, time.UTC)).k)
 	assert.Equal(t, kEmpty, Float(nanValue()).k)
+	assert.Equal(t, kEmpty, Str("").k, "пустая строка не пишется ячейкой")
 }
 
 func nanValue() float64 {
