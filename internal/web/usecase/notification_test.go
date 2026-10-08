@@ -65,6 +65,9 @@ func (p notifProm) NodeThroughput(context.Context, time.Time, time.Time) (map[po
 func (p notifProm) KafkaNodeThroughput(context.Context, time.Time, time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
 	return nil, nil
 }
+func (p notifProm) NodeFailures(context.Context, time.Time, time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
+	return nil, nil
+}
 func (p notifProm) NodeErrors(context.Context, time.Duration) (map[port.NodeKey]float64, error) {
 	return p.errs, p.err
 }

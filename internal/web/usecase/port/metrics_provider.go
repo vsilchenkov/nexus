@@ -210,8 +210,14 @@ type PromMetrics interface {
 	NodeThroughput(ctx context.Context, since, until time.Time) (map[NodeKey]NodeThroughput, error)
 
 	// KafkaNodeThroughput — как NodeThroughput, но только async-трафик
-	// (method="requestAsync", §113.5): топ узлов страницы Kafka.
+	// (method="requestAsync", §113.5): «Топ продюсеров» страницы Kafka.
 	KafkaNodeThroughput(ctx context.Context, since, until time.Time) (map[NodeKey]NodeThroughput, error)
+
+	// NodeFailures — per-node исходящие (Out) и ошибки (Errors) Sender'а за
+	// период (since, until] по ВСЕМУ трафику, sync и async: «Top failures»
+	// страницы Kafka. In и P95ms не заполняются — блоку они не нужны, а p95 по
+	// гистограмме на длинном окне — самый дорогой запрос из четырёх.
+	NodeFailures(ctx context.Context, since, until time.Time) (map[NodeKey]NodeThroughput, error)
 
 	// NodeErrors — per-node число «незавершённых» вызовов (done=0) за окно
 	// из nexus_request_incomplete_total. Ключ — пара (team, node).

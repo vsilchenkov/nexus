@@ -30,18 +30,23 @@ type fakeProm struct {
 	// §113.5: async-срез для страницы Kafka — отдельное поле, чтобы тест ByNode
 	// краснел, если usecase снова возьмёт общий (sync + async) throughput.
 	asyncThroughput map[port.NodeKey]port.NodeThroughput
-	nodeErrs        map[port.NodeKey]float64
-	nodeErrErr      error
-	lastErrs        map[port.NodeKey]float64
-	lastErrsErr     error
-	series          map[port.NodeKey][]float64
-	seriesErr       error
-	kafkaOv         port.KafkaSummary
-	kafkaOvErr      error
-	kafkaSeries     map[string][]port.KafkaPoint
-	kafkaSerErr     error
-	topicSizes      map[string]int64
-	topicSizeErr    error
+	// failures — срез всего трафика (sync + async) для «Top failures»: отдельно
+	// от asyncThroughput, чтобы тест краснел, если блок ошибок снова возьмёт
+	// async-срез (регрессия 1.41.0).
+	failures     map[port.NodeKey]port.NodeThroughput
+	failuresErr  error
+	nodeErrs     map[port.NodeKey]float64
+	nodeErrErr   error
+	lastErrs     map[port.NodeKey]float64
+	lastErrsErr  error
+	series       map[port.NodeKey][]float64
+	seriesErr    error
+	kafkaOv      port.KafkaSummary
+	kafkaOvErr   error
+	kafkaSeries  map[string][]port.KafkaPoint
+	kafkaSerErr  error
+	topicSizes   map[string]int64
+	topicSizeErr error
 }
 
 func (f *fakeProm) GlobalTotals(_ context.Context, _ time.Duration, team string) (port.GlobalTotals, error) {
@@ -54,6 +59,9 @@ func (f *fakeProm) NodeThroughput(_ context.Context, _, _ time.Time) (map[port.N
 }
 func (f *fakeProm) KafkaNodeThroughput(_ context.Context, _, _ time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
 	return f.asyncThroughput, f.thrErr
+}
+func (f *fakeProm) NodeFailures(_ context.Context, _, _ time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
+	return f.failures, f.failuresErr
 }
 func (f *fakeProm) NodeErrors(_ context.Context, _ time.Duration) (map[port.NodeKey]float64, error) {
 	return f.nodeErrs, f.nodeErrErr

@@ -247,9 +247,16 @@ export default function AuditLog() {
                     <Chip tone={actionTone(e.action)}>{e.action}</Chip>
                     <RevertStateChip mark={e.revert} />
                   </td>
+                  {/* <wbr> — перенос после «/» на узком экране: неразрывная
+                      «rejected_group/70fef870» отнимала ширину у «Деталей». */}
                   <td className="px-3 py-2 font-mono text-xs text-fg-muted">
                     {e.target_type || "—"}
-                    {e.target_id ? `/${e.target_id.slice(0, 8)}` : ""}
+                    {e.target_id && (
+                      <>
+                        /<wbr />
+                        {e.target_id.slice(0, 8)}
+                      </>
+                    )}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-fg-muted">{e.ip_address}</td>
                   <td className="max-w-lg px-3 py-2">

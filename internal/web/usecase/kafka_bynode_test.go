@@ -38,12 +38,19 @@ func (f *fakeNodePaths) IDsByPaths(_ context.Context, paths []string) (map[strin
 // §98.2/§101.9: строки top-узлов получают id по точной паре (команда, путь).
 func TestKafkaByNode_ResolvesNodeIDs(t *testing.T) {
 	t.Parallel()
-	prom := &fakeProm{asyncThroughput: map[port.NodeKey]port.NodeThroughput{
-		{Team: "fin", Path: "billing"}:    {Out: 800, Errors: 0},
-		{Team: "geo", Path: "geo/notify"}: {Out: 200, Errors: 7},
-		{Path: metrics.NodeUnresolved}:    {Out: 50, Errors: 5},
-		{Team: "fin", Path: "gone"}:       {Out: 30, Errors: 3},
-	}}
+	prom := &fakeProm{
+		asyncThroughput: map[port.NodeKey]port.NodeThroughput{
+			{Team: "fin", Path: "billing"}:    {Out: 800},
+			{Team: "geo", Path: "geo/notify"}: {Out: 200},
+			{Path: metrics.NodeUnresolved}:    {Out: 50},
+			{Team: "fin", Path: "gone"}:       {Out: 30},
+		},
+		failures: map[port.NodeKey]port.NodeThroughput{
+			{Team: "geo", Path: "geo/notify"}: {Out: 200, Errors: 7},
+			{Path: metrics.NodeUnresolved}:    {Out: 50, Errors: 5},
+			{Team: "fin", Path: "gone"}:       {Out: 30, Errors: 3},
+		},
+	}
 	// "gone" — узла уже нет: резолвер его не отдаёт.
 	nodes := &fakeNodeKeys{refs: []port.NodeKeyRef{
 		{ID: "n-1", Key: port.NodeKey{Team: "fin", Path: "billing"}},
@@ -83,10 +90,16 @@ func TestKafkaByNode_ResolvesNodeIDs(t *testing.T) {
 // строки, у каждой своя команда, число и ссылка.
 func TestKafkaByNode_SameNamePathsInTwoTeams(t *testing.T) {
 	t.Parallel()
-	prom := &fakeProm{asyncThroughput: map[port.NodeKey]port.NodeThroughput{
-		{Team: "messengers", Path: "telegram"}: {Out: 7200, Errors: 1747},
-		{Team: "webhook", Path: "telegram"}:    {Out: 220, Errors: 8},
-	}}
+	prom := &fakeProm{
+		asyncThroughput: map[port.NodeKey]port.NodeThroughput{
+			{Team: "messengers", Path: "telegram"}: {Out: 7200},
+			{Team: "webhook", Path: "telegram"}:    {Out: 220},
+		},
+		failures: map[port.NodeKey]port.NodeThroughput{
+			{Team: "messengers", Path: "telegram"}: {Out: 7200, Errors: 1747},
+			{Team: "webhook", Path: "telegram"}:    {Out: 220, Errors: 8},
+		},
+	}
 	nodes := &fakeNodeKeys{refs: []port.NodeKeyRef{
 		{ID: "id-messengers", Key: port.NodeKey{Team: "messengers", Path: "telegram"}},
 		{ID: "id-webhook", Key: port.NodeKey{Team: "webhook", Path: "telegram"}},
@@ -114,16 +127,20 @@ func TestKafkaByNode_SameNamePathsInTwoTeams(t *testing.T) {
 
 // §101.9: в окне выката часть трафика — ряды до обновления, без команды.
 // Однозначный путь сворачивается в строку узла (числа и порядок — после
-// свёртки), неоднозначный остаётся строкой без команды и без ссылки.
+// свёртки), неоднозначный остаётся строкой без команды и без ссылки. Свёртка
+// идёт в обоих срезах, а пути у базы спрашиваются одним запросом.
 func TestKafkaByNode_LegacyRowsFold(t *testing.T) {
 	t.Parallel()
-	prom := &fakeProm{asyncThroughput: map[port.NodeKey]port.NodeThroughput{
-		{Team: "fin", Path: "billing"}:  {Out: 100, Errors: 1},
-		{Path: "billing"}:               {Out: 900, Errors: 2},
-		{Team: "msg", Path: "telegram"}: {Out: 50},
-		{Path: "telegram"}:              {Out: 400, Errors: 412},
-		{Path: metrics.NodeUnresolved}:  {Out: 10},
-	}}
+	slice := func() map[port.NodeKey]port.NodeThroughput {
+		return map[port.NodeKey]port.NodeThroughput{
+			{Team: "fin", Path: "billing"}:  {Out: 100, Errors: 1},
+			{Path: "billing"}:               {Out: 900, Errors: 2},
+			{Team: "msg", Path: "telegram"}: {Out: 50},
+			{Path: "telegram"}:              {Out: 400, Errors: 412},
+			{Path: metrics.NodeUnresolved}:  {Out: 10},
+		}
+	}
+	prom := &fakeProm{asyncThroughput: slice(), failures: slice()}
 	nodes := &fakeNodeKeys{refs: []port.NodeKeyRef{
 		{ID: "n-bill", Key: port.NodeKey{Team: "fin", Path: "billing"}},
 		{ID: "n-tg-msg", Key: port.NodeKey{Team: "msg", Path: "telegram"}},
@@ -148,6 +165,23 @@ func TestKafkaByNode_LegacyRowsFold(t *testing.T) {
 	assert.Equal(t, NodeFailure{NodePath: "telegram", Failed: 412, Rate: r.TopFailures[0].Rate}, r.TopFailures[0])
 	assert.Equal(t, "fin", r.TopFailures[1].Team)
 	assert.EqualValues(t, 3, r.TopFailures[1].Failed)
+
+	// Каждый путь спрошен дважды: один раз свёрткой (хотя ряды до §101 есть в
+	// обоих срезах) и один раз резолвом id строк fin/billing и msg/telegram.
+	// Свёртка по каждому срезу отдельно дала бы по три.
+	asked := nodes.askedPaths()
+	assert.Equal(t, 2, countOf(asked, "telegram"), asked)
+	assert.Equal(t, 2, countOf(asked, "billing"), asked)
+}
+
+func countOf(xs []string, x string) int {
+	n := 0
+	for _, v := range xs {
+		if v == x {
+			n++
+		}
+	}
+	return n
 }
 
 // Резолвер — украшение: без него и при его ошибке экран обязан работать, а ряды

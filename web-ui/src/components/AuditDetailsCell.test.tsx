@@ -46,6 +46,40 @@ describe("AuditDetailsCell (§108)", () => {
     expect(screen.getByText("http://b").tagName).not.toBe("S");
   });
 
+  // Раскладку jsdom не считает — тест держит причину бага: в таблице
+  // «поле | Было | Стало» с break-all колонке значения доставалось два-три
+  // символа, и длинный async_ack_spec шёл по буквам. Длинная пара теперь —
+  // строками «Было»/«Стало» под полем, короткая — одной строкой со стрелкой.
+  it("длинная пара — строками под полем, короткая — в строку", () => {
+    const long = 'status=0 content_type=application/json body={"confirmedLogId":"${body.logs[*].logId | max}"}';
+    const { container } = render(
+      <AuditDetailsCell
+        action="node.update"
+        details={{
+          async_ack_spec: { before: long, after: "" },
+          status: { before: "paused", after: "enabled" },
+          auth_credentials: "changed",
+        }}
+      />,
+    );
+    expect(container.querySelector("table")).toBeNull();
+    expect(container.querySelector(".break-all")).toBeNull();
+
+    // Подписи — только у длинной пары, по одной.
+    expect(screen.getAllByText("audit.diff.before")).toHaveLength(1);
+    expect(screen.getAllByText("audit.diff.after")).toHaveLength(1);
+    const longValue = screen.getByText(long);
+    expect(longValue.className).toContain("[overflow-wrap:anywhere]");
+    expect(longValue.previousElementSibling?.textContent).toBe("audit.diff.before");
+    expect(screen.getByText("(empty)").previousElementSibling?.textContent).toBe("audit.diff.after");
+
+    // Короткая пара: «paused → enabled» рядом с именем поля.
+    const inline = screen.getByText("paused").parentElement;
+    expect(inline?.textContent).toBe("paused → enabled");
+    expect(inline?.previousElementSibling?.textContent).toBe("status");
+    expect(screen.getByText("changed").previousElementSibling?.textContent).toBe("auth_credentials");
+  });
+
   it("без разметки — прежний вид", () => {
     const { container } = render(
       <AuditDetailsCell action="node.update" details={{ status: { before: "paused", after: "enabled" } }} />,

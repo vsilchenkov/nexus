@@ -259,25 +259,59 @@ func TestKafkaTopics_SizesDegradeOnPromError(t *testing.T) {
 	assert.Equal(t, int64(42), r.Topics[0].MessagesEstimate)
 }
 
+// «Топ продюсеров» — только async (§113.5), «Top failures» — весь трафик.
+// Регрессия 1.41.0: оба блока строились из async-среза, и ошибки sync-узлов
+// пропали со страницы — на бою блок показывал «Никаких ошибок» при живых
+// ошибках sync-узлов.
 func TestKafkaByNode_TopProducersAndFailures(t *testing.T) {
 	t.Parallel()
-	prom := &fakeProm{asyncThroughput: map[port.NodeKey]port.NodeThroughput{
-		{Team: "fin", Path: "billing"}:    {Out: 800, Errors: 0},
-		{Team: "geo", Path: "geo/notify"}: {Out: 200, Errors: 0},
-		{Team: "old", Path: "old/legacy"}: {Out: 100, Errors: 50},
-	}}
+	prom := &fakeProm{
+		asyncThroughput: map[port.NodeKey]port.NodeThroughput{
+			{Team: "fin", Path: "billing"}:    {Out: 800},
+			{Team: "geo", Path: "geo/notify"}: {Out: 200},
+			{Team: "old", Path: "old/legacy"}: {Out: 100, Errors: 50},
+		},
+		failures: map[port.NodeKey]port.NodeThroughput{
+			{Team: "fin", Path: "billing"}:    {Out: 800},
+			{Team: "old", Path: "old/legacy"}: {Out: 100, Errors: 50},
+			// sync-узел: в Kafka его нет, ошибки есть.
+			{Team: "mcp", Path: "mcp-1c-vika"}: {Out: 40, Errors: 10},
+		},
+	}
 	uc := NewKafkaMonitorUsecase(prom, nil, nil, nil, defaultTh(), logging.NewNoop())
 	since, until := kafkaWindow()
 	r := uc.ByNode(context.Background(), since, until)
 
 	require.True(t, r.PrometheusAvailable)
-	require.NotEmpty(t, r.TopProducers)
+	require.Len(t, r.TopProducers, 3)
 	assert.Equal(t, "billing", r.TopProducers[0].NodePath)
 	assert.InDelta(t, 800.0/1100.0, r.TopProducers[0].Share, 1e-9)
-	require.Len(t, r.TopFailures, 1)
+	for _, p := range r.TopProducers {
+		assert.NotEqual(t, "mcp-1c-vika", p.NodePath, "sync-узел в продюсерах Kafka")
+	}
+
+	require.Len(t, r.TopFailures, 2)
 	assert.Equal(t, "old/legacy", r.TopFailures[0].NodePath)
 	// §113.8: ошибки — подмножество исходящих, знаменатель — Out.
 	assert.InDelta(t, 50.0/100.0, r.TopFailures[0].Rate, 1e-9)
+	assert.Equal(t, NodeFailure{NodePath: "mcp-1c-vika", Team: "mcp", Failed: 10, Rate: 0.25}, r.TopFailures[1])
+}
+
+// Отказ запроса ошибок — деградация всего ответа, а не пустой «Top failures»
+// рядом с живыми продюсерами: пустой блок экран показывает как «ошибок нет».
+func TestKafkaByNode_FailuresQueryDown(t *testing.T) {
+	t.Parallel()
+	prom := &fakeProm{
+		asyncThroughput: map[port.NodeKey]port.NodeThroughput{{Team: "fin", Path: "billing"}: {Out: 800}},
+		failuresErr:     errors.New("prometheus: timeout"),
+	}
+	uc := NewKafkaMonitorUsecase(prom, nil, nil, nil, defaultTh(), logging.NewNoop())
+	since, until := kafkaWindow()
+	r := uc.ByNode(context.Background(), since, until)
+
+	assert.False(t, r.PrometheusAvailable)
+	assert.Empty(t, r.TopProducers)
+	assert.Empty(t, r.TopFailures)
 }
 
 // TestTopFailures_Rate (§113.8): доля ошибок — errors/out, не выше 100%.
