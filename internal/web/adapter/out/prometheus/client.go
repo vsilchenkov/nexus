@@ -249,9 +249,9 @@ func (c *Client) KafkaNodeThroughput(ctx context.Context, since, until time.Time
 }
 
 // NodeFailures — исходящие и ошибки Sender'а по узлам за период по всему
-// трафику: «Top failures» страницы Kafka показывает и sync-узлы. Фильтр
-// method="requestAsync" здесь — регрессия 1.41.0: блок пустел при ошибках
-// sync-узлов.
+// трафику: «Top failures» страницы Kafka показывает и sync-узлы. Фильтра
+// method="requestAsync" здесь нет намеренно: в 1.41.0 блок брал async-срез и
+// пустел при живых ошибках sync-узлов.
 func (c *Client) NodeFailures(ctx context.Context, since, until time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
 	out, errs, err := c.senderOutErrors(ctx, promRange(until.Sub(since)), until, "")
 	if err != nil {
