@@ -8,7 +8,8 @@ import { formatAuditValue as formatValue } from "./audit/revert";
 // AuditDetailsCell — рендер ячейки `details` в Audit log (§7.13).
 // Для action="node.update" и "node.revert" (§108) details имеет форму
 // {field: {before, after}} (см. internal/web/usecase/node.go diffNodes) —
-// показываем компактную двухколоночную таблицу. Для остальных action — JSON в
+// показываем компактный diff: короткая пара «было → стало» в строку, длинная —
+// строками «Было»/«Стало» под именем поля. Для остальных action — JSON в
 // раскрывающемся блоке (как раньше).
 //
 // overwritten — текущие значения полей, перебитых после записи (разметка
@@ -55,61 +56,103 @@ function DiffTable({
       </span>
     );
   }
+  // Сетка «поле | значение», а не таблица «поле | Было | Стало». В колонке
+  // «Детали» журнала на экране ~1200px остаётся ~290px: неразрывные соседние
+  // колонки занимают остальное, а длинное имя поля — ещё ~170px из этих 290.
+  // Две колонки значений в оставшемся месте шли по две-три буквы в строке
+  // (break-all), а минимальная ширина давала горизонтальную прокрутку журнала.
+  // Поэтому короткая пара — одной строкой «было → стало», длинная — строками
+  // «Было»/«Стало» под именем поля на всю ширину колонки.
   return (
-    <table className="w-full text-[11px] font-mono border-collapse">
-      <thead>
-        <tr className="text-fg-muted">
-          <th className="text-left pr-2 pb-1 font-normal w-px whitespace-nowrap"></th>
-          <th className="text-left pr-2 pb-1 font-normal">
-            {t("audit.diff.before")}
-          </th>
-          <th className="text-left pb-1 font-normal">
-            {t("audit.diff.after")}
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {fields.map(([k, v]) => {
-          if (isDiff(v)) {
-            return (
-              <tr key={k} className="align-top">
-                <td className="pr-2 py-0.5 text-fg-muted whitespace-nowrap">
-                  {k}
-                </td>
-                <td className="pr-2 py-0.5 text-err break-all">
-                  {formatValue(v.before)}
-                </td>
-                <td className="py-0.5 text-ok break-all">
-                  {overwritten && k in overwritten ? (
-                    <span
-                      className="text-fg-muted"
-                      title={t("audit.diff.now", { value: formatValue(overwritten[k]) })}
-                    >
-                      <s>{formatValue(v.after)}</s>
-                      <Info className="ml-1 inline h-3 w-3 text-warn" />
-                    </span>
-                  ) : (
-                    formatValue(v.after)
-                  )}
-                </td>
-              </tr>
-            );
-          }
-          // Спецслучай: "auth_credentials": "changed" — рендерим как маркер.
-          return (
-            <tr key={k} className="align-top">
-              <td className="pr-2 py-0.5 text-fg-muted whitespace-nowrap">
-                {k}
-              </td>
-              <td colSpan={2} className="py-0.5 text-fg-muted italic">
-                {formatValue(v)}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-2 font-mono text-[11px]">
+      {fields.map(([k, v]) => (
+        <DiffRow key={k} name={k} value={v} overwritten={overwritten} />
+      ))}
+    </div>
   );
+}
+
+// INLINE_MAX — предел суммарной длины «было» и «стало» для записи одной
+// строкой: «paused → enabled», «none → basic». Длиннее — строками под полем.
+const INLINE_MAX = 32;
+
+// wrap — перенос по пробелам; слово рвётся, только когда не влезает в строку
+// (URL, JSON без пробелов). break-all рвал бы и там, где есть пробел.
+const wrap = "[overflow-wrap:anywhere]";
+
+// DiffRow — поле DiffTable: короткая пара одной строкой, длинная — строками
+// «Было»/«Стало» под именем поля; маркер вида "auth_credentials": "changed" —
+// курсивом рядом с полем.
+function DiffRow({
+  name,
+  value,
+  overwritten,
+}: {
+  name: string;
+  value: unknown;
+  overwritten?: Record<string, unknown>;
+}) {
+  const { t } = useTranslation();
+  const key = <span className="whitespace-nowrap py-0.5 text-fg-muted">{name}</span>;
+  if (!isDiff(value)) {
+    return (
+      <>
+        {key}
+        <span className={cn("py-0.5 italic text-fg-muted", wrap)}>{formatValue(value)}</span>
+      </>
+    );
+  }
+  const before = formatValue(value.before);
+  const after = <AfterValue name={name} value={value.after} overwritten={overwritten} />;
+  if (before.length + formatValue(value.after).length <= INLINE_MAX) {
+    return (
+      <>
+        {key}
+        <span className={cn("py-0.5", wrap)}>
+          <span className="text-err">{before}</span>
+          <span className="text-fg-muted"> → </span>
+          {after}
+        </span>
+      </>
+    );
+  }
+  return (
+    <>
+      <span className="col-span-2 whitespace-nowrap pt-0.5 text-fg-muted">{name}</span>
+      <div className="col-span-2 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-2 pb-0.5 pl-3">
+        <span className="text-fg-muted">{t("audit.diff.before")}</span>
+        <span className={cn("text-err", wrap)}>{before}</span>
+        <span className="text-fg-muted">{t("audit.diff.after")}</span>
+        {after}
+      </div>
+    </>
+  );
+}
+
+// AfterValue — «Стало»; перебитое после записи (§108.7) зачёркнуто, текущее
+// значение — в подсказке.
+function AfterValue({
+  name,
+  value,
+  overwritten,
+}: {
+  name: string;
+  value: unknown;
+  overwritten?: Record<string, unknown>;
+}) {
+  const { t } = useTranslation();
+  if (overwritten && name in overwritten) {
+    return (
+      <span
+        className={cn("text-fg-muted", wrap)}
+        title={t("audit.diff.now", { value: formatValue(overwritten[name]) })}
+      >
+        <s>{formatValue(value)}</s>
+        <Info className="ml-1 inline h-3 w-3 text-warn" />
+      </span>
+    );
+  }
+  return <span className={cn("text-ok", wrap)}>{formatValue(value)}</span>;
 }
 
 export function AuditDetailsCell({ action, details, overwritten, muted }: Props) {
