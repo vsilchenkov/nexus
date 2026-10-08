@@ -229,6 +229,35 @@ func TestClient_PausedNotCountedAsOutgoing(t *testing.T) {
 	require.Contains(t, kafkaSeriesQuery("consumed", "30s", ""), `status!="paused"`)
 }
 
+// TestClient_NodeFailures: «Top failures» страницы Kafka — весь трафик. Ровно
+// два запроса (исходящие и ошибки), без фильтра по методу: с method=
+// "requestAsync" ошибки sync-узлов пропадали из блока (регрессия 1.41.0).
+// Исходящие — без откладываний из-за паузы (§113.5), иначе доля ошибок
+// размывается переносами.
+func TestClient_NodeFailures(t *testing.T) {
+	t.Parallel()
+	rec := &queryRecorder{}
+	srv := rec.server(t, vectorResp(sample(`{"team":"mcp","node":"mcp-1c"}`, "4")))
+	defer srv.Close()
+	c, err := New(srv.URL, time.Second, logging.NewNoop())
+	require.NoError(t, err)
+
+	got, err := c.NodeFailures(context.Background(), time.Now().Add(-time.Hour), time.Now())
+	require.NoError(t, err)
+
+	queries := rec.all()
+	require.Len(t, queries, 2)
+	for _, q := range queries {
+		require.NotContains(t, q, "method=", q)
+		require.Contains(t, q, "by (team, node)", q)
+	}
+	require.Contains(t, queries[0], `status!="paused"`)
+	require.Contains(t, queries[1], `status=~"0|[45].."`)
+	require.Equal(t, map[port.NodeKey]port.NodeThroughput{
+		{Team: "mcp", Path: "mcp-1c"}: {Out: 4, Errors: 4},
+	}, got)
+}
+
 // TestClient_KafkaTopicSizes (§75): размер собирается по метке topic. Нулевая
 // серия остаётся в карте — «топик пуст» не должно превращаться в «источника
 // нет» (на этом различии стоит sizes_available). Сэмпл без метки отбрасывается.

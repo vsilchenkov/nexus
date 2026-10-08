@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"time"
 
@@ -46,22 +47,33 @@ type KafkaByNodeResult struct {
 	PrometheusAvailable bool
 }
 
-// ByNode — топ-узлы по числу async-сообщений и по ошибкам за период
-// (since, until]. Источник — Prometheus (per-node async-throughput по паре меток
-// team и node, §101.9, §113.5).
+// ByNode — топ-узлы за период (since, until]. Источник — Prometheus, ключ —
+// пара меток team и node (§101.9):
+//   - top producers — только async-сообщения (method="requestAsync", §113.5):
+//     sync-трафика в Kafka нет;
+//   - top failures — ошибки исходящих по всему трафику, sync и async: блок
+//     отвечает «у кого болит», и до 1.41.0 показывал sync-узлы.
+//
+// Отказ любого из двух запросов — деградация всего ответа: пустой top failures
+// при живом producers читался бы как «ошибок нет».
 func (u *KafkaMonitorUsecase) ByNode(ctx context.Context, since, until time.Time) KafkaByNodeResult {
 	res := KafkaByNodeResult{TopProducers: []NodeProducer{}, TopFailures: []NodeFailure{}}
 	if u.prom == nil {
 		return res
 	}
-	m, err := u.prom.KafkaNodeThroughput(ctx, since, until)
+	async, err := u.prom.KafkaNodeThroughput(ctx, since, until)
 	if err != nil {
 		u.logger.Warn("kafka by-node throughput failed", u.logger.Err(err))
 		return res
 	}
-	u.foldLegacyRows(ctx, m)
-	res.TopProducers = topProducers(m)
-	res.TopFailures = topFailures(m)
+	all, err := u.prom.NodeFailures(ctx, since, until)
+	if err != nil {
+		u.logger.Warn("kafka by-node failures failed", u.logger.Err(err))
+		return res
+	}
+	u.foldLegacyRows(ctx, async, all)
+	res.TopProducers = topProducers(async)
+	res.TopFailures = topFailures(all)
 	res.PrometheusAvailable = true
 	u.resolveNodeIDs(ctx, &res)
 	return res
@@ -72,18 +84,26 @@ func (u *KafkaMonitorUsecase) ByNode(ctx context.Context, since, until time.Time
 //
 // Свёртка идёт ДО отбора top-N: она меняет числа и порядок строк. Ряды с
 // неоднозначным путём остаются отдельной строкой без команды — экран покажет её
-// текстом. Когда старые ряды уходят из окна, запроса к базе нет вовсе.
-func (u *KafkaMonitorUsecase) foldLegacyRows(ctx context.Context, m map[port.NodeKey]port.NodeThroughput) {
-	paths := legacyRowPaths(m, nil)
+// текстом. Пути всех карт резолвятся одним запросом к базе; когда старые ряды
+// уходят из окна, запроса нет вовсе.
+func (u *KafkaMonitorUsecase) foldLegacyRows(ctx context.Context, maps ...map[port.NodeKey]port.NodeThroughput) {
+	var paths []string
+	for _, m := range maps {
+		paths = append(paths, legacyRowPaths(m, nil)...)
+	}
+	slices.Sort(paths)
+	paths = slices.Compact(paths)
 	owners := resolveLegacyOwners(ctx, u.nodes, paths, u.logger)
-	for _, p := range paths {
-		owner, ok := owners[p]
-		if !ok {
-			continue
+	for _, m := range maps {
+		for _, p := range legacyRowPaths(m, nil) {
+			owner, ok := owners[p]
+			if !ok {
+				continue
+			}
+			legacy := legacyKey(p)
+			m[owner.Key] = addCounters(m[owner.Key], m[legacy])
+			delete(m, legacy)
 		}
-		legacy := legacyKey(p)
-		m[owner.Key] = addCounters(m[owner.Key], m[legacy])
-		delete(m, legacy)
 	}
 }
 
@@ -179,7 +199,8 @@ func topProducers(m map[port.NodeKey]port.NodeThroughput) []NodeProducer {
 }
 
 // topFailures сортирует узлы по числу ошибок (Errors>0) и берёт top-N с
-// error-rate — долей проваленных среди исходящих.
+// error-rate — долей проваленных среди исходящих. m — срез всего трафика
+// (NodeFailures), а не async-срез producers.
 //
 // Знаменатель — Out, а не Out+Errors (§113.8): Out считает все исходящие
 // Sender'а с любым статусом, ошибки — их подмножество, и до §113 они входили в

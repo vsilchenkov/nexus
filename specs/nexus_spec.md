@@ -7348,7 +7348,9 @@ Sender'а, чужие контейнеры и процессы хоста, вн�
   `max by (group,topic,partition)`. Новый алерт `NexusPausedBacklogStuck`.
 - **Честные счётчики (113.5):** повторные переносы — `nexus_paused_requeued_total{team,node}`, в
   `nexus_requests_total` только первое откладывание; Web исключает `status="paused"` из
-  consumed/outgoing; топ продюсеров — только `requestAsync`.
+  consumed/outgoing; топ продюсеров — только `requestAsync`. «Top failures» — по всему трафику,
+  sync и async (`NodeFailures`): в 1.41.0 блок строился из async-среза и терял ошибки sync-узлов,
+  исправлено в 1.41.1; отказ любого из двух запросов — деградация всего ответа.
 - **Сторож зависания (113.6):** у экземпляра на назначенной ему партиции (по `client.id` в
   `DescribeGroups`) lag > 0 и offset стоит ≥ `kafka.consumer.stall_after_sec` (120), а сам он
   столько же ждёт в fetch → его reader пересоздаётся (пауза 5 мин); проходные reader'ы — после 3

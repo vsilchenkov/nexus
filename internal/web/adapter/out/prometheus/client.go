@@ -242,10 +242,22 @@ func (c *Client) NodeThroughput(ctx context.Context, since, until time.Time) (ma
 }
 
 // KafkaNodeThroughput — то же, что NodeThroughput, только по async-трафику
-// (method="requestAsync", §113.5): топ узлов страницы Kafka. Без фильтра туда
-// попадал sync-трафик, которого в Kafka нет.
+// (method="requestAsync", §113.5): «Топ продюсеров» страницы Kafka. Без
+// фильтра туда попадал sync-трафик, которого в Kafka нет.
 func (c *Client) KafkaNodeThroughput(ctx context.Context, since, until time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
 	return c.nodeThroughput(ctx, since, until, `,method="requestAsync"`)
+}
+
+// NodeFailures — исходящие и ошибки Sender'а по узлам за период по всему
+// трафику: «Top failures» страницы Kafka показывает и sync-узлы. Фильтр
+// method="requestAsync" здесь — регрессия 1.41.0: блок пустел при ошибках
+// sync-узлов.
+func (c *Client) NodeFailures(ctx context.Context, since, until time.Time) (map[port.NodeKey]port.NodeThroughput, error) {
+	out, errs, err := c.senderOutErrors(ctx, promRange(until.Sub(since)), until, "")
+	if err != nil {
+		return nil, err
+	}
+	return mergeThroughput(nil, out, errs, nil), nil
 }
 
 // nodeThroughput собирает per-node счётчики; mm — дополнительный матчер
@@ -257,13 +269,7 @@ func (c *Client) nodeThroughput(ctx context.Context, since, until time.Time, mm 
 	if err != nil {
 		return nil, err
 	}
-	out, err := c.instantByNodeKey(ctx,
-		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{%s%s}[%s]))`, senderOut, mm, w), until)
-	if err != nil {
-		return nil, err
-	}
-	errs, err := c.instantByNodeKey(ctx,
-		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="sender",status=~"0|[45].."%s}[%s]))`, mm, w), until)
+	out, errs, err := c.senderOutErrors(ctx, w, until, mm)
 	if err != nil {
 		return nil, err
 	}
@@ -275,6 +281,22 @@ func (c *Client) nodeThroughput(ctx context.Context, since, until time.Time, mm 
 		return nil, err
 	}
 	return mergeThroughput(in, out, errs, p95), nil
+}
+
+// senderOutErrors — per-node исходящие Sender'а (без откладываний из-за паузы)
+// и ошибки (0|4xx|5xx) за окно w на момент at; mm — дополнительный матчер.
+func (c *Client) senderOutErrors(ctx context.Context, w string, at time.Time, mm string) (out, errs map[port.NodeKey]float64, err error) {
+	out, err = c.instantByNodeKey(ctx,
+		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{%s%s}[%s]))`, senderOut, mm, w), at)
+	if err != nil {
+		return nil, nil, err
+	}
+	errs, err = c.instantByNodeKey(ctx,
+		fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="sender",status=~"0|[45].."%s}[%s]))`, mm, w), at)
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, errs, nil
 }
 
 // mergeThroughput складывает ряды in/out/errors/p95 в строки по узлу.
