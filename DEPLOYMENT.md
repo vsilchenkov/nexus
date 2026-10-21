@@ -3219,7 +3219,7 @@ cp scripts/release/release_notes_template.md desc_1.0.0.md
 #    сверху — секция CHANGELOG [1.0.0] (Added/Fixed/Changed + строка «Откат»);
 #    в шаблоне подставить версии, заполнить «Особое в этом релизе» либо убрать раздел.
 
-# 2. Создать релиз (токен берётся из URL origin).
+# 2. Создать релиз (GITLAB_TOKEN — personal access token с правом api; gitlab.vozovoz.ru).
 python scripts/release/create_release.py v1.0.0 "v1.0.0" desc_1.0.0.md
 ```
 

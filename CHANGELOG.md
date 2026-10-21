@@ -22,6 +22,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Переезд GitLab на `gitlab.vozovoz.ru/bus/nexus`.** На боевых серверах (srv-p-1c-bus, nexus-kz)
+  `origin` переключён на новый адрес с deploy-токеном `nexus-deploy` (только чтение: `git fetch --tags`
+  и `git checkout v<версия>` работают, push и API — нет). `scripts/release/create_release.py` переписан
+  по образцу `create_github_release.py`: хост и путь проекта берёт из remote `origin` (project id
+  больше не зашит), токен — personal access token с правом `api` из `GITLAB_TOKEN`, режимы
+  `--check` / `--dry-run` / `--update`. Compare-ссылки внизу этого файла переведены на новый хост
+  (старый по HTTPS не отвечает).
+
 ## [1.41.1] - 2026-10-08
 
 **Откат:** без отката схемы (миграций нет). Меняется только образ Web — откатывается он один.
@@ -3937,74 +3947,74 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.41.1...HEAD
-[1.41.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.41.0...v1.41.1
-[1.41.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.40.1...v1.41.0
-[1.40.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.40.0...v1.40.1
-[1.40.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.39.0...v1.40.0
-[1.39.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.38.1...v1.39.0
-[1.38.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.38.0...v1.38.1
-[1.38.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.37.0...v1.38.0
-[1.37.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.36.0...v1.37.0
-[1.36.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.35.1...v1.36.0
-[1.35.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.35.0...v1.35.1
-[1.35.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.34.1...v1.35.0
-[1.34.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.34.0...v1.34.1
-[1.34.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.33.0...v1.34.0
-[1.33.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.32.1...v1.33.0
-[1.32.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.32.0...v1.32.1
-[1.32.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.6...v1.32.0
-[1.31.6]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.5...v1.31.6
-[1.31.5]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.4...v1.31.5
-[1.31.4]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.3...v1.31.4
-[1.31.3]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.2...v1.31.3
-[1.31.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.1...v1.31.2
-[1.31.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.0...v1.31.1
-[1.31.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.30.1...v1.31.0
-[1.30.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.30.0...v1.30.1
-[1.30.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.29.2...v1.30.0
-[1.29.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.29.1...v1.29.2
-[1.29.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.29.0...v1.29.1
-[1.29.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.28.1...v1.29.0
-[1.28.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.28.0...v1.28.1
-[1.28.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.27.2...v1.28.0
-[1.27.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.27.1...v1.27.2
-[1.27.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.27.0...v1.27.1
-[1.27.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.26.0...v1.27.0
-[1.26.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.25.0...v1.26.0
-[1.25.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.24.0...v1.25.0
-[1.24.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.23.1...v1.24.0
-[1.23.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.23.0...v1.23.1
-[1.23.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.22.5...v1.23.0
-[1.22.5]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.22.4...v1.22.5
-[1.21.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.21.0...v1.21.1
-[1.21.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.20.2...v1.21.0
-[1.20.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.20.1...v1.20.2
-[1.20.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.20.0...v1.20.1
-[1.20.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.19.0...v1.20.0
-[1.19.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.18.1...v1.19.0
-[1.18.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.18.0...v1.18.1
-[1.18.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.17.0...v1.18.0
-[1.17.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.2...v1.17.0
-[1.16.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.1...v1.16.2
-[1.16.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.0...v1.16.1
-[1.16.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.2...v1.16.0
-[1.15.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.1...v1.15.2
-[1.15.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.0...v1.15.1
-[1.15.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.14.0...v1.15.0
-[1.14.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.13.0...v1.14.0
-[1.13.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.12.0...v1.13.0
-[1.12.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.11.0...v1.12.0
-[1.11.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.10.0...v1.11.0
-[1.10.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.9.1...v1.10.0
-[1.9.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.9.0...v1.9.1
-[1.9.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.8.0...v1.9.0
-[1.5.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.5.0...v1.5.1
-[1.5.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.4.1...v1.5.0
-[1.4.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.4.0...v1.4.1
-[1.4.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.3.0...v1.4.0
-[1.3.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.2.0...v1.3.0
-[1.2.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.1.0...v1.2.0
-[1.1.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.3...v1.1.0
-[1.0.3]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.1...v1.0.3
-[1.0.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.0...v1.0.1
+[Unreleased]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.41.1...HEAD
+[1.41.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.41.0...v1.41.1
+[1.41.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.40.1...v1.41.0
+[1.40.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.40.0...v1.40.1
+[1.40.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.39.0...v1.40.0
+[1.39.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.38.1...v1.39.0
+[1.38.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.38.0...v1.38.1
+[1.38.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.37.0...v1.38.0
+[1.37.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.36.0...v1.37.0
+[1.36.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.35.1...v1.36.0
+[1.35.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.35.0...v1.35.1
+[1.35.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.34.1...v1.35.0
+[1.34.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.34.0...v1.34.1
+[1.34.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.33.0...v1.34.0
+[1.33.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.32.1...v1.33.0
+[1.32.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.32.0...v1.32.1
+[1.32.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.6...v1.32.0
+[1.31.6]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.5...v1.31.6
+[1.31.5]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.4...v1.31.5
+[1.31.4]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.3...v1.31.4
+[1.31.3]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.2...v1.31.3
+[1.31.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.1...v1.31.2
+[1.31.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.0...v1.31.1
+[1.31.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.30.1...v1.31.0
+[1.30.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.30.0...v1.30.1
+[1.30.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.29.2...v1.30.0
+[1.29.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.29.1...v1.29.2
+[1.29.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.29.0...v1.29.1
+[1.29.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.28.1...v1.29.0
+[1.28.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.28.0...v1.28.1
+[1.28.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.27.2...v1.28.0
+[1.27.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.27.1...v1.27.2
+[1.27.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.27.0...v1.27.1
+[1.27.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.26.0...v1.27.0
+[1.26.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.25.0...v1.26.0
+[1.25.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.24.0...v1.25.0
+[1.24.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.23.1...v1.24.0
+[1.23.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.23.0...v1.23.1
+[1.23.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.22.5...v1.23.0
+[1.22.5]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.22.4...v1.22.5
+[1.21.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.21.0...v1.21.1
+[1.21.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.20.2...v1.21.0
+[1.20.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.20.1...v1.20.2
+[1.20.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.20.0...v1.20.1
+[1.20.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.19.0...v1.20.0
+[1.19.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.18.1...v1.19.0
+[1.18.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.18.0...v1.18.1
+[1.18.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.17.0...v1.18.0
+[1.17.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.16.2...v1.17.0
+[1.16.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.16.1...v1.16.2
+[1.16.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.16.0...v1.16.1
+[1.16.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.15.2...v1.16.0
+[1.15.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.15.1...v1.15.2
+[1.15.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.15.0...v1.15.1
+[1.15.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.14.0...v1.15.0
+[1.14.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.13.0...v1.14.0
+[1.13.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.12.0...v1.13.0
+[1.12.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.11.0...v1.12.0
+[1.11.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.10.0...v1.11.0
+[1.10.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.9.1...v1.10.0
+[1.9.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.9.0...v1.9.1
+[1.9.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.8.0...v1.9.0
+[1.5.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.5.0...v1.5.1
+[1.5.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.4.1...v1.5.0
+[1.4.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.4.0...v1.4.1
+[1.4.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.3.0...v1.4.0
+[1.3.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.2.0...v1.3.0
+[1.2.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.1.0...v1.2.0
+[1.1.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.0.3...v1.1.0
+[1.0.3]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.0.1...v1.0.3
+[1.0.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.0.0...v1.0.1

@@ -3213,7 +3213,8 @@ make images-list                               # какие версии сох�
 make images-rollback V=1.21.1                  # вернуть :latest без пересборки
 python scripts/release/rollback_info.py v1.20.2 v1.21.0   # §74.6: строка «Откат» для CHANGELOG
 cp scripts/release/release_notes_template.md desc_1.0.0.md # §9.5-E: заготовка описания GitLab-релиза
-python scripts/release/create_release.py v1.0.0 v1.0.0 desc_1.0.0.md
+GITLAB_TOKEN=… python scripts/release/create_release.py v1.0.0 v1.0.0 desc_1.0.0.md   # gitlab.vozovoz.ru, токен с правом api
+GITLAB_TOKEN=… python scripts/release/create_release.py --check                      # доступ к GitLab, id проекта, ветка
 
 # Зеркало на GitHub (github.com/vsilchenkov/nexus, публичное) — с 09.09.2026
 #   push идёт ТОЛЬКО из PowerShell: ключ отдаёт SSH-агент Bitwarden, который виден
