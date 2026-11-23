@@ -8,7 +8,7 @@
 # Kafka тоже берётся из того стека, но по ДРУГОМУ адресу: `kafka:29092`, а не
 # `localhost:9092`. Брокер анонсирует два listener'а — localhost:9092 для
 # нативных `make run-*` с хоста и kafka:29092 для контейнеров в его сети
-# (e:/git_rep/services/docker-compose.yml). Одного мало: клиент идёт по
+# (C:/git_rep/services/docker-compose.yml). Одного мало: клиент идёт по
 # АНОНСИРОВАННОМУ адресу, и с единственным advertised=localhost контейнер
 # уходил бы на самого себя.
 #
