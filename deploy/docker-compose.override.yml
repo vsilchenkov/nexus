@@ -125,6 +125,10 @@ services:
 # !override (замена списка целиком, а не дополнение) — иначе сервисы будут
 # вечно ждать healthcheck выключенного контейнера.
 #
+# С 1.42.0 (§116) свой PostgreSQL — не ниже 16. Нативный PostgreSQL 12 хоста
+# переносится в bundled-контейнер целиком (все базы и роли): DEPLOYMENT §5.4.4,
+# scripts/deploy/pg_migrate_native.sh; после переноса этот блок удаляется.
+#
 #  postgres:
 #    profiles: ["disabled"]
 #  receiver:

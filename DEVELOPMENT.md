@@ -325,6 +325,15 @@ PostgreSQL 12 объясняют решения своего времени. М�
   `deploy/prometheus.alerts*.yml` в образе `prom/prometheus` той же версии, что в compose (нужен
   Docker). В CI — job `alerts-check`. Поменяли правило алерта — поправьте и
   `deploy/prometheus.alerts.test.yml`: тест сверяет метки и тексты алертов целиком.
+- **Репетиция переноса PostgreSQL** (§116.5) — `./scripts/stand/pg_migrate_rehearsal.sh` (Git Bash,
+  нужен Docker; `KEEP=1` оставляет ресурсы для разбора). Прогоняет
+  `scripts/deploy/pg_migrate_native.sh` целиком (`check → dump → restore → verify`, переключение,
+  вход по прежним паролям) против «нативного» `postgres:12` на glibc с peer-сокетом в docker-томе и
+  md5-ролями; базу `nexus` копирует со стека `services`. Цель — сервис корневого compose в проекте
+  `nexus-pgmig` на `127.0.0.1:55432`, ресурсы — `nexus-pgmig-*`, файлы — `deploy/arc/pgmig-rehearsal`.
+  Поменяли скрипт переноса — прогоните. Под Windows скрипт переноса ходит к docker с
+  `MSYS_NO_PATHCONV=1` (репетиция ставит сама), иначе Git Bash переписывает `/var/run/postgresql`
+  в путь Windows. Защитные отказы скрипта без Docker покрывает `tests/deploy/pg_migrate_test.go`.
 - `make test-int-logs-scale` (§77.5) — **ручной** замер прокрутки логов на большом объёме: сидит
   таблицу одним `INSERT … SELECT FROM numbers` и прогоняет 20 страниц по 50 строк по keyset-курсору,
   печатая avg/max и эталон «без автоокна». Объём — `LOG_SCALE_ROWS` (по умолчанию 1 млн; боевой

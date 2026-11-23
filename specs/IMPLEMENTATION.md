@@ -7853,6 +7853,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | §116.3 Go-модули | ✅ Phase 116.3 | Все прямые и косвенные до последних ([go.mod](../go.mod)): clickhouse-go 2.51, pgx 5.13, grpc 1.85, prometheus client_golang 1.25, sentry-go 0.50, testcontainers 0.45, otel 1.47, x/crypto 0.59, tint 1.2 и др. Логгер **`github.com/vsilchenkov/logging` v1.8.0** (свой обработчик событий Sentry, Go 1.27.4, тесты). Правки API: [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (`Query`/`QueryRange` вернули 4 значения — `Infos`), заглушки `driver.Conn` (`QueryFormat`, `InsertFormat`) в [clickhouse/manager_test.go](../internal/platform/clickhouse/manager_test.go) и [usecase/settings_tester_test.go](../internal/web/usecase/settings_tester_test.go), `tint.NewTextHandler` в [bootstrap/logger.go](../internal/platform/bootstrap/logger.go), fan-out — `slog.NewMultiHandler` (обёртка `logging.NewMultiHandler` удалена). Регрессия [platform/logging/logging_test.go](../internal/platform/logging/logging_test.go) `TestSentryHandler_ErrorLogBecomesEvent`. `govulncheck`: 7 вызываемых уязвимостей (x/net, klauspost/compress, brotli) → 0. CI: trivy 0.55.0 → 0.76.2 |
 | §116.3 npm `web-ui` | ✅ Phase 116.3 | `npm update --save` — [package.json](../web-ui/package.json) и lock в пределах мажорных версий; удалены неиспользуемые `zod`, `react-hook-form`, `@hookform/resolvers`; скилы `nexus-web-overview`, `nexus-web-components`; CI `NODE_VERSION` 20 → 22; пересобран [internal/web/static/](../internal/web/static/) |
 | §116.4 PostgreSQL 16 — минимум, образ закреплён | ✅ Phase 116.4 | `postgres:16.16-alpine` в [docker-compose.yml](../docker-compose.yml), [deploy/docker-compose.yml](../deploy/docker-compose.yml), [deploy/docker-compose.deps.yml](../deploy/docker-compose.deps.yml) и `defaultPostgresImage` ([tests/integration/node_repo_test.go](../tests/integration/node_repo_test.go)); страж [tests/deploy/versions_test.go](../tests/deploy/versions_test.go) `TestPostgresImage_PinnedEverywhere` (красный на прежнем `12-alpine` и на плавающем теге); правило «минимум 16, возможности 13–16 разрешены» — DEVELOPMENT («Шаг 2. Применить миграции», integration-образы), DEPLOYMENT (§12 бэкап, заметка 0031), ТЗ §71/§94/§99/§103 и `nexus_spec.md`, грабля §88.4.1 выше; комментарии кода «на бою 12»; общий стек ПК — `services` `bf83a7e` (16.11 → 16.16), [docs/STAND_TESTING.md](../docs/STAND_TESTING.md). Тексты применённых миграций не тронуты |
+| §116.5 перенос нативного кластера в контейнер | ✅ Phase 116.5 | [scripts/deploy/pg_migrate_native.sh](../scripts/deploy/pg_migrate_native.sh) (`check`/`dump`/`restore`/`verify`); защитные отказы без Docker — [tests/deploy/pg_migrate_test.go](../tests/deploy/pg_migrate_test.go) (оборванный дамп, нет снимков, непустой том, оборванный `pg_dumpall`, клиент без stdin по сокету); репетиция [scripts/stand/pg_migrate_rehearsal.sh](../scripts/stand/pg_migrate_rehearsal.sh) — пройдена 23.11.2026 (5 баз, 4 роли, 29 таблиц, вход по md5); DEPLOYMENT §5.4.4 (процедура, сеть, откат) и вариант B, шаблоны `deploy/docker-compose.override.yml` и `…ha.external-pg.override.yml`, DEVELOPMENT («Репетиция переноса PostgreSQL»), ТЗ §116.5 |
 
 Неочевидности:
 
@@ -7895,3 +7896,21 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 - **vitest на Windows: `No test suite found` во всех 108 файлах** — не обновление, а строчная
   буква диска в рабочем каталоге (`c:\…` у терминала расширения VS Code). Из `C:\…` — 1069 тестов
   зелёные (DEVELOPMENT, «Фронтовые unit-тесты»).
+- **Перенос кластера: почему скрипт, а не две команды** (подробно — ТЗ §116.5). Нативный клиент на
+  бою — 12, а `pg_dumpall` должен быть не старее цели: клиент 16.16 берётся из образа и ходит к
+  нативному сокету от UID `postgres` хоста (peer: сервер сам переводит UID в имя). Хеши md5 из 12
+  не принимает `scram-sha-256` образа — том инициализируется с `POSTGRES_HOST_AUTH_METHOD=md5`.
+  Суперпользователь тома — `postgres`, а не `PG_USER`: иначе `ALTER ROLE nexus NOSUPERUSER` из
+  дампа падает (PG 16 не снимает суперпользователя с bootstrap-роли) и вместе с ним не
+  применяется пароль. `postgres`/`template1` дамп не пересоздаёт — их кодировка и локаль задаются
+  `POSTGRES_INITDB_ARGS` из снимка источника, иначе сверка баз расходится. Готовность — по TCP:
+  при инициализации временный сервер слушает только сокет.
+- **Две ловушки shell, найденные до первого прогона.** `docker run -i`/`docker exec -i` внутри
+  `while read` съедает stdin цикла — обходится только первая база; клиент к источнику и `tgt_psql`
+  — без `-i` (страж в `pg_migrate_test.go`). Счётчик провалов внутри конвейера остаётся в
+  подоболочке — провалы копятся в файле. Снимки сортируются `LC_ALL=C` в shell, а не `ORDER BY`:
+  glibc-источник и musl-цель упорядочивают текст по-разному, и сверка разошлась бы на одинаковых
+  данных.
+- **Порт — существующим приёмом, без новой переменной.** Публикация закрывается
+  `ports: !override` в локальном override, как в standalone-шаблоне (§5.3.1); первая редакция ТЗ
+  предлагала `PG_PUBLISH` — отказались: ещё одна переменная `.env` ради одной строки override.

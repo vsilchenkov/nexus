@@ -1,6 +1,10 @@
 # Локальный override для сервера с ВНЕШНИМ PostgreSQL (на хосте, не в стеке),
 # переведённого на профиль двух реплик (§93).
 #
+# С 1.42.0 (§116) внешний PostgreSQL — не ниже 16. Нативный PostgreSQL 12 хоста
+# переносится в bundled-контейнер (DEPLOYMENT §5.4.4) — после переноса этот
+# файл убирается из COMPOSE_FILE.
+#
 # БЕЗ ЭТОГО ФАЙЛА СТЕК НЕ СОБЕРЁТСЯ ВОВСЕ. Проверено `docker compose config`:
 #
 #   service "sender-2" depends on undefined service "postgres": invalid compose project
