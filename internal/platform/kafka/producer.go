@@ -25,8 +25,7 @@ func isMessageTooLarge(err error) bool {
 	if errors.As(err, &kerr) && kerr == kafka.MessageSizeTooLarge {
 		return true
 	}
-	var werrs kafka.WriteErrors
-	if errors.As(err, &werrs) {
+	if werrs, ok := errors.AsType[kafka.WriteErrors](err); ok {
 		for _, e := range werrs {
 			if e == nil {
 				continue

@@ -153,8 +153,7 @@ func (u *LogsUsecase) AckFromLog(ctx context.Context, nodeID, teamID, logID stri
 		u.logger.Debug("ack from log: render failed",
 			u.logger.Str("node", n.Path), u.logger.Err(err))
 		rep.Message = err.Error()
-		var re *ackspec.RenderError
-		if errors.As(err, &re) {
+		if re, ok := errors.AsType[*ackspec.RenderError](err); ok {
 			rep.Reason = string(re.Reason)
 			rep.Placeholder = re.Placeholder
 		}

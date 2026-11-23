@@ -260,7 +260,7 @@ func publishMessages(t *testing.T, ctx context.Context, host string, port int, q
 	if _, err := ch.QueueDeclare(queue, true, false, false, false, nil); err != nil {
 		t.Fatalf("queue declare: %v", err)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		err := ch.PublishWithContext(ctx, "", queue, false, false, amqp.Publishing{
 			ContentType: "application/json",
 			MessageId:   fmt.Sprintf("msg-%d", i),

@@ -120,8 +120,8 @@ func TestBackupHandler_ExportErrors(t *testing.T) {
 func TestBackupHandler_Status(t *testing.T) {
 	t.Parallel()
 	svc := &fakeBackupService{status: &usecase.BackupStatus{
-		BackupTargetState: port.BackupTargetState{Nodes: 0, Teams: 1, Users: 1, Fresh: true},
-		CHAvailable:       true, InstanceID: "kz", NexusVersion: "v1.39.0", SchemaVersion: 43,
+		Nodes: 0, Teams: 1, Users: 1, Fresh: true,
+		CHAvailable: true, InstanceID: "kz", NexusVersion: "v1.39.0", SchemaVersion: 43,
 	}}
 	w := httptest.NewRecorder()
 	backupEngine(svc).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/backup/status", nil))

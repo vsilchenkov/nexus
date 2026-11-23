@@ -163,11 +163,9 @@ func TestServiceLogs_ReloadLevelAcrossServices(t *testing.T) {
 		ctls[svc] = ctl
 		sub := reloader.NewSubscriber(client, logging.NewNoop())
 		sub.Register(reloader.SectionLogging, bootstrap.LogLevelReloader(pool, ctl, mustTestCipher(t), logging.NewNoop()))
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			sub.Run(subCtx)
-		}()
+		})
 	}
 	defer func() { subCancel(); wg.Wait() }()
 
@@ -300,13 +298,11 @@ func TestServiceLogs_NonBlockingUnderLoad(t *testing.T) {
 	start := time.Now()
 	var wg sync.WaitGroup
 	for g := range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := range perG {
 				logger.Info("load", slog.Int("g", g), slog.Int("i", i))
 			}
-		}()
+		})
 	}
 	waitDone := make(chan struct{})
 	go func() { defer close(waitDone); wg.Wait() }()

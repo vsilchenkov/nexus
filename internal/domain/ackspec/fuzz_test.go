@@ -94,8 +94,7 @@ func FuzzRender(f *testing.F) {
 		for _, tmpl := range compiled {
 			out, err := tmpl.Render(ctx)
 			if err != nil {
-				var re *ackspec.RenderError
-				if !errors.As(err, &re) {
+				if _, ok := errors.AsType[*ackspec.RenderError](err); !ok {
 					t.Fatalf("Render returned %T (%v); want *RenderError", err, err)
 				}
 				if !errors.Is(err, ackspec.ErrRenderFailed) {

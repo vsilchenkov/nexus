@@ -7839,6 +7839,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 |---|---|---|
 | ТЗ §116 | ✅ Phase 116.0 | [sections/116-go127-deps-pg16.md](sections/116-go127-deps-pg16.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
 | §116.2 Go 1.27.4 | ✅ Phase 116.1 | [go.mod](../go.mod) `go 1.27.4`; `GO_VERSION` и `GOLANGCI_LINT_VERSION` в [.gitlab-ci.yml](../.gitlab-ci.yml) (job `go-lint` — `go install` на `.go-base` вместо образа `golangci/golangci-lint:v2.12-alpine`); `FROM golang:1.27.4-alpine` в [deploy/docker/](../deploy/docker/) (`receiver`, `sender`, `web`, `loadtest`); страж [tests/deploy/versions_test.go](../tests/deploy/versions_test.go) `TestGoVersion_SameInGoModDockerfilesAndCI`; DEVELOPMENT §2, DEPLOYMENT (§1, §5.4, §6, §13), README, CLAUDE.md |
+| §116.2 модернизация `go fix` 1.27 | ✅ Phase 116.2 | 27 файлов `go fix` (`errors.AsType` вместо `var x; errors.As(err, &x)`, повышенные поля во вложенных литералах — `PartitionPosition{First: …}` вместо `{Watermark: Watermark{…}}`, в integration-тестах `atomic.Int32`, `wg.Go`, `range n`) + `modernize` v2.15: `slices.Clip` в [sender/startup.go](../internal/sender/startup.go) `fields`, `reflect.TypeAssert` в [metrics/node_labels_test.go](../internal/platform/metrics/node_labels_test.go). Поведение не меняется |
 
 Неочевидности:
 

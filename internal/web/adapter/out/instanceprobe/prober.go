@@ -257,20 +257,16 @@ func transportReason(err error) string {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return "timeout"
 	}
-	var dnsErr *net.DNSError
-	if errors.As(err, &dnsErr) {
+	if _, ok := errors.AsType[*net.DNSError](err); ok {
 		return "dns error"
 	}
-	var certErr *tls.CertificateVerificationError
-	if errors.As(err, &certErr) {
+	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); ok {
 		return "tls error"
 	}
-	var recordErr tls.RecordHeaderError
-	if errors.As(err, &recordErr) {
+	if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
 		return "tls error"
 	}
-	var opErr *net.OpError
-	if errors.As(err, &opErr) {
+	if _, ok := errors.AsType[*net.OpError](err); ok {
 		return "connection failed"
 	}
 	return "request failed"
@@ -278,8 +274,7 @@ func transportReason(err error) string {
 
 // errReason достаёт причину из *probeFailure для debug-лога.
 func errReason(err error) string {
-	var f *probeFailure
-	if errors.As(err, &f) {
+	if f, ok := errors.AsType[*probeFailure](err); ok {
 		return f.reason
 	}
 	return "request failed"

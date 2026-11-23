@@ -110,8 +110,7 @@ func ackQuery(node *domain.Node, query url.Values) url.Values {
 // ackspec.Reason плюс «compile» для битой спеки, дошедшей до рантайма
 // (валидация формы её отбивает, но узел мог быть правлен SQL'ем напрямую).
 func ackReason(err error) string {
-	var re *ackspec.RenderError
-	if errors.As(err, &re) {
+	if re, ok := errors.AsType[*ackspec.RenderError](err); ok {
 		return string(re.Reason)
 	}
 	if errors.Is(err, ackspec.ErrTemplateSyntax) {
@@ -121,8 +120,7 @@ func ackReason(err error) string {
 }
 
 func ackPlaceholder(err error) string {
-	var re *ackspec.RenderError
-	if errors.As(err, &re) {
+	if re, ok := errors.AsType[*ackspec.RenderError](err); ok {
 		return re.Placeholder
 	}
 	return ""

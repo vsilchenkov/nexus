@@ -41,9 +41,8 @@ type DryRunRequest struct {
 // streamDeclinedStep — шаг отчёта для подписки, отклонённой настройкой узла
 // (§107.2): то же, что увидит клиент на бою, — 405 и заголовок Allow.
 func streamDeclinedStep(err error) DryRunStep {
-	var declined *domain.StreamDeclinedError
 	allow := ""
-	if errors.As(err, &declined) {
+	if declined, ok := errors.AsType[*domain.StreamDeclinedError](err); ok {
 		allow = declined.Allow
 	}
 	return DryRunStep{
