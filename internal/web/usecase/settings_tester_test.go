@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"io"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,7 +41,11 @@ func (*fakeCHConn) PrepareBatch(context.Context, string, ...chdriver.PrepareBatc
 }
 func (*fakeCHConn) Exec(context.Context, string, ...any) error              { panic("not impl") }
 func (*fakeCHConn) AsyncInsert(context.Context, string, bool, ...any) error { panic("not impl") }
-func (*fakeCHConn) Stats() chdriver.Stats                                   { panic("not impl") }
+func (*fakeCHConn) QueryFormat(context.Context, string, string, ...any) (io.ReadCloser, error) {
+	panic("not impl")
+}
+func (*fakeCHConn) InsertFormat(context.Context, string, string, io.Reader) error { panic("not impl") }
+func (*fakeCHConn) Stats() chdriver.Stats                                         { panic("not impl") }
 
 // fakeSentryClient — реализует SentryTestClient без сети.
 type fakeSentryClient struct {

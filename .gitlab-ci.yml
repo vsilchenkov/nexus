@@ -23,7 +23,8 @@ variables:
   # golangci-lint читает export data Go 1.27 (версия 5) только с x/tools >= v0.50,
   # то есть начиная с v2.14. Старее молча печатает «0 issues» при ошибках типизации.
   GOLANGCI_LINT_VERSION: "v2.15.0"
-  NODE_VERSION: "20"
+  # Node 20 вне поддержки с апреля 2026; 22 — LTS, как на ПК разработчика (DEVELOPMENT §2).
+  NODE_VERSION: "22"
   # Локальный GOPATH/GOCACHE/GOMODCACHE — кешируется между jobs.
   GOPATH: "$CI_PROJECT_DIR/.cache/go"
   GOCACHE: "$CI_PROJECT_DIR/.cache/go-build"
@@ -957,7 +958,7 @@ trivy-fs:
   stage: security
   needs: []
   image:
-    name: aquasec/trivy:0.55.0
+    name: aquasec/trivy:0.76.2
     entrypoint: [""]
     pull_policy: [always, if-not-present]
   <<: *security-rules

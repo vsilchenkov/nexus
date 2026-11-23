@@ -295,7 +295,13 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 - `make test-int-logs` — integration-группа консоли служебных логов (Redis+PG: шиппер, мерж,
   кросс-сервисный reload уровня, маскировка, неблокируемость); входит в общий `make test-integration`.
 - Фронтовые unit-тесты: `cd web-ui && npm run test` (vitest + RTL, setup `src/test/setup.ts` с
-  jest-dom). **Гоняются в CI** (job `ui-build`) — падение vitest валит pipeline, как и lint/build.
+  jest-dom). **Гоняются в CI** (job `ui-build`, Node 22 — как на ПК) — падение vitest валит pipeline,
+  как и lint/build.
+  **Все файлы падают с `No test suite found in file C:/…`** — запуск из каталога со строчной буквой
+  диска (`c:\git_rep\…`: так стартует терминал расширения VS Code). vitest 1.x на Windows грузит
+  тестовый файл дважды, по `c:` и по `C:`, и тесты регистрируются не в том экземпляре раннера.
+  Перейдите в каталог с заглавной буквой (`Set-Location C:\git_rep\_go\nexus\web-ui` в PowerShell) —
+  тесты и зависимости ни при чём (§116).
 - `make test-int-rejected` (§94) — integration-группа журнала отказов на входе (PostgreSQL):
   слияние пачек нескольких реплик Receiver в одну группу, вытеснение клиентов и сэмплов
   сверх лимитов, снятие отметки «разобрано» новым отказом, чистка по сроку и полное

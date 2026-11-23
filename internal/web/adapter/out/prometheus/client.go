@@ -96,7 +96,7 @@ func (c *Client) instantScalar(ctx context.Context, query string) (float64, erro
 func (c *Client) instantScalarAt(ctx context.Context, query string, at time.Time) (float64, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	val, _, err := c.api.Query(ctx, query, at)
+	val, _, _, err := c.api.Query(ctx, query, at)
 	if err != nil {
 		return 0, fmt.Errorf("prometheus query %q: %w", query, err)
 	}
@@ -137,7 +137,7 @@ func quantileMs(v float64) float64 {
 func (c *Client) instantVector(ctx context.Context, query string, at time.Time) (model.Vector, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	val, _, err := c.api.Query(ctx, query, at)
+	val, _, _, err := c.api.Query(ctx, query, at)
 	if err != nil {
 		return nil, fmt.Errorf("prometheus query %q: %w", query, err)
 	}
@@ -347,7 +347,7 @@ func (c *Client) NodeSeries(ctx context.Context, since, until time.Time, buckets
 	start := since
 	end := until
 	query := fmt.Sprintf(`sum by (team, node)(increase(nexus_requests_total{service="receiver"}[%s]))`, promRange(step))
-	val, _, err := c.api.QueryRange(ctx, query, promv1.Range{Start: start, End: end, Step: step})
+	val, _, _, err := c.api.QueryRange(ctx, query, promv1.Range{Start: start, End: end, Step: step})
 	if err != nil {
 		return nil, fmt.Errorf("prometheus query_range %q: %w", query, err)
 	}
@@ -490,7 +490,7 @@ func (c *Client) KafkaTimeseries(ctx context.Context, since, until time.Time, st
 // одна серия) и возвращает точки (ts, value) в порядке возрастания времени.
 // Пустой результат → nil без ошибки.
 func (c *Client) rangeSeriesPoints(ctx context.Context, query string, rng promv1.Range) ([]port.KafkaPoint, error) {
-	val, _, err := c.api.QueryRange(ctx, query, rng)
+	val, _, _, err := c.api.QueryRange(ctx, query, rng)
 	if err != nil {
 		return nil, fmt.Errorf("prometheus query_range %q: %w", query, err)
 	}

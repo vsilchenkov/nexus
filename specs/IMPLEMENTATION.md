@@ -3448,8 +3448,17 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   consumer-группе (heartbeat идёт, партиции назначены), но `FetchMessage` больше не возвращается;
   `nexus_kafka_lag` (из `Reader.Stats`) при этом 0, `nexus_kafka_in_flight` — 0. **Закрыто §113:**
   lag из брокера (зависание видно по `nexus_kafka_lag`) и сторож (Phase 113.7, см. 4.98) для всех
-  четырёх групп. Осталось: обновление kafka-go (может убрать первопричину) и воспроизведение
+  четырёх групп. Осталось: обновление kafka-go (может убрать первопричину; на 23.11.2026 v0.4.51 —
+  последняя, §116 обновлять было не на что) и воспроизведение
   зависания на стенде — сторож проверен на имитации «стоящей» партиции, а не на живом зависании.
+
+- **Мажорные версии npm `web-ui` — отдельное ТЗ** (вынесено из §116.3). React 18 → 19,
+  react-router 6 → 7, Tailwind 3 → 4 (конфиг в CSS), Vite 5 → 8, Vitest 1 → 5, TypeScript 5.9 → 7,
+  i18next 23 → 27 (+ react-i18next, languagedetector), ESLint 9 → 10 (+ плагины react-hooks 7 с
+  правилами React Compiler), jsdom, lucide-react 0.x → 1.x, tailwind-merge 3, @testing-library/
+  jest-dom 8, @types/react 19, @types/node 22+. Приоритет — `react-router-dom` 7 (уязвимость в
+  бандле) и Vite/Vitest (уязвимости dev-сервера и раннера), см. 4.101. Нужен прогон каждой
+  страницы на стенде.
 
 0. **Горизонтальное масштабирование Receiver/Web (нулевой простой при обновлении)** — вынесено
    из §74 отдельным ТЗ. Сейчас у каждого сервиса один экземпляр, и `docker compose up` даёт
@@ -7840,6 +7849,8 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | ТЗ §116 | ✅ Phase 116.0 | [sections/116-go127-deps-pg16.md](sections/116-go127-deps-pg16.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
 | §116.2 Go 1.27.4 | ✅ Phase 116.1 | [go.mod](../go.mod) `go 1.27.4`; `GO_VERSION` и `GOLANGCI_LINT_VERSION` в [.gitlab-ci.yml](../.gitlab-ci.yml) (job `go-lint` — `go install` на `.go-base` вместо образа `golangci/golangci-lint:v2.12-alpine`); `FROM golang:1.27.4-alpine` в [deploy/docker/](../deploy/docker/) (`receiver`, `sender`, `web`, `loadtest`); страж [tests/deploy/versions_test.go](../tests/deploy/versions_test.go) `TestGoVersion_SameInGoModDockerfilesAndCI`; DEVELOPMENT §2, DEPLOYMENT (§1, §5.4, §6, §13), README, CLAUDE.md |
 | §116.2 модернизация `go fix` 1.27 | ✅ Phase 116.2 | 27 файлов `go fix` (`errors.AsType` вместо `var x; errors.As(err, &x)`, повышенные поля во вложенных литералах — `PartitionPosition{First: …}` вместо `{Watermark: Watermark{…}}`, в integration-тестах `atomic.Int32`, `wg.Go`, `range n`) + `modernize` v2.15: `slices.Clip` в [sender/startup.go](../internal/sender/startup.go) `fields`, `reflect.TypeAssert` в [metrics/node_labels_test.go](../internal/platform/metrics/node_labels_test.go). Поведение не меняется |
+| §116.3 Go-модули | ✅ Phase 116.3 | Все прямые и косвенные до последних ([go.mod](../go.mod)): clickhouse-go 2.51, pgx 5.13, grpc 1.85, prometheus client_golang 1.25, sentry-go 0.50, testcontainers 0.45, otel 1.47, x/crypto 0.59, tint 1.2 и др. Логгер **`github.com/vsilchenkov/logging` v1.8.0** (свой обработчик событий Sentry, Go 1.27.4, тесты). Правки API: [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (`Query`/`QueryRange` вернули 4 значения — `Infos`), заглушки `driver.Conn` (`QueryFormat`, `InsertFormat`) в [clickhouse/manager_test.go](../internal/platform/clickhouse/manager_test.go) и [usecase/settings_tester_test.go](../internal/web/usecase/settings_tester_test.go), `tint.NewTextHandler` в [bootstrap/logger.go](../internal/platform/bootstrap/logger.go), fan-out — `slog.NewMultiHandler` (обёртка `logging.NewMultiHandler` удалена). Регрессия [platform/logging/logging_test.go](../internal/platform/logging/logging_test.go) `TestSentryHandler_ErrorLogBecomesEvent`. `govulncheck`: 7 вызываемых уязвимостей (x/net, klauspost/compress, brotli) → 0. CI: trivy 0.55.0 → 0.76.2 |
+| §116.3 npm `web-ui` | ✅ Phase 116.3 | `npm update --save` — [package.json](../web-ui/package.json) и lock в пределах мажорных версий; удалены неиспользуемые `zod`, `react-hook-form`, `@hookform/resolvers`; скилы `nexus-web-overview`, `nexus-web-components`; CI `NODE_VERSION` 20 → 22; пересобран [internal/web/static/](../internal/web/static/) |
 
 Неочевидности:
 
@@ -7857,3 +7868,28 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 - **Новые анализаторы `modernize` v2.15** (`slicesclip`, `reflecttypeassert`) нашли два места,
   `go fix` 1.27 переписал 27 файлов на `errors.AsType` и повышенные поля в составных литералах.
   По правилу CLAUDE.md это отдельный коммит (Phase 116.2), без смены поведения.
+- **sentry-go/slog ≥ v0.48 больше не создаёт события Sentry — главная мина обновления.** В
+  v0.48 из `sentryslog.Option` удалены `Level` и `EventLevel`: обработчик шлёт только Sentry
+  Logs (а без `EnableLogs` — никуда). Логгер v1.7.9 на этом просто не собирался (`unknown field
+  Level`). Закрепить sentry на v0.47 — значит законсервировать старый SDK; «починить» вызов под
+  новый `Option` — значит молча выключить Sentry: ошибки nexus попадают туда только событием
+  этого обработчика (`safego.Recover`, recovery-middleware, `logger.Error`). Решение — логгер
+  v1.8.0 со своим обработчиком событий (перенос `eventHandler`/`DefaultConverter` из
+  sentryslog v0.47 с тем же контрактом: атрибуты → теги события, их маскирует
+  `platform/sentry` в `BeforeSend`; `error`/`err` → исключение; hub — из контекста записи).
+  Регрессионный тест nexus зелёный и на v1.7.9, и на v1.8.0 — контракт события совпадает.
+  Если когда-то перейдём на Sentry Logs — это отдельное решение, а не побочный эффект `go get -u`.
+- **`MultiHandler` вендора заменён `slog.NewMultiHandler`** (Go 1.26). В stdlib запись
+  клонируется для каждого обработчика, ошибки объединяются `errors.Join` (у вендора — первая).
+  В логгере v1.8.0 `MultiHandler`/`NewMultiHandler` — устаревшие псевдонимы stdlib.
+- **`go get -u ./...` не трогает тестовые зависимости под тегом `integration`.** testcontainers и
+  miniredis остались бы на старых версиях. Полное обновление —
+  `GOFLAGS=-tags=integration go get -u -t ./...`, затем `go mod tidy`.
+- **npm: уязвимости, которые закрываются только мажорами** (`npm audit` после обновления, 7 шт.):
+  в бандле — `react-router-dom` 6 (moderate: open redirect через `\` в `<Link>`/`useNavigate`);
+  в инструментах — `vite` 5 и `esbuild` (dev-сервер), `vitest` 1 / `tinypool` / `vite-node`
+  (раннер тестов, UI не запускается). Это вход для отдельного ТЗ мажоров (§7 «Куда копать
+  дальше»). `zod` 3 (high) ушёл вместе с пакетом: в `src/` он не использовался.
+- **vitest на Windows: `No test suite found` во всех 108 файлах** — не обновление, а строчная
+  буква диска в рабочем каталоге (`c:\…` у терминала расширения VS Code). Из `C:\…` — 1069 тестов
+  зелёные (DEVELOPMENT, «Фронтовые unit-тесты»).

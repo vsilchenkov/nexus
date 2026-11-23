@@ -38,13 +38,10 @@ func NewLogger(s *slog.Logger) Logger {
 	return extlog.NewLogger(s)
 }
 
-// NewMultiHandler — fan-out slog.Handler по нескольким хендлерам (re-export):
-// Enabled = OR, Handle доставляет запись каждому включённому хендлеру.
-func NewMultiHandler(handlers ...slog.Handler) slog.Handler {
-	return extlog.NewMultiHandler(handlers...)
-}
-
-// SentryHandler — slog.Handler, шлющий записи >= level в Sentry (re-export).
+// SentryHandler — slog.Handler, превращающий записи >= level в события Sentry
+// (re-export). Атрибуты записи становятся тегами события — на это опирается
+// маскирование в platform/sentry (BeforeSend), атрибут error — исключением.
+// Hub — из контекста записи (Logger.WithContext), иначе текущий.
 func SentryHandler(level slog.Level) slog.Handler {
 	return extlog.SentryHandler(level)
 }
