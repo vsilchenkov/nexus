@@ -23,7 +23,8 @@ import (
 //	}()
 //
 // logger.Error сам отправляет событие в Sentry (SentryHandler логгера
-// vsilchenkov/logging: событие на каждую запись уровня Error и выше). У фоновой
+// vsilchenkov/logging: событие на каждую запись не ниже порога sentry.level,
+// Error проходит любой допустимый порог). У фоновой
 // горутины нет request-scoped hub'а, так что событие уходит в глобальный
 // CurrentHub — это корректно. Stacktrace точки
 // паники кладётся атрибутом stack.

@@ -7854,6 +7854,7 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 | §116.3 npm `web-ui` | ✅ Phase 116.3 | `npm update --save` — [package.json](../web-ui/package.json) и lock в пределах мажорных версий; удалены неиспользуемые `zod`, `react-hook-form`, `@hookform/resolvers`; скилы `nexus-web-overview`, `nexus-web-components`; CI `NODE_VERSION` 20 → 22; пересобран [internal/web/static/](../internal/web/static/) |
 | §116.4 PostgreSQL 16 — минимум, образ закреплён | ✅ Phase 116.4 | `postgres:16.16-alpine` в [docker-compose.yml](../docker-compose.yml), [deploy/docker-compose.yml](../deploy/docker-compose.yml), [deploy/docker-compose.deps.yml](../deploy/docker-compose.deps.yml) и `defaultPostgresImage` ([tests/integration/node_repo_test.go](../tests/integration/node_repo_test.go)); страж [tests/deploy/versions_test.go](../tests/deploy/versions_test.go) `TestPostgresImage_PinnedEverywhere` (красный на прежнем `12-alpine` и на плавающем теге); правило «минимум 16, возможности 13–16 разрешены» — DEVELOPMENT («Шаг 2. Применить миграции», integration-образы), DEPLOYMENT (§12 бэкап, заметка 0031), ТЗ §71/§94/§99/§103 и `nexus_spec.md`, грабля §88.4.1 выше; комментарии кода «на бою 12»; общий стек ПК — `services` `bf83a7e` (16.11 → 16.16), [docs/STAND_TESTING.md](../docs/STAND_TESTING.md). Тексты применённых миграций не тронуты |
 | §116.5 перенос нативного кластера в контейнер | ✅ Phase 116.5 | [scripts/deploy/pg_migrate_native.sh](../scripts/deploy/pg_migrate_native.sh) (`check`/`dump`/`restore`/`verify`); защитные отказы без Docker — [tests/deploy/pg_migrate_test.go](../tests/deploy/pg_migrate_test.go) (оборванный дамп, нет снимков, непустой том, оборванный `pg_dumpall`, клиент без stdin по сокету); репетиция [scripts/stand/pg_migrate_rehearsal.sh](../scripts/stand/pg_migrate_rehearsal.sh) — пройдена 23.11.2026 (5 баз, 4 роли, 29 таблиц, вход по md5); DEPLOYMENT §5.4.4 (процедура, сеть, откат) и вариант B, шаблоны `deploy/docker-compose.override.yml` и `…ha.external-pg.override.yml`, DEVELOPMENT («Репетиция переноса PostgreSQL»), ТЗ §116.5 |
+| §116.7 ревизия перед сдачей | ✅ Phase 116.7 | Независимый разбор скрипта переноса (2 блокера, 7 важных, 9 мелких) + своя ревизия diff'а. Скрипт переписан: `dump` отказывает при подключённых клиентах и сверяет счётчики записи до/после, новая подкоманда `fence`; `check`/`restore` отказывают при порте на всех интерфейсах, `pg_hba` тома — частные сети; `ON_ERROR_STOP` + код выхода psql; снимок — схема, настройки баз и ролей, ACL, последовательности, `infinity`, сбои запросов не прячутся; `.post.sql` — свойства `postgres`/`template1` и `ALTER SYSTEM` сеансовых настроек; проба кодировки с локалью; вход приложения до переключения; ловушки и подсказка про том; `PGDATABASE` вместо `-d`. Тесты [pg_migrate_test.go](../tests/deploy/pg_migrate_test.go) (+ клиенты, запись во время дампа, fence, порт), репетиция расширена; DEPLOYMENT §5.4.4 (порт до окна, `fence`, `start.conf`, `nginx -s reload`, уборка дампа), описание релиза, ТЗ §116.3/§116.5–116.7; `check` скрывает значения `*conninfo*`/`*passphrase*`/`*password*`; `safego` — порог `sentry.level` |
 
 Неочевидности:
 
@@ -7914,3 +7915,35 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 - **Порт — существующим приёмом, без новой переменной.** Публикация закрывается
   `ports: !override` в локальном override, как в standalone-шаблоне (§5.3.1); первая редакция ТЗ
   предлагала `PG_PUBLISH` — отказались: ещё одна переменная `.env` ради одной строки override.
+- **Ревизия скрипта переноса — чем опасен «зелёный verify».** Первая редакция сверяла цель со
+  снимком на момент дампа и считала только строки. Запись в источник ПОСЛЕ дампа (клиент чужой
+  системы, cron) терялась молча, а `UPDATE` счётчики строк не меняет вовсе. Теперь — отказ `dump`
+  при подключённых клиентах, счётчики `n_tup_ins + n_tup_upd + n_tup_del` по `pg_stat_user_tables`
+  каждой базы до и после дампа и подкоманда `fence` перед остановкой нативного сервера.
+  Пользовательские таблицы, а не `pg_stat_database`: `ANALYZE` автовакуума пишет в каталоги и дал бы
+  ложную тревогу. Задержка коллектора статистики PG 12 — `sleep 2` (`NEXUS_PG_STATS_DELAY` только
+  для тестов). Обрыв на post-data (индексы, ограничения, права) счётчики строк тоже не видят —
+  отсюда снимок схемы числом объектов по видам без объектов расширений (версия расширения в 16
+  может быть новее).
+- **«Слушал только localhost» на бою не бывает.** Контейнеры ходили к нативному серверу через
+  `host.docker.internal`, значит он слушал адрес шлюза docker-сети или `*`. Оговорка «закройте порт,
+  если…» никогда бы не сработала, и роли всех баз оказались бы открыты для перебора с
+  `host all all all md5` на `0.0.0.0:5432` в обход ufw. Порт закрывается до окна, `check`/`restore`
+  иначе отказывают, а `pg_hba` тома пускает по паролю только частные сети.
+- **`pg_dumpall` без `--clean` теряет свойства `postgres`/`template1`.** Настройки базы и ролей в
+  ней, права, лимит и комментарий этих двух баз не дампятся (их не пересоздают). Их строит
+  `.post.sql` из каталога источника: `aclexplode` → REVOKE/GRANT, `pg_db_role_setting` → ALTER … SET
+  (у `search_path` и других списочных GUC значение без кавычек — оно уже в синтаксисе списка). В
+  сверке права — разобранные и отсортированные без grantor'а, NULL — как `acldefault`.
+- **Сеансовые настройки — из `pg_file_settings`, а не из сеанса.** `ALTER DATABASE postgres SET
+  TimeZone` перекрыл бы серверное значение в сеансе снимка, и `ALTER SYSTEM` перенёс бы его. У
+  `timezone_abbreviations` `boot_val` = NULL (значение подставляется при старте) — `format('%L',
+  NULL)` даёт голое `NULL` и синтаксическую ошибку; NULL не переносится, в сверке — `-`.
+- **Две несовместимости 12 ↔ 16, найденные репетицией.** `'rel:' || c.relkind` (тип `"char"`) в 16 —
+  `operator is not unique: unknown || "char"`, в 12 работало: явный `::text`. И `VALID UNTIL
+  'infinity'`: `extract(epoch …)::bigint` падает в обеих версиях — срок через `isfinite`. Оба места
+  на источнике прошли бы, а упали бы на цели или в окне — поэтому `check` снимает пробный снимок.
+- **Вход приложения — до переключения, по сети контейнера.** Через `127.0.0.1` внутри контейнера
+  проверять нельзя: там в `pg_hba` образа `trust`. `restore` подключается к адресу контейнера
+  (`hostname -i`) — правило частных сетей, `md5`, пароль из `.env` через `-e PGPASSWORD` без значения
+  (в `argv` docker его нет).

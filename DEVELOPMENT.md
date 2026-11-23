@@ -327,9 +327,11 @@ PostgreSQL 12 объясняют решения своего времени. М�
   `deploy/prometheus.alerts.test.yml`: тест сверяет метки и тексты алертов целиком.
 - **Репетиция переноса PostgreSQL** (§116.5) — `./scripts/stand/pg_migrate_rehearsal.sh` (Git Bash,
   нужен Docker; `KEEP=1` оставляет ресурсы для разбора). Прогоняет
-  `scripts/deploy/pg_migrate_native.sh` целиком (`check → dump → restore → verify`, переключение,
-  вход по прежним паролям) против «нативного» `postgres:12` на glibc с peer-сокетом в docker-томе и
-  md5-ролями; базу `nexus` копирует со стека `services`. Цель — сервис корневого compose в проекте
+  `scripts/deploy/pg_migrate_native.sh` целиком (`check → dump → restore → fence → verify`,
+  переключение, вход по прежним паролям, перенесённые часовой пояс, настройки и права) против
+  «нативного» `postgres:12` на glibc с peer-сокетом в docker-томе, md5-ролями и часовым поясом в
+  конфигурации; базу `nexus` копирует со стека `services`. Проверяет и отказы: `dump` при
+  подключённом клиенте, `fence` после записи в источник, `restore` в непустой том. Цель — сервис корневого compose в проекте
   `nexus-pgmig` на `127.0.0.1:55432`, ресурсы — `nexus-pgmig-*`, файлы — `deploy/arc/pgmig-rehearsal`.
   Поменяли скрипт переноса — прогоните. Под Windows скрипт переноса ходит к docker с
   `MSYS_NO_PATHCONV=1` (репетиция ставит сама), иначе Git Bash переписывает `/var/run/postgresql`
