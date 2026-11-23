@@ -1,6 +1,6 @@
 # Nexus — шина данных для HTTP-интеграций
 
-[![Go 1.26](https://img.shields.io/badge/go-1.26-00ADD8?logo=go)](go.mod)
+[![Go 1.27](https://img.shields.io/badge/go-1.27-00ADD8?logo=go)](go.mod)
 [![React 18](https://img.shields.io/badge/react-18-61DAFB?logo=react&logoColor=white)](web-ui/package.json)
 [![PostgreSQL](https://img.shields.io/badge/postgres-16-4169E1?logo=postgresql&logoColor=white)](migrations/)
 [![ClickHouse](https://img.shields.io/badge/clickhouse-24-FFCC01?logo=clickhouse&logoColor=black)](specs/sections/05-storage.md)
@@ -252,7 +252,7 @@ REST API Web и Receiver раздаются самим приложением �
 
 | Компонент    | Версия |
 |--------------|--------|
-| Go           | 1.26   |
+| Go           | 1.27.4 |
 | PostgreSQL   | 16     |
 | Redis        | 7      |
 | ClickHouse   | 24     |

@@ -14,7 +14,7 @@
 
 | Параметр                | Значение                                                              |
 |-------------------------|-----------------------------------------------------------------------|
-| Go-версия               | 1.26                                                                  |
+| Go-версия               | 1.27.4 (§116; образ сборки `golang:1.27.4-alpine`)                    |
 | Тип проекта             | три stateless backend-сервиса (Receiver, Sender, Web) + SPA админка   |
 | Архитектура             | Clean Architecture: `handler → usecase → port → adapter`              |
 | Главный поток           | `POST /api/v1/request/<team_slug>/{path}` → Web (единый вход, reverse-proxy) → Receiver → gRPC Sender → внешний URL → лог в ClickHouse `nexus_<team_slug>.<table>` |
@@ -7828,3 +7828,31 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
   шага».
 - **Граница, дописанная в ТЗ §115.10:** «Остановить» после того, как сервер дописал файл в сокет,
   в аудите остаётся завершённой выгрузкой (Web о разрыве не узнаёт) — замечено на стенде.
+
+### 4.101 §116 — Go 1.27.4, обновление зависимостей и PostgreSQL 16.16
+
+Раздел [116-go127-deps-pg16.md](sections/116-go127-deps-pg16.md).
+Ветка `feature/go127-deps-pg16` (от `dev`). Миграций схемы нет, ключей `config.yml` нет.
+Меняется развёртывание базы на боевом сервере (§116.5).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §116 | ✅ Phase 116.0 | [sections/116-go127-deps-pg16.md](sections/116-go127-deps-pg16.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| §116.2 Go 1.27.4 | ✅ Phase 116.1 | [go.mod](../go.mod) `go 1.27.4`; `GO_VERSION` и `GOLANGCI_LINT_VERSION` в [.gitlab-ci.yml](../.gitlab-ci.yml) (job `go-lint` — `go install` на `.go-base` вместо образа `golangci/golangci-lint:v2.12-alpine`); `FROM golang:1.27.4-alpine` в [deploy/docker/](../deploy/docker/) (`receiver`, `sender`, `web`, `loadtest`); страж [tests/deploy/versions_test.go](../tests/deploy/versions_test.go) `TestGoVersion_SameInGoModDockerfilesAndCI`; DEVELOPMENT §2, DEPLOYMENT (§1, §5.4, §6, §13), README, CLAUDE.md |
+
+Неочевидности:
+
+- **Плавающий тег образа сборки — тихая мина.** У golang-образов `GOTOOLCHAIN=local`. Образ
+  старее `go` в `go.mod` роняет сборку, а `docker compose build` берёт плавающий тег из кеша, не
+  сверяясь с реестром (DEPLOYMENT §13, строка про `go.mod requires go >= …`). Точный тег
+  `golang:1.27.4-alpine` Docker при отсутствии скачивает сам. Страж в `tests/deploy` держит одну
+  версию в `go.mod`, Dockerfile'ах и CI.
+- **golangci-lint на Go 1.27 обязан быть ≥ v2.14 и собран тем же Go.** Образ
+  `golangci/golangci-lint:v2.12-alpine` собран с x/tools < v0.50 и не читает export data
+  версии 5. Он печатал бы «0 issues» при неработающих линтерах — тот же класс дефекта, ради
+  которого в CI проверяется наличие `modernize`. Локальный бинарь —
+  `GOTOOLCHAIN=go1.27.4 go install …@v2.15.0` (на ПК стоит Go 1.27.3, нужный тулчейн
+  `GOTOOLCHAIN=auto` скачивает сам), проверка — `go version -m "$(which golangci-lint).exe"`.
+- **Новые анализаторы `modernize` v2.15** (`slicesclip`, `reflecttypeassert`) нашли два места,
+  `go fix` 1.27 переписал 27 файлов на `errors.AsType` и повышенные поля в составных литералах.
+  По правилу CLAUDE.md это отдельный коммит (Phase 116.2), без смены поведения.

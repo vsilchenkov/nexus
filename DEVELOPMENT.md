@@ -31,11 +31,18 @@ self-contained compose-файлом с пробросом портов на хо
 ## 2. Разовая подготовка
 
 1. **Docker Desktop** — установить, включить WSL2-интеграцию, запустить.
-2. **Go 1.26+** — установить, проверить `go version`.
+2. **Go 1.27.4** windows-amd64 (`go.mod`: `go 1.27.4`; поднимать вместе с `GO_VERSION` в
+   [.gitlab-ci.yml](.gitlab-ci.yml) и `FROM golang:…` в `deploy/docker/*.Dockerfile`) — MSI с go.dev,
+   проверить `go version`. Более старый локальный Go сам скачает нужный тулчейн (`GOTOOLCHAIN=auto`).
 3. **VS Code + расширение `golang.go`.** Через Command Palette (`Ctrl+Shift+P`) →
    **Go: Install/Update Tools** поставить `dlv`, `gopls`, `golangci-lint`.
-   - Версию линтера держать в соответствии с CI (`golangci/golangci-lint:v2.12`):
-     `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`.
+   - Версию линтера держать в соответствии с CI (`GOLANGCI_LINT_VERSION` в `.gitlab-ci.yml`,
+     сейчас **v2.15.0**), собранной тем же Go, что в `go.mod`:
+     `GOTOOLCHAIN=go1.27.4 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`,
+     затем `golangci-lint cache clean`. Проверка — `go version -m "$(which golangci-lint).exe" | head -1`
+     (в Git Bash `which` отдаёт путь без `.exe`) показывает `go1.27.4`. Не ниже v2.14: старее не
+     читает export data Go 1.27 и печатает «0 issues» при неработающих линтерах (признак —
+     `typechecking error … export data version 5` в выводе).
    - **На Windows запускать с `--concurrency=2`** — дефолтная параллельность
      приводит к `runtime: out of memory`:
      `golangci-lint run --timeout=10m --concurrency=2`

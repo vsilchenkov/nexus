@@ -18,7 +18,11 @@
 # Документация GitLab CI variables: https://docs.gitlab.com/ee/ci/variables/
 
 variables:
-  GO_VERSION: "1.26.8"
+  # Поднимать вместе с go.mod, deploy/docker/*.Dockerfile и DEVELOPMENT.md.
+  GO_VERSION: "1.27.4"
+  # golangci-lint читает export data Go 1.27 (версия 5) только с x/tools >= v0.50,
+  # то есть начиная с v2.14. Старее молча печатает «0 issues» при ошибках типизации.
+  GOLANGCI_LINT_VERSION: "v2.15.0"
   NODE_VERSION: "20"
   # Локальный GOPATH/GOCACHE/GOMODCACHE — кешируется между jobs.
   GOPATH: "$CI_PROJECT_DIR/.cache/go"
@@ -168,21 +172,26 @@ go-test:
 go-lint:
   stage: lint
   needs: []
-  image:
-    name: golangci/golangci-lint:v2.12-alpine
-    pull_policy: [always, if-not-present]
-  <<: *go-cache
+  # Не образ golangci/golangci-lint: он собран своим Go и x/tools и может не читать
+  # export data GO_VERSION — тогда «0 issues» при неработающих линтерах (так было бы
+  # с прежним v2.12-alpine на Go 1.27). Линтер ставится `go install` закреплённой
+  # версии на образе golang:${GO_VERSION} — тот же Go, что собирает сервисы.
+  extends: .go-base
   rules:
     - *skip-if-profiled-rule
     - when: on_success
   script:
+    # go install кладёт бинарь в $GOPATH/bin (каталог проекта, .go-base) — его нет в
+    # PATH, поэтому вызывается по полному пути.
+    - 'echo "===== go install golangci-lint ${GOLANGCI_LINT_VERSION} ====="'
+    - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}
+    - export PATH="$GOPATH/bin:$PATH"
     - 'echo "===== golangci-lint version ====="'
     - golangci-lint version
-    # Валидация .golangci.yml по JSON-схеме ИМЕННО той версии, что в образе.
-    # Образ `v2.12-alpine` — rolling (v2.12.x), и набор допустимых ключей/линтеров
-    # в нём может обгонять локальный бинарь. Без этого шага опечатка в конфиге или
-    # исчезнувший линтер (напр. `modernize`, добавленный в v2.12) диагностируются
-    # только по невнятному падению `run`. `config verify` даёт точную строку.
+    # Валидация .golangci.yml по JSON-схеме ИМЕННО той версии, что установлена.
+    # Без этого шага опечатка в конфиге или исчезнувший линтер (напр. `modernize`)
+    # диагностируются только по невнятному падению `run`. `config verify` даёт
+    # точную строку.
     - 'echo "===== golangci-lint config verify ====="'
     - golangci-lint config verify
     # Явная проверка, что modernize реально включён в ЭТОМ прогоне: `run` с
