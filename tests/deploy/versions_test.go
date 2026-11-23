@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -56,4 +57,31 @@ func TestGoVersion_SameInGoModDockerfilesAndCI(t *testing.T) {
 	}
 	// receiver, sender, web, loadtest — защита от пустого прогона.
 	assert.GreaterOrEqual(t, checked, 4, "Go Dockerfiles not found")
+}
+
+// TestPostgresImage_PinnedEverywhere — PostgreSQL одной точной версии во всех
+// compose-файлах и в integration-тестах (ТЗ §116.4). Плавающий тег
+// `postgres:16-alpine` Docker Hub двигает на каждый минорный выпуск, и сервер,
+// стек ПК и раннер CI оказывались на разных версиях. Integration-тесты
+// гоняются на минимальной поддерживаемой версии (§71) — она же боевая.
+func TestPostgresImage_PinnedEverywhere(t *testing.T) {
+	t.Parallel()
+	exact := regexp.MustCompile(`^postgres:\d+\.\d+-alpine$`)
+	want := firstSubmatch(regexp.MustCompile(`(?m)^const defaultPostgresImage = "([^"]+)"`),
+		readRepoFile(t, "tests/integration/node_repo_test.go"))
+	require.Regexp(t, exact, want, "defaultPostgresImage must be an exact minor version")
+
+	checked := 0
+	for _, path := range composePaths(t) {
+		for name, svc := range loadCompose(t, path).Services {
+			img, _ := svc["image"].(string)
+			if !strings.HasPrefix(img, "postgres:") {
+				continue
+			}
+			checked++
+			assert.Equal(t, want, img, "%s: service %s", filepath.Base(path), name)
+		}
+	}
+	// корневой, deploy/docker-compose.yml, deploy/docker-compose.deps.yml
+	assert.GreaterOrEqual(t, checked, 3, "postgres services not found")
 }

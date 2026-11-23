@@ -69,8 +69,9 @@ docker compose -f deploy/docker-compose.stand-ha.yml down
 | echosrv (получатель) | http://localhost:9999 |
 
 Зависимости для нативного запуска берутся из **постоянного docker-стека `services`**
-(compose-проект `services`, уже запущен на машине разработчика): PostgreSQL `:5432`,
-Redis `:6379`, ClickHouse `:19000` (native) / `:18123` (HTTP), Kafka `:9092`.
+(compose-проект `services`, уже запущен на машине разработчика): PostgreSQL `:5432`
+(`postgres:16.16-alpine`, как на бою и в integration-тестах, — коммит `bf83a7e` репозитория
+`services`; версия — `docker exec postgres postgres --version`), Redis `:6379`, ClickHouse `:19000` (native) / `:18123` (HTTP), Kafka `:9092`.
 Адреса/креды зашиты в [config/config_debug.yml](../config/config_debug.yml) и **уже
 соответствуют `services`** (postgres `postgres`/`vOkjDn`/db `nexus`; redis ACL-пользователь
 `sa`/`I2MV5s`; clickhouse `default` без пароля; kafka `localhost:9092`).

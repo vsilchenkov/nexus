@@ -264,7 +264,8 @@ WHERE clickhouse_table <> '' AND clickhouse_retention_days > 0 AND NOT external_
 }
 
 // nodesSnapshotSQL — число узлов на паузе и отпечаток таблицы nodes (§113.3).
-// Совместим с PostgreSQL 12 (бой): FILTER и string_agg … ORDER BY есть с 9.4.
+// Синтаксис старше минимальной версии (PostgreSQL 16, §116): FILTER и
+// string_agg … ORDER BY есть с 9.4.
 const nodesSnapshotSQL = `
 SELECT count(*) FILTER (WHERE status = $1),
        coalesce(md5(string_agg(id::text || ':' || xmin::text, ',' ORDER BY id)), '')

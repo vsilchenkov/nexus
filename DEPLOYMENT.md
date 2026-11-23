@@ -882,7 +882,7 @@ docker compose -f docker-compose.yml \
 | `receiver`                    | 8 МиБ / 30 МБ RSS  | ~0     | да         |
 | `sender`                      | 13 МиБ / 36 МБ RSS | ~0     | да         |
 | `web`                         | 19 МиБ / 53 МБ RSS | ~0     | да         |
-| `postgres:16-alpine`          | ~145 МиБ           | ~0     | да         |
+| `postgres:16.16-alpine`       | ~145 МиБ           | ~0     | да         |
 | `redis:7-alpine`              | ~20 МиБ            | ~0.3 % | да         |
 | `kafka` (heap по умолчанию)   | ~1.2 ГБ (расчёт)   | 2–5 %  | да         |
 | `kafka` (`-Xmx512m -Xms256m`) | ~515 МиБ           | ~0.6 % | да         |
@@ -2100,8 +2100,8 @@ web:
   `0031_user_preferences` создаёт таблицу `user_preferences(user_id, team_id, key, value, updated_at)`
   с FK на `users(id)` и на `user_teams(user_id, team_id)` (оба `ON DELETE CASCADE`); применяется
   автоматически на старте, чисто аддитивная, существующие данные не трогает.
-  Совместима с **PostgreSQL 12** (минимальная поддерживаемая версия — на ней работают боевые
-  инсталляции): уникальность «одна запись на пользователя, команду и ключ» обеспечена индексом по
+  Совместима с **PostgreSQL 12** (минимальная поддерживаемая версия до 1.42.0; с 1.42.0 —
+  16, §116): уникальность «одна запись на пользователя, команду и ключ» обеспечена индексом по
   выражению `COALESCE(team_id, …)`, а не `UNIQUE NULLS NOT DISTINCT` из PostgreSQL 15.
   Новых ENV и конфиг-ключей нет; новые эндпоинты `GET/PUT /api/me/prefs` отдаёт Web Service
   (session-only), отдельного шага деплоя не требуют.
@@ -3448,7 +3448,8 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
   недоступен или что-то пошло не так — например `./scripts/deploy/pg_dump.sh --check` показал
   не тот режим (принудительно: `NEXUS_PG_MODE=docker|native`).
 
-  **Если PostgreSQL НЕ в Docker** (нативный сервис — так развёрнут бой): `pg_dump` запускается
+  **Если PostgreSQL НЕ в Docker** (нативный сервис — так был развёрнут бой до 1.42.0; с 1.42.0 он
+  в контейнере стека, §5.4.4): `pg_dump` запускается
   с хоста, реквизиты берутся из `.env` (`PG_PORT` / `PG_USER` / `PG_DATABASE` / `PG_PASSWORD`;
   `PG_HOST` — намеренно нет, см. ловушку 2 ниже):
 
@@ -3511,11 +3512,12 @@ docker compose -f deploy/docker-compose.app.yml run --rm web --set-admin-passwor
      sudo -u postgres pg_dump nexus > deploy/arc/nexus_pg.sql
      ```
 
-  **Версия клиента должна быть не ниже версии сервера** (на бою PostgreSQL 12): `pg_dump` более
-  старой мажорной версии откажется работать с новой базой, обратное — допустимо.
+  **Версия клиента должна быть не ниже версии сервера** (минимальная поддерживаемая версия
+  сервера — 16): `pg_dump` более старой мажорной версии откажется работать с новой базой,
+  обратное — допустимо. В docker-режиме клиент берётся из того же образа, что и сервер.
 
-  **Если PostgreSQL в Docker** (варианты A/C — контейнер `postgres` в этом же стеке: dev-стенд,
-  тестовые установки):
+  **Если PostgreSQL в Docker** (варианты A/C — контейнер `postgres` в этом же стеке: бой с 1.42.0,
+  dev-стенд, тестовые установки):
 
   ```bash
   docker compose exec -T postgres pg_dump -U nexus nexus > deploy/arc/nexus_pg.sql
