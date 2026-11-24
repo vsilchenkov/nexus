@@ -186,6 +186,25 @@ type RejectedGroup struct {
 	// администратор (§94.6).
 	TeamID   string
 	TeamName string
+
+	// Node — узел отказа по его ТЕКУЩЕМУ состоянию (§117.5), заполняется на
+	// чтении. nil — отказ к узлу не относится (случился до резолва), группа
+	// накоплена до §117 и с тех пор не повторялась, либо узел удалён — тогда
+	// NodeDeleted.
+	Node *RejectedNode
+	// NodeDeleted — узел группы был сохранён, но его больше нет.
+	NodeDeleted bool
+}
+
+// RejectedNode — узел, к которому относится группа отказов (§117.5). Путь и
+// статус — текущие: переименование и смена статуса после отказа ссылку не
+// ломают.
+type RejectedNode struct {
+	ID       string
+	Path     string
+	Status   NodeStatus
+	TeamSlug string
+	TeamName string
 }
 
 // Resolved сообщает, помечена ли группа разобранной.

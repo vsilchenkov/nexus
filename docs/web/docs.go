@@ -11646,6 +11646,18 @@ const docTemplate = `{
                 "last_seen": {
                     "type": "string"
                 },
+                "node": {
+                    "description": "Node — узел, к которому относится отказ (§117.5), по ТЕКУЩЕМУ состоянию;\nнет — отказ до резолва или группа накоплена до §117.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_web_adapter_in_http.rejectedNodeResponse"
+                        }
+                    ]
+                },
+                "node_deleted": {
+                    "description": "NodeDeleted — узел был, но удалён: показывается «узел удалён» без ссылки.",
+                    "type": "boolean"
+                },
                 "node_path": {
                     "type": "string"
                 },
@@ -11690,6 +11702,26 @@ const docTemplate = `{
                 },
                 "total": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_web_adapter_in_http.rejectedNodeResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "team_name": {
+                    "type": "string"
+                },
+                "team_slug": {
+                    "type": "string"
                 }
             }
         },

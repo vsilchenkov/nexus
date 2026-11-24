@@ -36,17 +36,32 @@ func NewRejectedRepoPg(db DBTX, logger logging.Logger) *RejectedRepoPg {
 // Команда приезжает из LEFT JOIN teams: слог хранится как пришёл в URL и может
 // не соответствовать ни одной команде — тогда обе колонки пусты, и группа
 // считается «команда не опознана» (§94.6).
+//
+// Узел группы (§117.5) — из LEFT JOIN nodes по сохранённому node_id и его
+// команды: путь и статус ТЕКУЩИЕ. node_id задан, а строки узла нет — узел
+// удалён (FK намеренно нет, отказы удалённого узла живут до срока хранения).
 const rejectedGroupCols = `g.id, g.team_slug, g.node_path, g.reason, g.http_method, g.status,
 	g.first_seen, g.last_seen, g.count, g.clients, g.resolved_at, COALESCE(g.resolved_by, ''),
-	COALESCE(t.id::text, ''), COALESCE(t.name, '')`
+	COALESCE(t.id::text, ''), COALESCE(t.name, ''),
+	COALESCE(n.id::text, ''), COALESCE(n.path, ''), COALESCE(n.status, ''),
+	COALESCE(nt.slug, ''), COALESCE(nt.name, ''), (g.node_id IS NOT NULL AND n.id IS NULL)`
 
+// rejectedGroupFrom — основа фильтров, счётчиков и массовых операций: узел им
+// не нужен, лишние join'ы туда не идут.
 const rejectedGroupFrom = ` FROM rejected_groups g LEFT JOIN teams t ON t.slug = g.team_slug`
+
+// rejectedGroupReadFrom — то же плюс узел группы: для выборок, которые
+// сканируют группы целиком (rejectedGroupCols).
+const rejectedGroupReadFrom = rejectedGroupFrom +
+	` LEFT JOIN nodes n ON n.id = g.node_id LEFT JOIN teams nt ON nt.id = n.team_id`
 
 func (r *RejectedRepoPg) scanGroup(row rowScanner) (*domain.RejectedGroup, error) {
 	var g domain.RejectedGroup
+	var node domain.RejectedNode
 	err := row.Scan(&g.ID, &g.TeamSlug, &g.NodePath, &g.Reason, &g.HTTPMethod, &g.Status,
 		&g.FirstSeen, &g.LastSeen, &g.Count, &g.Clients, &g.ResolvedAt, &g.ResolvedBy,
-		&g.TeamID, &g.TeamName)
+		&g.TeamID, &g.TeamName,
+		&node.ID, &node.Path, &node.Status, &node.TeamSlug, &node.TeamName, &g.NodeDeleted)
 	if err != nil {
 		// isInvalidUUID: `:id` из пути не UUID — это «не найдено» (404), а не
 		// 500 с шумом в Sentry. Тот же приём, что в остальных репозиториях.
@@ -54,6 +69,9 @@ func (r *RejectedRepoPg) scanGroup(row rowScanner) (*domain.RejectedGroup, error
 			return nil, domain.ErrRejectedGroupNotFound
 		}
 		return nil, fmt.Errorf("scan rejected_groups: %w", err)
+	}
+	if node.ID != "" {
+		g.Node = &node
 	}
 	return &g, nil
 }
@@ -113,7 +131,7 @@ func rejectedWhere(f port.RejectedFilter) (string, []any) {
 
 func (r *RejectedRepoPg) ListRejected(ctx context.Context, f port.RejectedFilter) ([]*domain.RejectedGroup, error) {
 	where, args := rejectedWhere(f)
-	q := `SELECT ` + rejectedGroupCols + rejectedGroupFrom + ` WHERE 1=1` + where +
+	q := `SELECT ` + rejectedGroupCols + rejectedGroupReadFrom + ` WHERE 1=1` + where +
 		` ORDER BY g.last_seen DESC, g.id DESC`
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
@@ -174,7 +192,7 @@ FROM f`
 
 func (r *RejectedRepoPg) GetRejected(ctx context.Context, id string) (*domain.RejectedGroup, error) {
 	return r.scanGroup(r.db.QueryRow(ctx,
-		`SELECT `+rejectedGroupCols+rejectedGroupFrom+` WHERE g.id = $1::uuid`, id))
+		`SELECT `+rejectedGroupCols+rejectedGroupReadFrom+` WHERE g.id = $1::uuid`, id))
 }
 
 func (r *RejectedRepoPg) ListRejectedClients(ctx context.Context, groupID string, limit int) ([]domain.RejectedClient, error) {
