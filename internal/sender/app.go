@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	chdrv "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -792,8 +793,7 @@ func (a *App) Stop(ctx context.Context) error {
 	a.logger.Info("sender shutting down")
 
 	a.drain(ctx)
-	a.stopQueueConsumers()
-	a.stopGRPC(ctx)
+	a.stopDeliveries(ctx)
 	a.awaitBackgroundJobs(ctx)
 	a.closeStorageResources(ctx)
 
@@ -807,24 +807,49 @@ func (a *App) Stop(ctx context.Context) error {
 	return a.shutdownTelemetry(ctx)
 }
 
-// stopQueueConsumers прекращает чтение всех Kafka-очередей.
-func (a *App) stopQueueConsumers() {
+// stopDeliveries — мягкая остановка доставок (§118.8).
+//
+// Чтение очередей к этому моменту уже остановлено: runner отменил контекст
+// приложения до App.Stop. Здесь доигрываются доставки в полёте — основной
+// async-consumer, DLQ-репроцессор (§36) и sweeper паузы (§3.6) — и
+// одновременно с ними GracefulStop gRPC (sync-вызовы). Всё под ОДНИМ потолком
+// shutdown.timeout_sec и параллельно: последовательно потолки сложились бы, и
+// остановка не уложилась бы в stop_grace_period Docker'а. По потолку доставка
+// обрывается — прежнее поведение до §118.
+func (a *App) stopDeliveries(ctx context.Context) {
+	budget, cancel := context.WithTimeout(ctx, a.cfg.Shutdown.Timeout())
+	defer cancel()
+
+	var wg sync.WaitGroup
 	if a.consumer != nil {
-		a.consumer.Stop()
+		wg.Go(func() {
+			defer safego.Recover(a.logger, "sender.drainAsyncConsumer")
+			a.consumer.Shutdown(budget)
+		})
 	}
-	// §38: retry-консьюмер останавливаем до chWriter — его InsertBatch ходит
-	// через chWriter; после Stop chWriter вернёт ошибку и offset не закоммитится.
+	if a.dlqReproc != nil {
+		wg.Go(func() {
+			defer safego.Recover(a.logger, "sender.drainDLQReprocessor")
+			a.dlqReproc.Shutdown(budget, a.dlqReprocDone)
+		})
+	}
+	if a.pausedSweep != nil {
+		wg.Go(func() {
+			defer safego.Recover(a.logger, "sender.drainPausedSweep")
+			a.pausedSweep.Shutdown(budget, a.pausedSweepDone)
+		})
+	}
+	wg.Go(func() {
+		defer safego.Recover(a.logger, "sender.grpcStop")
+		a.stopGRPC(budget)
+	})
+	wg.Wait()
+
+	// §38: retry-консьюмер логов останавливаем до chWriter — его InsertBatch
+	// ходит через chWriter; после Stop chWriter вернёт ошибку и offset не
+	// закоммитится. Доставок к получателям у него нет — дренаж не нужен.
 	if a.retryConsumer != nil {
 		a.retryConsumer.Stop()
-	}
-	// §36: закрываем consumer DLQ-sweeper'а — Run выйдет из FetchMessage и
-	// завершит горутину (дожидаемся ниже через dlqReprocDone).
-	if a.dlqReproc != nil {
-		a.dlqReproc.Stop()
-	}
-	// §3.6: аналогично для sweeper'а delay-топика paused-узлов.
-	if a.pausedSweep != nil {
-		a.pausedSweep.Stop()
 	}
 }
 

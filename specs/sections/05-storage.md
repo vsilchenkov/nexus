@@ -105,7 +105,7 @@ UI умеет:
 | `min.insync.replicas` | 2 | Дефолт на уровне брокера |
 | `auto.create.topics.enable` | false | Топики создаёт приложение явно, со своими параметрами |
 | `delete.topic.enable` | true | Разрешить удаление через API (для DevOps-процедур) |
-| `transaction.state.log.replication.factor` | 3 | Для exactly-once семантики producer'а |
+| `transaction.state.log.replication.factor` | 3 | Для транзакций Kafka (Nexus их не использует, §118.10) |
 | `transaction.state.log.min.isr` | 2 | То же |
 | `group.initial.rebalance.delay.ms` | 3000 | Задержка перед ребалансировкой при подъёме новых consumer'ов |
 | `compression.type` | producer | Использовать сжатие, переданное producer'ом |
@@ -114,7 +114,7 @@ UI умеет:
 
 В секции `kafka.producer` конфига. Полный список и обоснование выбора:
 - `acks: all` — самая надёжная настройка, ждём подтверждения от всех ISR. С `min.insync.replicas=2` это значит подтверждение от 2 broker'ов.
-- `enable.idempotence: true` — гарантирует exactly-once на стороне producer'а в рамках одной сессии (дубликаты не создаются при retry).
+- `enable.idempotence: true` — **не применяется** (§118.10): клиент `segmentio/kafka-go` идемпотентного producer'а не поддерживает, и повтор записи может задвоить сообщение в топике (с тем же ID конверта — получатель отсеивает по `X-Nexus-Id`). Так же не применяются `retries`, `delivery.timeout.ms`, `max.in.flight`.
 - `compression.type: lz4` — сжатие на стороне producer'а, broker сохраняет как есть.
 - `linger.ms: 5` — микро-батчинг: producer ждёт до 5 мс, чтобы набрать батч сообщений. Снижает overhead per-message в 5–10 раз при высоком RPS.
 - `batch.size: 65536` (64 KB) — размер батча в байтах.

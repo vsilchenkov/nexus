@@ -38,6 +38,9 @@ services:
       dockerfile: deploy/docker/receiver.Dockerfile
     restart: unless-stopped
     logging: *logging
+    # §93.5/§118.8: Docker обязан ждать дольше drain_sec + timeout_sec (5 + 30 с)
+    # плюс сброс логов в ClickHouse; дефолт Docker — 10 с, и он оборвал бы дренаж.
+    stop_grace_period: 45s
     env_file: ../.env
     depends_on:
       sender: { condition: service_started }
@@ -59,6 +62,9 @@ services:
       dockerfile: deploy/docker/sender.Dockerfile
     restart: unless-stopped
     logging: *logging
+    # §93.5/§118.8: Docker обязан ждать дольше drain_sec + timeout_sec (5 + 30 с)
+    # плюс сброс логов в ClickHouse; дефолт Docker — 10 с, и он оборвал бы дренаж.
+    stop_grace_period: 45s
     env_file: ../.env
     ports:
       - "9190:9190"
@@ -79,6 +85,9 @@ services:
       dockerfile: deploy/docker/web.Dockerfile
     restart: unless-stopped
     logging: *logging
+    # §93.5/§118.8: Docker обязан ждать дольше drain_sec + timeout_sec (5 + 30 с)
+    # плюс сброс логов в ClickHouse; дефолт Docker — 10 с, и он оборвал бы дренаж.
+    stop_grace_period: 45s
     env_file: ../.env
     ports:
       - "8000:8000"

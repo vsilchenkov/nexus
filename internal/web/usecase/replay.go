@@ -676,7 +676,7 @@ func replayHeaders(node *domain.Node, env *port.AsyncOriginal) map[string]string
 // ровно такой формой с 202, будет принят за шину; другой отметки
 // «ответ проксирован» Receiver наружу не отдаёт.
 func replayedLogID(resp *port.DispatchResponse, async bool) string {
-	if id := resp.Headers["X-Nexus-Id"]; id != "" {
+	if id := resp.Headers[domain.HeaderNexusID]; id != "" {
 		return id
 	}
 	var ack struct {

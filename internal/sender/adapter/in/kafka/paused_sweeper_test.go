@@ -94,7 +94,7 @@ func TestPausedSweeper_CommitsTerminalResults(t *testing.T) {
 
 			c := &fakeSweepConsumer{msgs: []kafka.Message{msgWithID(1, "a"), msgWithID(2, "b")}}
 			proc := newStubProcessor(tc.result)
-			newTestSweeper(c, proc, 10).sweepOnce(context.Background())
+			newTestSweeper(c, proc, 10).sweepOnce(context.Background(), context.Background())
 
 			assert.Equal(t, 2, proc.calls, "проход обрабатывает все доступные сообщения")
 			assert.Equal(t, []int64{1, 2}, c.committedOffsets(), "каждое обработанное коммитится")
@@ -115,8 +115,8 @@ func TestPausedSweeper_RetryInPlace_NoLoss(t *testing.T) {
 	proc := newStubProcessor(usecase.HandleRetry, usecase.HandleRequeued)
 	s := newTestSweeper(c, proc, 10)
 
-	s.sweepOnce(context.Background())
-	s.sweepOnce(context.Background())
+	s.sweepOnce(context.Background(), context.Background())
+	s.sweepOnce(context.Background(), context.Background())
 
 	require.NotEmpty(t, c.committed)
 	assert.Equal(t, int64(1), c.committed[0].Offset, "первым закоммичен X, а не X+1")
@@ -140,7 +140,7 @@ func TestPausedSweeper_RetryInPlace_CtxCancel(t *testing.T) {
 		}
 	}
 
-	newTestSweeper(c, proc, 10).sweepOnce(ctx)
+	newTestSweeper(c, proc, 10).sweepOnce(ctx, ctx)
 
 	assert.Equal(t, 2, proc.calls, "повторяется то же сообщение, пока не отменят ctx")
 	assert.Equal(t, 1, c.fetched, "следующее сообщение не читается")
@@ -162,7 +162,7 @@ func TestPausedSweeper_StopsOnWrap(t *testing.T) {
 	}}
 	proc := newStubProcessor(usecase.HandleRequeued)
 
-	newTestSweeper(c, proc, 100).sweepOnce(context.Background())
+	newTestSweeper(c, proc, 100).sweepOnce(context.Background(), context.Background())
 
 	assert.Equal(t, 3, proc.calls, "проход останавливается на повторе id")
 	require.Equal(t, []int64{1, 2, 3}, c.committedOffsets(),
@@ -181,7 +181,7 @@ func TestPausedSweeper_RespectsMaxScan(t *testing.T) {
 	c := &fakeSweepConsumer{msgs: msgs}
 	proc := newStubProcessor(usecase.HandleRequeued)
 
-	newTestSweeper(c, proc, 3).sweepOnce(context.Background())
+	newTestSweeper(c, proc, 3).sweepOnce(context.Background(), context.Background())
 
 	assert.Equal(t, 3, proc.calls)
 	assert.Len(t, c.committed, 3)
@@ -199,7 +199,7 @@ func TestPausedSweeper_CommitErrorDoesNotAbortPass(t *testing.T) {
 	proc := newStubProcessor(usecase.HandleRequeued)
 
 	assert.NotPanics(t, func() {
-		newTestSweeper(c, proc, 10).sweepOnce(context.Background())
+		newTestSweeper(c, proc, 10).sweepOnce(context.Background(), context.Background())
 	})
 	assert.Equal(t, 2, proc.calls)
 }
@@ -215,7 +215,7 @@ func TestPausedSweeper_CtxCancelStopsPass(t *testing.T) {
 	c := &fakeSweepConsumer{msgs: []kafka.Message{msgWithID(1, "a")}}
 	proc := newStubProcessor(usecase.HandleRequeued)
 
-	newTestSweeper(c, proc, 10).sweepOnce(ctx)
+	newTestSweeper(c, proc, 10).sweepOnce(ctx, ctx)
 
 	assert.Zero(t, proc.calls, "при отменённом ctx проход не начинается")
 }
@@ -250,11 +250,11 @@ func TestPausedSweeper_SkippedTickDoesNotFetch(t *testing.T) {
 	}}
 	s.planner = planner
 
-	s.tick(context.Background())
+	s.tick(context.Background(), context.Background())
 	assert.Zero(t, c.fetched, "пропуск — ни одного FetchMessage")
 	assert.Zero(t, proc.calls)
 
-	s.tick(context.Background())
+	s.tick(context.Background(), context.Background())
 	assert.Equal(t, 2, planner.calls)
 	assert.Equal(t, []int64{1, 2}, c.committedOffsets(), "проход по событию идёт как раньше")
 	assert.Equal(t, []int{2}, planner.passes, "итог только разрешённого прохода")

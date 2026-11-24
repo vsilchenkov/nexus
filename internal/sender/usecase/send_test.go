@@ -30,6 +30,8 @@ type stubHTTPCaller struct {
 	errs        []error
 	lastReqBody []byte // §68: тело последнего запроса — проверяем проброску байтов
 	lastReqURL  string // §69.3: адрес последнего запроса — проверяем пересборку URL
+	// reqHeaders — заголовки каждой попытки (§118.7: X-Nexus-Id одинаков на всех).
+	reqHeaders []map[string]string
 }
 
 func (s *stubHTTPCaller) Do(_ context.Context, req *port.HTTPRequest) (*port.HTTPResponse, error) {
@@ -38,6 +40,7 @@ func (s *stubHTTPCaller) Do(_ context.Context, req *port.HTTPRequest) (*port.HTT
 	if req != nil {
 		s.lastReqBody = req.Body
 		s.lastReqURL = req.URL
+		s.reqHeaders = append(s.reqHeaders, req.Headers)
 	}
 	i := s.calls
 	s.calls++

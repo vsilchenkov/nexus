@@ -54,8 +54,8 @@ func TestDLQReprocessor_RetryInPlace_NoLoss(t *testing.T) {
 	proc := &stubDLQProcessor{results: []usecase.ReprocessResult{usecase.ReprocessRetry, usecase.ReprocessCommit}}
 	r := newTestDLQReprocessor(c, proc)
 
-	r.sweepOnce(context.Background())
-	r.sweepOnce(context.Background())
+	r.sweepOnce(context.Background(), context.Background())
+	r.sweepOnce(context.Background(), context.Background())
 
 	require.NotEmpty(t, c.committed)
 	assert.Equal(t, int64(1), c.committed[0].Offset, "первым закоммичен X, а не X+1")
@@ -78,7 +78,7 @@ func TestDLQReprocessor_RetryInPlace_CtxCancel(t *testing.T) {
 		}
 	}
 
-	newTestDLQReprocessor(c, proc).sweepOnce(ctx)
+	newTestDLQReprocessor(c, proc).sweepOnce(ctx, ctx)
 
 	assert.Equal(t, 2, proc.calls)
 	assert.Equal(t, 1, c.fetched)
@@ -95,7 +95,7 @@ func TestDLQReprocessor_StopsOnWrap(t *testing.T) {
 	}}
 	proc := &stubDLQProcessor{results: []usecase.ReprocessResult{usecase.ReprocessCommit}}
 
-	newTestDLQReprocessor(c, proc).sweepOnce(context.Background())
+	newTestDLQReprocessor(c, proc).sweepOnce(context.Background(), context.Background())
 
 	assert.Equal(t, 3, proc.calls)
 	assert.Equal(t, []int64{1, 2, 3}, c.committedOffsets())

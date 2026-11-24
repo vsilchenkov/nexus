@@ -168,12 +168,30 @@ func setNodeStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, path s
 type hitRecorder struct {
 	mu   sync.Mutex
 	path []string
+	// nexusIDs — заголовок X-Nexus-Id каждого попадания (§118.7), параллельно path.
+	nexusIDs []string
 }
 
-func (h *hitRecorder) record(p string) {
+func (h *hitRecorder) record(p string) { h.recordWithID(p, "") }
+
+func (h *hitRecorder) recordWithID(p, nexusID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.path = append(h.path, p)
+	h.nexusIDs = append(h.nexusIDs, nexusID)
+}
+
+// idsFor — X-Nexus-Id всех попаданий в путь p, в порядке прихода.
+func (h *hitRecorder) idsFor(p string) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []string
+	for i, got := range h.path {
+		if got == p {
+			out = append(out, h.nexusIDs[i])
+		}
+	}
+	return out
 }
 
 func (h *hitRecorder) snapshot() []string {
@@ -208,7 +226,7 @@ func (s *asyncStack) warmupConsumer(t *testing.T, ctx context.Context, rec *hitR
 
 func newHitServer(rec *hitRecorder) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rec.record(r.URL.Path)
+		rec.recordWithID(r.URL.Path, r.Header.Get(domain.HeaderNexusID))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))

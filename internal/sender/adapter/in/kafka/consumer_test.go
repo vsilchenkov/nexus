@@ -97,7 +97,7 @@ func TestConsumerGroup_HandleMessage(t *testing.T) {
 			com := &stubCommitter{}
 			msg := kafka.Message{Partition: 3, Offset: 42, Value: []byte(`{"id":"x"}`)}
 
-			newTestGroup(proc).handleMessage(context.Background(), com, msg)
+			newTestGroup(proc).handleMessage(context.Background(), context.Background(), com, msg)
 
 			assert.Equal(t, tc.wantCalls, proc.calls, "Handle повторяется до не-Retry")
 			require.Equal(t, 1, com.calls, "commit ровно один — по завершении обработки")
@@ -119,7 +119,7 @@ func TestConsumerGroup_HandleMessage_RetryInterruptedByShutdown(t *testing.T) {
 	com := &stubCommitter{}
 
 	start := time.Now()
-	newTestGroup(proc).handleMessage(ctx, com, kafka.Message{Offset: 5})
+	newTestGroup(proc).handleMessage(ctx, ctx, com, kafka.Message{Offset: 5})
 
 	assert.Zero(t, com.calls, "необработанное сообщение не коммитим")
 	assert.Less(t, time.Since(start), asyncRetryPause,
@@ -135,7 +135,7 @@ func TestConsumerGroup_HandleMessage_CommitError(t *testing.T) {
 	g := newTestGroup(newStubProcessor(usecase.HandleAck))
 
 	assert.NotPanics(t, func() {
-		g.handleMessage(context.Background(), com, kafka.Message{Offset: 1})
+		g.handleMessage(context.Background(), context.Background(), com, kafka.Message{Offset: 1})
 	})
 	assert.Equal(t, 1, com.calls, "commit пробуется ровно один раз, без внутреннего ретрая")
 }
@@ -156,7 +156,7 @@ func TestConsumerGroup_HandleMessage_InFlightGauge(t *testing.T) {
 	com.onCommit = func() { duringCommit = testutil.ToFloat64(gauge) }
 
 	g := newTestGroup(proc, WithMetrics(m))
-	g.handleMessage(context.Background(), com, kafka.Message{Offset: 7})
+	g.handleMessage(context.Background(), context.Background(), com, kafka.Message{Offset: 7})
 
 	assert.Equal(t, 1.0, duringHandle, "во время Handle сообщение «в полёте»")
 	assert.Equal(t, 0.0, duringCommit, "dec до commit'а — commit в in-flight не входит")
@@ -177,7 +177,7 @@ func TestConsumerGroup_HandleMessage_HeadersPropagated(t *testing.T) {
 		},
 	}
 
-	newTestGroup(proc).handleMessage(context.Background(), &stubCommitter{}, msg)
+	newTestGroup(proc).handleMessage(context.Background(), context.Background(), &stubCommitter{}, msg)
 
 	require.NotNil(t, proc.gotHdrs)
 	assert.Equal(t, "00-abc-def-01", proc.gotHdrs["traceparent"], "дубль ключа — берётся первое значение")
