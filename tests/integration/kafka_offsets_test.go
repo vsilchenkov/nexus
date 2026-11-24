@@ -49,8 +49,8 @@ func TestKafkaOffsets_GroupPositionsAndRetention(t *testing.T) {
 		return err == nil
 	}, 60*time.Second, 500*time.Millisecond)
 	assert.Equal(t, []kafkapf.PartitionPosition{
-		{Partition: 0, Watermark: kafkapf.Watermark{First: 0, Last: 5}, Committed: 2},
-		{Partition: 1, Watermark: kafkapf.Watermark{First: 0, Last: 3}, Committed: -1},
+		{Partition: 0, First: 0, Last: 5, Committed: 2},
+		{Partition: 1, First: 0, Last: 3, Committed: -1},
 	}, pos)
 	assert.Equal(t, int64(3), pos[0].Lag())
 	assert.Equal(t, int64(3), pos[1].Lag(), "некоммиченная партиция читается с начала")

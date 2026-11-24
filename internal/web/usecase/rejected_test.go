@@ -104,11 +104,9 @@ func newRejectedUC(t *testing.T, repo port.RejectedRepo, teams port.TeamRepo, no
 
 func rejectedGroup(id, slug, path string) *domain.RejectedGroup {
 	return &domain.RejectedGroup{
-		ID: id,
-		RejectedGroupKey: domain.RejectedGroupKey{
-			TeamSlug: slug, NodePath: path,
-			Reason: domain.RejectReasonNodeNotFound, HTTPMethod: "POST",
-		},
+		ID:       id,
+		TeamSlug: slug, NodePath: path,
+		Reason: domain.RejectReasonNodeNotFound, HTTPMethod: "POST",
 		Status: 404, Count: 5,
 	}
 }

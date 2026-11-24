@@ -64,12 +64,12 @@ func TestPartitionPosition_Lag(t *testing.T) {
 		pos  PartitionPosition
 		want int64
 	}{
-		{"committed in range", PartitionPosition{Watermark: Watermark{First: 10, Last: 100}, Committed: 40}, 60},
-		{"caught up", PartitionPosition{Watermark: Watermark{First: 10, Last: 100}, Committed: 100}, 0},
-		{"never committed reads from first", PartitionPosition{Watermark: Watermark{First: 10, Last: 100}, Committed: -1}, 90},
-		{"committed behind retention", PartitionPosition{Watermark: Watermark{First: 50, Last: 100}, Committed: 20}, 50},
-		{"empty partition", PartitionPosition{Watermark: Watermark{First: 0, Last: 0}, Committed: -1}, 0},
-		{"committed ahead of last never negative", PartitionPosition{Watermark: Watermark{First: 0, Last: 5}, Committed: 7}, 0},
+		{"committed in range", PartitionPosition{First: 10, Last: 100, Committed: 40}, 60},
+		{"caught up", PartitionPosition{First: 10, Last: 100, Committed: 100}, 0},
+		{"never committed reads from first", PartitionPosition{First: 10, Last: 100, Committed: -1}, 90},
+		{"committed behind retention", PartitionPosition{First: 50, Last: 100, Committed: 20}, 50},
+		{"empty partition", PartitionPosition{First: 0, Last: 0, Committed: -1}, 0},
+		{"committed ahead of last never negative", PartitionPosition{First: 0, Last: 5, Committed: 7}, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -104,8 +104,8 @@ func TestOffsets_GroupPositions(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, partErr)
 	assert.Equal(t, []PartitionPosition{
-		{Partition: 0, Watermark: Watermark{First: 0, Last: 10}, Committed: 4},
-		{Partition: 1, Watermark: Watermark{First: 5, Last: 8}, Committed: -1},
+		{Partition: 0, First: 0, Last: 10, Committed: 4},
+		{Partition: 1, First: 5, Last: 8, Committed: -1},
 	}, got)
 	assert.Equal(t, map[string][]int{"nexus.async.paused": {0, 1, 2}}, api.fetchReq.Topics)
 }

@@ -58,7 +58,7 @@ func buildBaseHandler(c *logging.Config, lv slog.Leveler, console io.Writer) (sl
 		if f, ok := console.(*os.File); ok {
 			w = colorable.NewColorable(f)
 		}
-		return tint.NewHandler(w, &tint.Options{
+		return tint.NewTextHandler(w, &tint.Options{
 			Level:      lv,
 			TimeFormat: "15:04:05",
 			AddSource:  false,
@@ -87,7 +87,8 @@ func buildBaseHandler(c *logging.Config, lv slog.Leveler, console io.Writer) (sl
 }
 
 // assembleChain собирает итоговый хендлер: base + ring (+ sentry при не-nil)
-// через fan-out MultiHandler вендора.
+// через fan-out slog.NewMultiHandler стандартной библиотеки (Go 1.26+;
+// MultiHandler вендора с logging v1.8.0 — устаревший псевдоним на него).
 func assembleChain(base, ring, sentry slog.Handler) slog.Handler {
 	handlers := []slog.Handler{base}
 	if ring != nil {
@@ -99,7 +100,7 @@ func assembleChain(base, ring, sentry slog.Handler) slog.Handler {
 	if len(handlers) == 1 {
 		return base
 	}
-	return logging.NewMultiHandler(handlers...)
+	return slog.NewMultiHandler(handlers...)
 }
 
 // LogController — ручка управления логированием процесса (§51): Level меняет

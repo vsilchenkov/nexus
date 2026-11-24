@@ -50,7 +50,7 @@
 
 | Колонка | Тип | Смысл |
 |---|---|---|
-| `id` | `UUID` PK | `uuid_generate_v4()` — на боевом PostgreSQL 12 `gen_random_uuid()` не встроена |
+| `id` | `UUID` PK | `uuid_generate_v4()` — на тогдашнем боевом PostgreSQL 12 `gen_random_uuid()` не встроена (с §116 минимум — 16) |
 | `name` | `VARCHAR(100)` | имя группы, свободный текст |
 | `description` | `TEXT` | необязательное описание, не длиннее 500 |
 | `sort_order` | `INTEGER` | порядок вывода: **меньше — выше**; 0…100000 |

@@ -154,8 +154,7 @@ func splitBrokers(s string) []string {
 }
 
 func isTopicExists(err error) bool {
-	var ke kafka.Error
-	if errors.As(err, &ke) {
+	if ke, ok := errors.AsType[kafka.Error](err); ok {
 		// 36 = TOPIC_ALREADY_EXISTS
 		return int(ke) == 36
 	}

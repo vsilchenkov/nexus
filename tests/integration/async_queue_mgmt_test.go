@@ -50,9 +50,9 @@ func TestAsyncQueueMgmt_E2E(t *testing.T) {
 	cipher, _ := crypto.NewCipher(testEncryptionKey)
 
 	// mock upstream — считает доставки. Должно остаться 0: отменённые не шлём.
-	var hits int32
+	var hits atomic.Int32
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer mock.Close()
@@ -94,7 +94,7 @@ func TestAsyncQueueMgmt_E2E(t *testing.T) {
 	// запущен → сообщения копятся в очереди (как на paused-узле).
 	routeAsync := rcv.NewRouteAsyncUsecase(&fakeReader{repo: nodeRepo}, producer, cfg.Kafka.AsyncTopic, 5, logger)
 	ids := make([]string, 0, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		res, rErr := routeAsync.RouteAsync(ctx, rcv.RouteInput{
 			NodePath: nodePath,
 			Method:   "POST",
@@ -162,5 +162,5 @@ func TestAsyncQueueMgmt_E2E(t *testing.T) {
 		l, e := aqUC.List(ctx, nodeID, teamID)
 		return e == nil && len(l.Items) == 0
 	}, 60*time.Second, time.Second, "live queue must drain after cancelled messages consumed")
-	require.EqualValues(t, 0, atomic.LoadInt32(&hits), "cancelled messages must not be delivered to upstream")
+	require.EqualValues(t, 0, hits.Load(), "cancelled messages must not be delivered to upstream")
 }

@@ -3,6 +3,7 @@ package clickhouse_test
 import (
 	"context"
 	"errors"
+	"io"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,8 +39,12 @@ func (*fakeConn) PrepareBatch(context.Context, string, ...chdriver.PrepareBatchO
 }
 func (*fakeConn) Exec(context.Context, string, ...any) error              { panic("not impl") }
 func (*fakeConn) AsyncInsert(context.Context, string, bool, ...any) error { panic("not impl") }
-func (*fakeConn) Ping(context.Context) error                              { return nil }
-func (*fakeConn) Stats() chdriver.Stats                                   { panic("not impl") }
+func (*fakeConn) QueryFormat(context.Context, string, string, ...any) (io.ReadCloser, error) {
+	panic("not impl")
+}
+func (*fakeConn) InsertFormat(context.Context, string, string, io.Reader) error { panic("not impl") }
+func (*fakeConn) Ping(context.Context) error                                    { return nil }
+func (*fakeConn) Stats() chdriver.Stats                                         { panic("not impl") }
 
 func TestManager_Conn_ReturnsInitial(t *testing.T) {
 	t.Parallel()

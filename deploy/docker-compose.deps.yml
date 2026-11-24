@@ -31,7 +31,10 @@ x-logging: &logging
 services:
 
   postgres:
-    image: postgres:16-alpine
+    # §116.4: версия закреплена точно — плавающий 16-alpine уходит вперёд сервера.
+    # Поднимать вместе с defaultPostgresImage integration-тестов, стеком services
+    # ПК и боем; расхождение ловит tests/deploy (TestPostgresImage_PinnedEverywhere).
+    image: postgres:16.16-alpine
     container_name: nexus_postgres
     restart: unless-stopped
     logging: *logging

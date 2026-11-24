@@ -62,7 +62,8 @@ func newIdentityFixture(t *testing.T, ctx context.Context) (*identityFixture, fu
 // PostgreSQL. До §101 он искал узел `WHERE path = $1` без команды и без
 // ORDER BY, то есть отдавал случайный из одноимённых узлов.
 //
-// Совместимость: конструкций PostgreSQL 13+ здесь нет (на бою 12).
+// Совместимость: конструкций PostgreSQL 13+ здесь нет (писалось при минимуме 12;
+// с §116 минимум — 16).
 func TestSender_NodeReaderSameNamePaths(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

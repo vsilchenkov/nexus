@@ -90,7 +90,7 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
      (не `./...` из корня — он спотыкается о стороннюю `.go`-заглушку в `web-ui/node_modules/`),
      затем `gofmt -w` на затронутые файлы (или `gofmt -l .` для проверки). Это держит код в
      актуальных идиомах Go и не даёт упасть CI job `lint` (`golangci-lint` проверяет `gofmt`).
-     **Осторожно: на Go 1.26 `go fix` правит и ЧУЖИЕ файлы** — переписывает `strings.Cut`,
+     **Осторожно: на Go 1.26+ `go fix` правит и ЧУЖИЕ файлы** — переписывает `strings.Cut`,
      `wg.Add(1)`+`defer wg.Done()` → `wg.Go`, инлайнит хелперы с `//go:fix inline` в `new(expr)`.
      Поэтому после него всегда смотри `git status --short` и добавляй в коммит **точечно**
      (никогда `git commit -a`): автоправки — либо откат, либо ОТДЕЛЬНЫЙ коммит. Инлайн может
@@ -101,8 +101,9 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
    - **`golangci-lint run --timeout=5m` — обязательно перед коммитом, не только `go vet`.**
      `go vet`/`gofmt` НЕ ловят `nilerr` (проверил `err != nil` → вернул `nil`),
      `staticcheck` (QF1001 De Morgan и пр.) и остальные линтеры из `.golangci.yml`. Их ловит
-     только golangci-lint, и CI job `lint` на них падает (образ `golangci/golangci-lint:v2.12-alpine`,
-     rolling — версия может обгонять локальную, гоняй именно его). Пропуск этого шага = красный CI
+     только golangci-lint, и CI job `lint` на них падает (v2.15.0 через `go install` на
+     `golang:1.27.4` — `GOLANGCI_LINT_VERSION` в `.gitlab-ci.yml`; локальный бинарь собирай тем же
+     Go, см. DEVELOPMENT §2, иначе на Go 1.27 он печатает «0 issues» при неработающих линтерах). Пропуск этого шага = красный CI
      и перепушивание постфактум.
    - Если менял Swagger-аннотации — `make swagger`.
    - Если менял integration-сценарий — `make test-integration` (нужен Docker).

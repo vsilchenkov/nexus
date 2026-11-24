@@ -37,11 +37,11 @@ func TestLagReporter_PublishesPerPartition(t *testing.T) {
 	gauge.WithLabelValues("nexus.async.dlq", "0", "g-dlq-reprocess").Set(42) // прошлое значение
 	offsets := stubPositioner{
 		"g": {pos: []kafkapf.PartitionPosition{
-			{Partition: 0, Watermark: kafkapf.Watermark{First: 0, Last: 100}, Committed: 90},
-			{Partition: 3, Watermark: kafkapf.Watermark{First: 0, Last: 960}, Committed: -1},
+			{Partition: 0, First: 0, Last: 100, Committed: 90},
+			{Partition: 3, First: 0, Last: 960, Committed: -1},
 		}},
 		"g-paused": {
-			pos: []kafkapf.PartitionPosition{{Partition: 1, Watermark: kafkapf.Watermark{First: 5, Last: 7}, Committed: 7}},
+			pos: []kafkapf.PartitionPosition{{Partition: 1, First: 5, Last: 7, Committed: 7}},
 			err: errors.New("partition 2: not leader"),
 		},
 		"g-dlq-reprocess": {err: errors.New("dial")},

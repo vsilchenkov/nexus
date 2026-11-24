@@ -46,9 +46,9 @@ func TestReceiver_IncomingAuth_E2E(t *testing.T) {
 
 	// Upstream mock. Считаем число успешных доходов, чтобы убедиться что 401
 	// не пропускает запросы дальше.
-	var upstreamHits int32
+	var upstreamHits atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&upstreamHits, 1)
+		upstreamHits.Add(1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
@@ -120,7 +120,7 @@ func TestReceiver_IncomingAuth_E2E(t *testing.T) {
 	// --- auth_type=none ---
 	status, _ := doPost("auth/none", nil)
 	require.Equal(t, http.StatusOK, status)
-	require.EqualValues(t, 1, atomic.LoadInt32(&upstreamHits))
+	require.EqualValues(t, 1, upstreamHits.Load())
 
 	// --- auth_type=basic ---
 	// (a) без Authorization → 401 (ErrAuthHeaderMissing).
@@ -140,7 +140,7 @@ func TestReceiver_IncomingAuth_E2E(t *testing.T) {
 	good := base64.StdEncoding.EncodeToString([]byte("alice:s3cret"))
 	status, _ = doPost("auth/basic", map[string]string{"Authorization": "Basic " + good})
 	require.Equal(t, http.StatusOK, status, "correct basic creds → 200")
-	require.EqualValues(t, 2, atomic.LoadInt32(&upstreamHits))
+	require.EqualValues(t, 2, upstreamHits.Load())
 
 	// --- auth_type=token ---
 	status, _ = doPost("auth/token", nil)
@@ -154,7 +154,7 @@ func TestReceiver_IncomingAuth_E2E(t *testing.T) {
 
 	status, _ = doPost("auth/token", map[string]string{"Authorization": "Bearer supersecret"})
 	require.Equal(t, http.StatusOK, status, "correct token → 200")
-	require.EqualValues(t, 3, atomic.LoadInt32(&upstreamHits),
+	require.EqualValues(t, 3, upstreamHits.Load(),
 		"upstream must receive exactly 3 hits (none/basic/token happy paths)")
 }
 

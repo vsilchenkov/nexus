@@ -70,7 +70,8 @@ func newPathResolveFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 // Во-вторых, отсев неоднозначных путей делает СУБД (`HAVING count(*) = 1`), а не
 // Go — в unit-тесте с картой в памяти это условие вообще не выполняется.
 //
-// Совместимость: конструкций PostgreSQL 13+ здесь нет (на бою 12).
+// Совместимость: конструкций PostgreSQL 13+ здесь нет (писалось при минимуме 12;
+// с §116 минимум — 16).
 func TestNodeRepoIDsByPaths_E2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()

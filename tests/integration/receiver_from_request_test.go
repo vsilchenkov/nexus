@@ -49,11 +49,11 @@ func TestReceiver_FromRequest_Allowlist_E2E(t *testing.T) {
 
 	// 1. Mock «разрешённого внешнего узла» (127.0.0.1 — попадёт в allowlist).
 	//    Счётчик hits доказывает, что запрещённые хосты не доходят до Sender.
-	var hits int32
+	var hits atomic.Int32
 	var gotPath string
 	var gotBody []byte
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		gotPath = r.URL.Path
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
@@ -112,7 +112,7 @@ func TestReceiver_FromRequest_Allowlist_E2E(t *testing.T) {
 	if string(gotBody) != `{"hello":"world"}` {
 		t.Fatalf("upstream body = %q", string(gotBody))
 	}
-	if got := atomic.LoadInt32(&hits); got != 1 {
+	if got := hits.Load(); got != 1 {
 		t.Fatalf("разрешённый хост: hits = %d, want 1", got)
 	}
 
@@ -122,7 +122,7 @@ func TestReceiver_FromRequest_Allowlist_E2E(t *testing.T) {
 	if !errors.Is(err, domain.ErrURLNotAllowed) {
 		t.Fatalf("запрещённый хост: want ErrURLNotAllowed, got %v", err)
 	}
-	if got := atomic.LoadInt32(&hits); got != 1 {
+	if got := hits.Load(); got != 1 {
 		t.Fatalf("запрещённый хост не должен дойти до Sender: hits = %d, want 1", got)
 	}
 
@@ -139,7 +139,7 @@ func TestReceiver_FromRequest_Allowlist_E2E(t *testing.T) {
 	if !errors.Is(err, domain.ErrURLParamRequired) {
 		t.Fatalf("без url_base: want ErrURLParamRequired, got %v", err)
 	}
-	if got := atomic.LoadInt32(&hits); got != 1 {
+	if got := hits.Load(); got != 1 {
 		t.Fatalf("запрос без url_base не должен дойти до Sender: hits = %d, want 1", got)
 	}
 

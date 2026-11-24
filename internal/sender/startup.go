@@ -3,6 +3,7 @@ package sender
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"time"
 
 	chdrv "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -35,7 +36,7 @@ func (p *startupPhases) mark(name string, now time.Time) {
 // fields — отмеченные фазы и until_grpc_ms: всё время от начала Start до
 // открытого порта.
 func (p *startupPhases) fields(now time.Time) []slog.Attr {
-	return append(p.attrs[:len(p.attrs):len(p.attrs)],
+	return append(slices.Clip(p.attrs),
 		slog.Int64("until_grpc_ms", now.Sub(p.started).Milliseconds()))
 }
 

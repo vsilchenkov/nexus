@@ -31,11 +31,18 @@ self-contained compose-файлом с пробросом портов на хо
 ## 2. Разовая подготовка
 
 1. **Docker Desktop** — установить, включить WSL2-интеграцию, запустить.
-2. **Go 1.26+** — установить, проверить `go version`.
+2. **Go 1.27.4** windows-amd64 (`go.mod`: `go 1.27.4`; поднимать вместе с `GO_VERSION` в
+   [.gitlab-ci.yml](.gitlab-ci.yml) и `FROM golang:…` в `deploy/docker/*.Dockerfile`) — MSI с go.dev,
+   проверить `go version`. Более старый локальный Go сам скачает нужный тулчейн (`GOTOOLCHAIN=auto`).
 3. **VS Code + расширение `golang.go`.** Через Command Palette (`Ctrl+Shift+P`) →
    **Go: Install/Update Tools** поставить `dlv`, `gopls`, `golangci-lint`.
-   - Версию линтера держать в соответствии с CI (`golangci/golangci-lint:v2.12`):
-     `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`.
+   - Версию линтера держать в соответствии с CI (`GOLANGCI_LINT_VERSION` в `.gitlab-ci.yml`,
+     сейчас **v2.15.0**), собранной тем же Go, что в `go.mod`:
+     `GOTOOLCHAIN=go1.27.4 go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`,
+     затем `golangci-lint cache clean`. Проверка — `go version -m "$(which golangci-lint).exe" | head -1`
+     (в Git Bash `which` отдаёт путь без `.exe`) показывает `go1.27.4`. Не ниже v2.14: старее не
+     читает export data Go 1.27 и печатает «0 issues» при неработающих линтерах (признак —
+     `typechecking error … export data version 5` в выводе).
    - **На Windows запускать с `--concurrency=2`** — дефолтная параллельность
      приводит к `runtime: out of memory`:
      `golangci-lint run --timeout=10m --concurrency=2`
@@ -129,6 +136,12 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 > уровня `error` «postgres schema is newer than this build» (§74.3): схема в БД новее вашего
 > каталога `migrations/`. Это ожидаемо и мешать работе не будет, но если нужна чистая схема —
 > откатите лишние миграции с ветки, где они есть (`--migrate-down N`), или пересоздайте БД.
+
+**Минимальная поддерживаемая версия PostgreSQL — 16** (с 1.42.0, §116; до неё — 12). В новых
+миграциях можно использовать возможности PostgreSQL 13–16: `gen_random_uuid()` без расширения,
+`UNIQUE NULLS NOT DISTINCT`, `MERGE` и т.п. Синтаксис 17+ — нельзя: бой и integration-тесты на
+`postgres:16.16-alpine`. Уже применённые миграции не переписываются — их комментарии про
+PostgreSQL 12 объясняют решения своего времени. Миграции остаются аддитивными (§74.2).
 
 ### Шаг 3. Задать пароль администратора (один раз)
 
@@ -288,14 +301,21 @@ docker compose -f deploy/docker-compose.deps.yml up -d
 - `make test-int-logs` — integration-группа консоли служебных логов (Redis+PG: шиппер, мерж,
   кросс-сервисный reload уровня, маскировка, неблокируемость); входит в общий `make test-integration`.
 - Фронтовые unit-тесты: `cd web-ui && npm run test` (vitest + RTL, setup `src/test/setup.ts` с
-  jest-dom). **Гоняются в CI** (job `ui-build`) — падение vitest валит pipeline, как и lint/build.
+  jest-dom). **Гоняются в CI** (job `ui-build`, Node 22 — как на ПК) — падение vitest валит pipeline,
+  как и lint/build.
+  **Все файлы падают с `No test suite found in file C:/…`** — запуск из каталога со строчной буквой
+  диска (`c:\git_rep\…`: так стартует терминал расширения VS Code). vitest 1.x на Windows грузит
+  тестовый файл дважды, по `c:` и по `C:`, и тесты регистрируются не в том экземпляре раннера.
+  Перейдите в каталог с заглавной буквой (`Set-Location C:\git_rep\_go\nexus\web-ui` в PowerShell) —
+  тесты и зависимости ни при чём (§116).
 - `make test-int-rejected` (§94) — integration-группа журнала отказов на входе (PostgreSQL):
   слияние пачек нескольких реплик Receiver в одну группу, вытеснение клиентов и сэмплов
   сверх лимитов, снятие отметки «разобрано» новым отказом, чистка по сроку и полное
   выключение журнала, скоупы команд. Входит в общий `make test-integration`. Тесты гоняются
-  на `postgres:12-alpine` — той же мажорной версии, что на бою.
+  на `postgres:16.16-alpine` — минимальной поддерживаемой версии, она же боевая (§116).
 - **Версии хранилищ в integration-тестах переопределяются переменными**: `NEXUS_TEST_PG_IMAGE`
-  (дефолт `postgres:12-alpine` — мажорная версия боевого PostgreSQL) и
+  (дефолт `postgres:16.16-alpine` — минимальная поддерживаемая версия, она же боевая; закреплена
+  вровень с compose-файлами, страж `tests/deploy`) и
   `NEXUS_TEST_CLICKHOUSE_IMAGE` (§109.7, дефолт `clickhouse/clickhouse-server:26.3.33.24-alpine` —
   версия, закреплённая во всех compose-файлах репозитория). Основной прод ходит во внешний
   ClickHouse (вариант C) другой версии — `25.3.2.39` на 24.09.2026 (`SELECT version()`; из Nexus
@@ -305,6 +325,17 @@ docker compose -f deploy/docker-compose.deps.yml up -d
   `deploy/prometheus.alerts*.yml` в образе `prom/prometheus` той же версии, что в compose (нужен
   Docker). В CI — job `alerts-check`. Поменяли правило алерта — поправьте и
   `deploy/prometheus.alerts.test.yml`: тест сверяет метки и тексты алертов целиком.
+- **Репетиция переноса PostgreSQL** (§116.5) — `./scripts/stand/pg_migrate_rehearsal.sh` (Git Bash,
+  нужен Docker; `KEEP=1` оставляет ресурсы для разбора). Прогоняет
+  `scripts/deploy/pg_migrate_native.sh` целиком (`check → dump → restore → fence → verify`,
+  переключение, вход по прежним паролям, перенесённые часовой пояс, настройки и права) против
+  «нативного» `postgres:12` на glibc с peer-сокетом в docker-томе, md5-ролями и часовым поясом в
+  конфигурации; базу `nexus` копирует со стека `services`. Проверяет и отказы: `dump` при
+  подключённом клиенте, `fence` после записи в источник, `restore` в непустой том. Цель — сервис корневого compose в проекте
+  `nexus-pgmig` на `127.0.0.1:55432`, ресурсы — `nexus-pgmig-*`, файлы — `deploy/arc/pgmig-rehearsal`.
+  Поменяли скрипт переноса — прогоните. Под Windows скрипт переноса ходит к docker с
+  `MSYS_NO_PATHCONV=1` (репетиция ставит сама), иначе Git Bash переписывает `/var/run/postgresql`
+  в путь Windows. Защитные отказы скрипта без Docker покрывает `tests/deploy/pg_migrate_test.go`.
 - `make test-int-logs-scale` (§77.5) — **ручной** замер прокрутки логов на большом объёме: сидит
   таблицу одним `INSERT … SELECT FROM numbers` и прогоняет 20 страниц по 50 строк по keyset-курсору,
   печатая avg/max и эталон «без автоокна». Объём — `LOG_SCALE_ROWS` (по умолчанию 1 млн; боевой

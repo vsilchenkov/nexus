@@ -98,8 +98,7 @@ func (u *AckPreviewUsecase) Run(_ context.Context, req AckPreviewRequest) (*AckP
 
 func failedPreview(err error) *AckPreviewReport {
 	rep := &AckPreviewReport{OK: false, Message: err.Error()}
-	var re *ackspec.RenderError
-	if errors.As(err, &re) {
+	if re, ok := errors.AsType[*ackspec.RenderError](err); ok {
 		rep.Reason = string(re.Reason)
 		rep.Placeholder = re.Placeholder
 	}

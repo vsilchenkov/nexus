@@ -121,13 +121,11 @@ func TestCircuitBreaker_HalfOpen_SingleProbe(t *testing.T) {
 	results := make(chan bool, n)
 	var wg sync.WaitGroup
 	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			ok, err := cb.Allow(ctx, key)
 			assert.NoError(t, err)
 			results <- ok
-		}()
+		})
 	}
 	wg.Wait()
 	close(results)

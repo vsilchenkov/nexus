@@ -22,7 +22,7 @@ import (
 // возврата управления в sentry-middleware и его span получил статус 500) и
 // РАНЬШЕ обработчиков/metrics (чтобы ловить их паники).
 //
-// logger.WithContext(ctx) привязывает контекст запроса: sentryslog-хендлер
+// logger.WithContext(ctx) привязывает контекст запроса: SentryHandler логгера
 // достанет из него склонированный hub (выставленный sentry-middleware) и
 // отправит событие с тегами service/node/request_id. Отдельный ручной capture
 // не нужен — иначе получится дубль события.

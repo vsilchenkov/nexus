@@ -190,9 +190,7 @@ func (h *BackupHandler) ApplyImport(c *gin.Context) {
 		return
 	}
 	res, err := h.uc.ApplyImport(c.Request.Context(), actorFromCtx(c), usecase.BackupApplyRequest{
-		BackupImportRequest: usecase.BackupImportRequest{
-			File: []byte(req.File), Passphrase: req.Passphrase, Options: req.Options, SelfHost: c.Request.Host,
-		},
+		File: []byte(req.File), Passphrase: req.Passphrase, Options: req.Options, SelfHost: c.Request.Host,
 		Digest:      req.PreviewDigest,
 		ConfirmHost: req.ConfirmHost,
 	})
@@ -204,8 +202,7 @@ func (h *BackupHandler) ApplyImport(c *gin.Context) {
 }
 
 func (h *BackupHandler) replyBindError(c *gin.Context, err error) {
-	var tooLarge *http.MaxBytesError
-	if errors.As(err, &tooLarge) {
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 		h.replyCode(c, http.StatusRequestEntityTooLarge, "backup.file_too_large")
 		return
 	}
