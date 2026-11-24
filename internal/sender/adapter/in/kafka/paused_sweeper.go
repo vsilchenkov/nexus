@@ -64,6 +64,8 @@ type PausedSweeper struct {
 	planner      sweepPlanner    // §113.3: nil — проход на каждом тике
 	stall        StallGuard      // §113.6
 	passGuard    *passStallGuard // nil — сторож выключен
+	// deliveries — контекст доставки (§118.8): остановка чтения его не отменяет.
+	deliveries deliveryScope
 }
 
 // PausedSweeperOption — функциональная опция NewPausedSweeper.
@@ -129,14 +131,17 @@ func (s *PausedSweeper) Run(ctx context.Context) {
 
 	tick := time.NewTicker(s.interval)
 	defer tick.Stop()
+	// §118.8: доставка и commit — на своём контексте, ctx останавливает чтение.
+	dctx, release := s.deliveries.begin(ctx)
+	defer release()
 
-	s.tick(ctx)
+	s.tick(ctx, dctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			s.tick(ctx)
+			s.tick(ctx, dctx)
 		}
 	}
 }
@@ -144,11 +149,11 @@ func (s *PausedSweeper) Run(ctx context.Context) {
 // tick — решение планировщика и, если нужен, проход. Пропущенный тик не делает
 // ни одного FetchMessage: инвариант «commit перед break» (4.37) не затронут, а
 // очередь узлов на паузе не переписывается вхолостую.
-func (s *PausedSweeper) tick(ctx context.Context) {
+func (s *PausedSweeper) tick(ctx, dctx context.Context) {
 	if s.planner != nil && !s.planner.Decide(ctx).Run {
 		return
 	}
-	n := s.sweepOnce(ctx)
+	n := s.sweepOnce(ctx, dctx)
 	if s.planner != nil {
 		s.planner.PassDone(n)
 	}
@@ -168,7 +173,9 @@ func (s *PausedSweeper) tick(ctx context.Context) {
 // (§113.2) — до §113 break без commit терял сообщение на следующем проходе.
 //
 // Возвращает число обработанных (закоммиченных) сообщений.
-func (s *PausedSweeper) sweepOnce(ctx context.Context) int {
+//
+// ctx останавливает чтение и паузы повторов, dctx — доставку и commit (§118.8).
+func (s *PausedSweeper) sweepOnce(ctx, dctx context.Context) int {
 	seen := make(map[string]bool)
 	processed := 0
 
@@ -185,10 +192,10 @@ func (s *PausedSweeper) sweepOnce(ctx context.Context) int {
 		}
 
 		hdrs := headersToMap(msg.Headers)
-		if !s.handleInPlace(ctx, msg, hdrs) {
+		if !s.handleInPlace(ctx, dctx, msg, hdrs) {
 			return processed // shutdown посреди повторов: без commit, перечитается после рестарта
 		}
-		if err := s.consumer.Commit(ctx, msg); err != nil {
+		if err := s.consumer.Commit(dctx, msg); err != nil {
 			s.logger.ErrorWithOp("paused sweep commit failed", err, "kafka.pausedSweep.commit",
 				s.logger.Str("topic", s.topic),
 				s.logger.Int("partition", msg.Partition))
@@ -216,9 +223,9 @@ func (s *PausedSweeper) sweepOnce(ctx context.Context) int {
 // ожил → доставка (Ack/DLQed), отменён или disabled → drop (Ack). Retry —
 // транзиентный сбой (PostgreSQL или produce недоступны) → повтор того же
 // сообщения (§113.2). false — ctx отменён раньше финального исхода.
-func (s *PausedSweeper) handleInPlace(ctx context.Context, msg kafka.Message, hdrs map[string]string) bool {
+func (s *PausedSweeper) handleInPlace(ctx, dctx context.Context, msg kafka.Message, hdrs map[string]string) bool {
 	return s.retry.run(ctx, func() bool {
-		return s.processor.Handle(ctx, msg.Value, hdrs) != usecase.HandleRetry
+		return s.processor.Handle(dctx, msg.Value, hdrs) != usecase.HandleRetry
 	}, func(attempt int, wait time.Duration) {
 		// §51.9: «залипание» прохода на одном сообщении иначе выглядит как молчание.
 		s.logger.Debug("paused sweep: retrying message in place",
@@ -231,7 +238,25 @@ func (s *PausedSweeper) handleInPlace(ctx context.Context, msg kafka.Message, hd
 	})
 }
 
-// Stop корректно завершает consumer sweeper'а.
+// Shutdown — мягкая остановка прохода (§118.8): ждёт выхода Run (runDone) не
+// дольше ctx — доставка в полёте доигрывается и коммитится; по истечении
+// обрывает её и ждёт ещё drainAbortGrace. Reader закрывается только после
+// этого: commit идёт через него. Чтение Run прекращает сам — по отмене своего
+// контекста (runner отменяет его первым).
+func (s *PausedSweeper) Shutdown(ctx context.Context, runDone <-chan struct{}) {
+	if !waitDone(ctx, runDone) {
+		s.logger.Warn("paused sweeper: drain ceiling reached, aborting in-flight delivery",
+			s.logger.Str("topic", s.topic))
+		s.deliveries.Abort()
+		graceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), drainAbortGrace)
+		_ = waitDone(graceCtx, runDone)
+		cancel()
+	}
+	s.deliveries.Abort()
+	s.Stop()
+}
+
+// Stop закрывает reader sweeper'а (без дренажа — штатный путь Shutdown).
 func (s *PausedSweeper) Stop() {
 	if s.consumer != nil {
 		_ = s.consumer.Close()

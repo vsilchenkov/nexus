@@ -7957,3 +7957,26 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
 |---|---|---|
 | ТЗ §118 (анализ, Д1–Д5, замер) | ✅ Phase 118.0 | [sections/118-delivery-dedup.md](sections/118-delivery-dedup.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); правки §3.6, §27.4/§27.14, §16, §30, §109 |
 | §118.7 Д1: сквозной `X-Nexus-Id` к получателю | ✅ Phase 118.1 | Константа `domain.HeaderNexusID` ([headers.go](../internal/domain/headers.go)), ею же заменены литералы ack §83 в Receiver и чтение ответа в повторах Web. `SendUsecase.outgoingHeaders` ([nexus_id.go](../internal/sender/usecase/nexus_id.go)) — единая точка для async, sync, DLQ-репроцессора и sweeper'а: клон карты, клиентский заголовок удаляется в любом регистре, `X-Nexus-Id = in.ID` (= ID записи лога). Puller RabbitMQAsync — `msgID()` один раз на сообщение ([puller.go](../internal/receiver/usecase/puller.go)). Тесты: `TestSend_NexusIDHeader_*`, `TestPullerWorker_IDConsistentWithoutMessageID` (красный на старом коде), integration — у передоставленного сообщения тот же `X-Nexus-Id` |
+| §118.8 Д2: мягкая остановка Sender | ✅ Phase 118.2 | `deliveryScope` ([delivery_scope.go](../internal/sender/adapter/in/kafka/delivery_scope.go)) — контекст доставки `WithCancel(WithoutCancel(parent))`, отменяется только `Abort`. [ConsumerGroup](../internal/sender/adapter/in/kafka/consumer.go): `runOne(ctx, dctx)`, пауза повторов на ctx, `Handle` и `Commit` на dctx; `Shutdown(ctx)` — дренаж, по потолку `Abort` + `drainAbortGrace`, reader'ы закрываются после выхода горутин; `Stop()` — прежняя немедленная остановка. [DLQReprocessor](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) и [PausedSweeper](../internal/sender/adapter/in/kafka/paused_sweeper.go) — то же в `sweepOnce(ctx, dctx)`, `Shutdown(ctx, runDone)`. [App.Stop](../internal/sender/app.go) → `stopDeliveries`: три дренажа и `GracefulStop` gRPC параллельно под одним `shutdown.timeout_sec`. `stop_grace_period: 45s` во всех compose + страж [compose_grace_test.go](../tests/deploy/compose_grace_test.go). Тесты: [drain_test.go](../internal/sender/adapter/in/kafka/drain_test.go) (дренаж до commit, обрыв по потолку — для всех трёх циклов), integration `TestSender_Async_GracefulStopDoesNotRedeliver` |
+
+**Неочевидности §118:**
+
+- **«Перестать читать» и «оборвать доставку» — разные сигналы.** runner отменяет контекст
+  приложения ДО `App.Stop`; до §118 на нём же шла доставка, и HTTP к получателю рвался посреди
+  отправки. Теперь чтение (FetchMessage, пауза retry-in-place, тики проходов) остаётся на контексте
+  приложения, а обработка и commit — на `deliveryScope` с `context.WithoutCancel` (значения —
+  логгер, трейс — наследуются, отмена — нет).
+- **Reader закрывается ПОСЛЕ выхода горутин.** Прежний `Stop` закрывал reader'ы до `wg.Wait` —
+  при дренаже commit доставленного сообщения пошёл бы в закрытый reader, и повтор вернулся бы.
+  Busy-loop «reader closed», ради которого был такой порядок, не возникает: цикл выходит по отмене
+  контекста чтения на голове итерации.
+- **Дренажи и `GracefulStop` gRPC — параллельно, под одним потолком.** Последовательно потолки
+  сложились бы (30 + 30 с) и не уложились в `stop_grace_period` 45 с — SIGKILL посреди сброса логов
+  в ClickHouse.
+- **`X-Nexus-Id`, а не `Idempotency-Key`.** С `Idempotency-Key`/`X-Idempotency-Key` `net/http`
+  считает POST повторяемым (тело из `bytes.Reader`, есть `GetBody`) и сам переотправляет его на
+  переиспользованном соединении после ошибки чтения до первого байта ответа — то есть уже после
+  отправки. Для получателя без поддержки ключа это добавочный источник повторов.
+- **Клиентский `X-Nexus-Id` удаляется в любом регистре.** Заголовки — `map[string]string`, клиент
+  HTTP ставит их обходом карты (`Header.Set` канонизирует ключ), порядок обхода случаен: ключ
+  `x-nexus-id` через раз перебивал бы значение шины.

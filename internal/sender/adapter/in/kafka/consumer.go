@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	kafka "github.com/segmentio/kafka-go"
@@ -55,9 +56,18 @@ type ConsumerGroup struct {
 	metrics   *metrics.Metrics // §31: nil-safe; nil → in-flight не пишется
 	stall     StallGuard       // §113.6: сторож зависшего reader'а
 
+	// newReader строит reader экземпляра по client.id; по умолчанию — настоящий
+	// reader Kafka, тесты подставляют свой (withReaderFactory).
+	newReader readerFactory
+
 	slots  []*readerSlot
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	cancel context.CancelFunc // останавливает ЧТЕНИЕ
+	// deliveries — контекст ДОСТАВКИ (§118.8): его отменяет только Shutdown по
+	// потолку или Stop, а не остановка чтения.
+	deliveries deliveryScope
+	// inFlight — сообщения, прочитанные и ещё не обработанные (для лога дренажа).
+	inFlight atomic.Int64
+	wg       sync.WaitGroup
 }
 
 // ConsumerOption — функциональная опция конструктора ConsumerGroup.
@@ -73,6 +83,12 @@ func WithStallGuard(guard StallGuard) ConsumerOption {
 	return func(g *ConsumerGroup) { g.stall = guard }
 }
 
+// withReaderFactory подменяет фабрику reader'ов — для юнит-тестов Start и
+// Shutdown без настоящей Kafka.
+func withReaderFactory(f readerFactory) ConsumerOption {
+	return func(g *ConsumerGroup) { g.newReader = f }
+}
+
 func NewConsumerGroup(
 	cfg *config.Config,
 	topic string,
@@ -85,6 +101,9 @@ func NewConsumerGroup(
 		processor: processor,
 		logger:    logger,
 		topic:     topic,
+	}
+	g.newReader = func(clientID string) slotReader {
+		return kafkapf.NewConsumer(g.cfg, g.topic, kafkapf.WithClientID(clientID))
 	}
 	for _, o := range opts {
 		o(g)
@@ -99,21 +118,27 @@ func NewConsumerGroup(
 // Иначе после Close() reader'а FetchMessage возвращает не context.Canceled, а
 // «reader closed» — цикл уходит в continue и крутит busy-loop до отмены внешнего
 // ctx (как у ChLogRetryConsumer, §38).
+//
+// §118.8: чтение и доставка — на разных контекстах. ctx (контекст приложения)
+// останавливает чтение: runner отменяет его первым. Доставка и commit идут на
+// отвязанном контексте, который отменяет только Shutdown по потолку (или Stop):
+// иначе остановка рвала HTTP-запрос к получателю посреди отправки и рождала
+// повтор после старта.
 func (g *ConsumerGroup) Start(ctx context.Context) {
 	cctx, cancel := context.WithCancel(ctx)
 	g.cancel = cancel
+	dctx, _ := g.deliveries.begin(ctx) // освобождает Abort в Shutdown/Stop
 	group := g.cfg.Kafka.ConsumerGroup
-	g.slots = newSlots(g.cfg.Kafka.Consumer.Instances, group, g.stall, func(clientID string) slotReader {
-		return kafkapf.NewConsumer(g.cfg, g.topic, kafkapf.WithClientID(clientID))
-	}, g.logger)
+	g.slots = newSlots(g.cfg.Kafka.Consumer.Instances, group, g.stall, g.newReader, g.logger)
 	for i, s := range g.slots {
 		g.wg.Add(1)
-		go g.runOne(cctx, s, i)
+		go g.runOne(cctx, dctx, s, i)
 	}
 	startStallWatchdog(cctx, &g.wg, group, g.topic, g.stall, g.slots, g.logger)
 }
 
-func (g *ConsumerGroup) runOne(ctx context.Context, c slotReader, idx int) {
+// runOne — цикл экземпляра: ctx останавливает чтение, dctx — доставку (§118.8).
+func (g *ConsumerGroup) runOne(ctx, dctx context.Context, c slotReader, idx int) {
 	defer g.wg.Done()
 	defer safego.Recover(g.logger, "sender.kafkaConsumer")
 	g.logger.Info("async consumer started",
@@ -135,16 +160,20 @@ func (g *ConsumerGroup) runOne(ctx context.Context, c slotReader, idx int) {
 			continue
 		}
 
-		g.handleMessage(ctx, c, msg)
+		g.handleMessage(ctx, dctx, c, msg)
 	}
 }
 
 // handleMessage обрабатывает одно сообщение и решает судьбу offset'а.
 // Выделен из runOne, чтобы маппинг HandleResult → Commit покрывался юнитами
 // без реальной Kafka (fetch-цикл остаётся на integration-тестах).
-func (g *ConsumerGroup) handleMessage(ctx context.Context, c messageCommitter, msg kafka.Message) {
+//
+// ctx — остановка чтения (прерывает паузы повторов на месте), dctx — доставка:
+// обработка и commit идут на нём и доигрываются при остановке (§118.8).
+func (g *ConsumerGroup) handleMessage(ctx, dctx context.Context, c messageCommitter, msg kafka.Message) {
 	// §31: сообщение прочитано, но ещё не закоммичено — «в полёте».
 	g.incInFlight()
+	g.inFlight.Add(1)
 
 	// Извлекаем Kafka headers в map[string]string для OTel-propagator'а
 	// (Phase 8.4). Несколько значений на ключ Kafka в принципе допускает,
@@ -158,14 +187,15 @@ func (g *ConsumerGroup) handleMessage(ctx context.Context, c messageCommitter, m
 		g.logger.Any("offset", msg.Offset),
 		g.logger.Str("key", string(msg.Key)),
 		g.logger.Int("size", len(msg.Value)))
-	done := g.processWithRetry(ctx, msg, hdrs)
+	done := g.processWithRetry(ctx, dctx, msg, hdrs)
 	g.decInFlight() // обработка завершена (committed/retry-left)
+	g.inFlight.Add(-1)
 	if !done {
 		// Прерваны на shutdown — offset не коммитим: сообщение передоставится
 		// после рестарта/ребаланса.
 		return
 	}
-	if err := c.Commit(ctx, msg); err != nil {
+	if err := c.Commit(dctx, msg); err != nil {
 		g.logger.ErrorWithOp("commit offset failed", err, "kafka.consumer.commit",
 			g.logger.Str("topic", g.topic),
 			g.logger.Int("partition", msg.Partition))
@@ -185,10 +215,13 @@ func (g *ConsumerGroup) handleMessage(ctx context.Context, c messageCommitter, m
 // ChLogRetryConsumer (§38) и проходных reader'ов (§113.2); пауза здесь
 // постоянная — основной поток не должен ждать дольше секунды после
 // восстановления зависимости.
-func (g *ConsumerGroup) processWithRetry(ctx context.Context, msg kafka.Message, hdrs map[string]string) bool {
+//
+// Пауза между повторами ждёт на ctx (остановка чтения прерывает повторы), сама
+// обработка — на dctx (§118.8): начатая доставка доигрывается.
+func (g *ConsumerGroup) processWithRetry(ctx, dctx context.Context, msg kafka.Message, hdrs map[string]string) bool {
 	retry := inPlaceRetry{min: asyncRetryPause, max: asyncRetryPause}
 	return retry.run(ctx, func() bool {
-		return g.processor.Handle(ctx, msg.Value, hdrs) != usecase.HandleRetry
+		return g.processor.Handle(dctx, msg.Value, hdrs) != usecase.HandleRetry
 	}, func(int, time.Duration) {
 		// §51.9: повторная обработка того же offset'а — иначе «залипание»
 		// партиции на одном сообщении выглядит как молчание consumer'а.
@@ -212,13 +245,49 @@ func (g *ConsumerGroup) decInFlight() {
 	}
 }
 
-// Stop корректно завершает все consumer-горутины: отменяет производный
-// контекст (чтобы FetchMessage и retry-in-place вышли немедленно), затем
-// закрывает reader'ы и дожидается горутин.
+// Stop немедленно завершает все consumer-горутины: останавливает чтение,
+// ОБРЫВАЕТ доставки в полёте, закрывает reader'ы и дожидается горутин. Это
+// остановка без дренажа (тесты «падения», аварийный путь); штатная остановка
+// сервиса — Shutdown.
 func (g *ConsumerGroup) Stop() {
 	if g.cancel != nil {
 		g.cancel()
 	}
+	g.deliveries.Abort()
 	closeSlots(g.slots)
 	g.wg.Wait()
+}
+
+// Shutdown — мягкая остановка (§118.8): перестать читать, доиграть доставки в
+// полёте не дольше ctx, по истечении — оборвать их (прежнее поведение) и
+// закрыть reader'ы.
+//
+// Reader'ы закрываются ПОСЛЕ выхода горутин: commit доставленного сообщения
+// идёт через reader, и закрыть его раньше значило бы потерять commit и вернуть
+// повтор, ради устранения которого дренаж и сделан.
+func (g *ConsumerGroup) Shutdown(ctx context.Context) {
+	if g.cancel != nil {
+		g.cancel()
+	}
+	start := time.Now()
+	if n := g.inFlight.Load(); n > 0 {
+		g.logger.Info("async consumer: draining in-flight deliveries",
+			g.logger.Str("topic", g.topic),
+			g.logger.Int("in_flight", int(n)))
+	}
+	if !waitGroupCtx(ctx, &g.wg, g.logger) {
+		g.logger.Warn("async consumer: drain ceiling reached, aborting in-flight deliveries",
+			g.logger.Str("topic", g.topic),
+			g.logger.Int("in_flight", int(g.inFlight.Load())))
+		g.deliveries.Abort()
+		graceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), drainAbortGrace)
+		_ = waitGroupCtx(graceCtx, &g.wg, g.logger)
+		cancel()
+	}
+	g.deliveries.Abort() // освобождает контекст доставки
+	closeSlots(g.slots)
+	g.wg.Wait()
+	g.logger.Debug("async consumer: drain finished",
+		g.logger.Str("topic", g.topic),
+		g.logger.Int("duration_ms", int(time.Since(start).Milliseconds())))
 }
