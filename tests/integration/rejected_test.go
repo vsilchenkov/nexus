@@ -436,10 +436,12 @@ func TestRejectedFlush_GarbageSampleKeepsBatch_E2E(t *testing.T) {
 	assert.ElementsMatch(t, []string{"telephony", string(utf8.RuneError)}, paths)
 }
 
-// TestRejectedMigration_DeletesUnmaskedBotTokens_E2E (§117.7, миграция 0044):
-// накопленные до §117 группы и сэмплы с открытым секретом токена бота
-// удаляются, а группы без секрета (в том числе уже маскированные `bot<id>:***`)
-// остаются вместе со своими клиентами и сэмплами.
+// TestRejectedMigration_DeletesUnmaskedBotTokens_E2E (§117.7, миграции 0044 и
+// 0046): накопленные до §117 группы и сэмплы с открытым секретом токена бота
+// удаляются — и с секретом в пути (0044), и в слоге команды (0046: код до §117
+// резал адрес на слог и путь без маски, и токен первого сегмента оседал в
+// team_slug), — а группы без секрета (в том числе уже маскированные
+// `bot<id>:***`) остаются вместе со своими клиентами и сэмплами.
 //
 // Проверяется на реальном PostgreSQL: регулярное выражение миграции обязано
 // совпадать с sensitive.MaskBotTokens, а каскады — с DDL 0040.
@@ -464,23 +466,26 @@ func TestRejectedMigration_DeletesUnmaskedBotTokens_E2E(t *testing.T) {
 	// знает колонки более поздних миграций (node_id, §117.3).
 	const secret = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
 	leaked := "tg/bot123456:" + secret + "/sendMessage"
-	for i, path := range []string{
-		leaked,
-		"tg/BOT123456:***/sendMessage",
+	for i, g := range []struct{ team, path string }{
+		{"default", leaked},
+		{"default", "tg/BOT123456:***/sendMessage"},
 		// Короткий «секрет» — обычный путь, его MaskBotTokens не трогает.
-		"robot1:short",
+		{"default", "robot1:short"},
+		// Токен в первом сегменте короткой формы: до §117 он уходил в слог.
+		{"bot123456:" + secret, "sendMessage"},
 	} {
+		team, path := g.team, g.path
 		var id string
 		require.NoError(t, pool.QueryRow(ctx, `
 INSERT INTO rejected_groups (team_slug, node_path, reason, http_method, status, first_seen, last_seen, count, clients)
-VALUES ('default', $1, 'node_disabled', 'POST', 404, now(), now(), 1, 1) RETURNING id`, path).Scan(&id))
+VALUES ($1, $2, 'node_not_found', 'POST', 404, now(), now(), 1, 1) RETURNING id`, team, path).Scan(&id))
 		_, err := pool.Exec(ctx, `
 INSERT INTO rejected_clients (group_id, client_ip, count, first_seen, last_seen)
 VALUES ($1, $2::inet, 1, now(), now())`, id, fmt.Sprintf("10.0.0.%d", i+1))
 		require.NoError(t, err)
 		_, err = pool.Exec(ctx, `
 INSERT INTO rejected_samples (group_id, at, client_ip, http_method, raw_path, status, body_bytes, request_id, headers)
-VALUES ($1, now(), $2::inet, 'POST', $3, 404, 0, '', '{}'::jsonb)`, id, fmt.Sprintf("10.0.0.%d", i+1), "/api/v1/default/"+path)
+VALUES ($1, now(), $2::inet, 'POST', $3, 404, 0, '', '{}'::jsonb)`, id, fmt.Sprintf("10.0.0.%d", i+1), "/api/v1/"+team+"/"+path)
 		require.NoError(t, err)
 	}
 
@@ -493,6 +498,7 @@ VALUES ($1, now(), $2::inet, 'POST', $3, 404, 0, '', '{}'::jsonb)`, id, fmt.Spri
 	for _, g := range groups {
 		paths = append(paths, g.NodePath)
 		assert.NotContains(t, g.NodePath, secret)
+		assert.NotContains(t, g.TeamSlug, secret, "секрет в слоге команды (0046)")
 	}
 	assert.ElementsMatch(t, []string{"tg/BOT123456:***/sendMessage", "robot1:short"}, paths)
 

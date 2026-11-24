@@ -163,7 +163,14 @@ seed_others() {
 		create unlogged table cache (k text primary key, v text);
 		insert into cache values ('a', 'b');
 		select lo_from_bytea(0, 'large object');
-		grant select on items to readers;"
+		grant select on items to readers;
+		-- Партиционированная таблица с row-триггером: клоны триггера на партициях
+		-- в 12 помечены tgisinternal, с 15 — нет (сверка схемы их не считает).
+		create table events (at date not null, v text) partition by range (at);
+		create table events_2026 partition of events for values from ('2026-01-01') to ('2027-01-01');
+		create function events_touch() returns trigger language plpgsql as \$f\$ begin return null; end \$f\$;
+		create trigger events_after after insert on events for each row execute function events_touch();
+		insert into events values ('2026-11-24', 'x');"
 	src_sql postgres "alter database app2 set timezone = 'Asia/Yekaterinburg';
 		alter role nexus in database app2 set statement_timeout = '5s';"
 	src_sql postgres 'create database "report data" owner app2'

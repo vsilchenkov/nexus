@@ -215,7 +215,10 @@ and n.nspname not in ('pg_catalog', 'information_schema') and n.nspname !~ '^pg_
 
 # Схема базы числом объектов: обрыв восстановления на post-data (индексы,
 # ограничения, триггеры, права) счётчики строк не видят. Объекты расширений
-# не считаются: версия расширения в образе 16 может быть новее.
+# не считаются: версия расширения в образе 16 может быть новее. Клоны
+# row-триггеров на партициях (зависимость 'P' от триггера родителя) не
+# считаются: в 12 они tgisinternal, с 15 — нет, и сверка на кластере с
+# партиционированной таблицей расходилась бы на ровном месте.
 SQL_SCHEMA="select 'rel:' || c.relkind::text || '|' || count(*) from pg_class c
 join pg_namespace n on n.oid = c.relnamespace
 where n.nspname not in ('pg_catalog', 'information_schema') and n.nspname !~ '^pg_(toast|temp)'
@@ -224,6 +227,7 @@ group by c.relkind
 union all select 'con:' || o.contype::text || '|' || count(*) from pg_constraint o
 join pg_namespace n on n.oid = o.connamespace where n.nspname not in ('pg_catalog', 'information_schema') group by o.contype
 union all select 'trg|' || count(*) from pg_trigger t where not t.tgisinternal
+and not exists (select 1 from pg_depend d where d.classid = 'pg_trigger'::regclass and d.objid = t.oid and d.deptype = 'P')
 union all select 'proc|' || count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 where n.nspname not in ('pg_catalog', 'information_schema')
 and not exists (select 1 from pg_depend e where e.classid = 'pg_proc'::regclass and e.objid = p.oid and e.deptype = 'e')

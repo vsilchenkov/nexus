@@ -2,7 +2,10 @@ package usecase
 
 import (
 	"maps"
+	"strconv"
 	"strings"
+
+	"golang.org/x/net/http/httpguts"
 
 	"nexus/internal/domain"
 )
@@ -17,6 +20,12 @@ import (
 // удаляется в ЛЮБОМ регистре, а не перезаписывается по точному ключу: клиент
 // HTTP ставит заголовки обходом карты, порядок обхода случаен, и ключ
 // «x-nexus-id» мог бы победить значение шины через раз.
+//
+// ID, негодный для значения заголовка, не ставится вовсе (заголовок клиента
+// при этом всё равно удаляется): у RabbitMQAsync ID — это AMQP message_id
+// издателя (§27), и управляющий символ в нём заставил бы net/http отвергать
+// КАЖДУЮ попытку ещё до отправки — сообщение уходило бы в DLQ вместо доставки.
+// Доставить без ключа дедупликации лучше, чем не доставить.
 func (u *SendUsecase) outgoingHeaders(in SendInput) map[string]string {
 	out := make(map[string]string, len(in.Headers)+1)
 	maps.Copy(out, in.Headers)
@@ -32,6 +41,12 @@ func (u *SendUsecase) outgoingHeaders(in SendInput) map[string]string {
 				u.logger.Str("node", in.NodePath))
 			delete(out, k)
 		}
+	}
+	if !httpguts.ValidHeaderFieldValue(in.ID) {
+		u.logger.Debug("send: delivery id is not a valid header value, X-Nexus-Id omitted",
+			u.logger.Str("id", strconv.Quote(in.ID)),
+			u.logger.Str("node", in.NodePath))
+		return out
 	}
 	out[domain.HeaderNexusID] = in.ID
 	return out

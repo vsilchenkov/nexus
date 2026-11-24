@@ -60,3 +60,26 @@ func TestSend_NexusIDHeader_OverridesClientHeader(t *testing.T) {
 	assert.Equal(t, map[string]string{"x-nexus-id": "forged", "Content-Type": "application/json"}, in.Headers,
 		"входная карта не мутируется")
 }
+
+// TestSend_NexusIDHeader_InvalidIDOmitted: ID с управляющим символом (AMQP
+// message_id издателя RabbitMQAsync) в заголовок не ставится — net/http отверг
+// бы такой запрос на каждой попытке, и сообщение ушло бы в DLQ вместо доставки.
+// Заголовок клиента при этом всё равно не проходит: X-Nexus-Id — только от шины.
+func TestSend_NexusIDHeader_InvalidIDOmitted(t *testing.T) {
+	t.Parallel()
+
+	for _, id := range []string{"msg-1\r\nX-Evil: 1", "msg\x00id", "del\x7fid"} {
+		httpc := &stubHTTPCaller{responses: []*port.HTTPResponse{{StatusCode: 200}}}
+		uc := NewSendUsecase(httpc, &stubLogWriter{}, &stubBreaker{allow: true}, logging.NewNoop(), 64<<20)
+		in := baseInput()
+		in.ID = id
+		in.Headers = map[string]string{"X-Nexus-Id": "forged", "Content-Type": "application/json"}
+
+		out := uc.Send(context.Background(), in)
+		require.Equal(t, int32(200), out.StatusCode, "id %q: доставка идёт", id)
+		require.Len(t, httpc.reqHeaders, 1)
+		sent := httpc.reqHeaders[0]
+		assert.NotContains(t, sent, domain.HeaderNexusID, "id %q", id)
+		assert.Equal(t, "application/json", sent["Content-Type"])
+	}
+}

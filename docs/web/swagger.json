@@ -6343,7 +6343,7 @@
         },
         "/api/rejected/export.csv": {
             "get": {
-                "description": "Те же фильтры, что у списка. CSV в UTF-8 с BOM (для Excel), 10 колонок.",
+                "description": "Те же фильтры, что у списка. CSV в UTF-8 с BOM (для Excel), 11 колонок (последняя — node, §117.5).",
                 "produces": [
                     "text/csv"
                 ],

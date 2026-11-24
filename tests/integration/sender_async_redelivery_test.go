@@ -172,8 +172,6 @@ type hitRecorder struct {
 	nexusIDs []string
 }
 
-func (h *hitRecorder) record(p string) { h.recordWithID(p, "") }
-
 func (h *hitRecorder) recordWithID(p, nexusID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

@@ -285,7 +285,7 @@ func (h *RejectedHandler) Delete(c *gin.Context) {
 
 // Export godoc
 // @Summary  Выгрузка журнала отказов в CSV (§94.6).
-// @Description  Те же фильтры, что у списка. CSV в UTF-8 с BOM (для Excel), 10 колонок.
+// @Description  Те же фильтры, что у списка. CSV в UTF-8 с BOM (для Excel), 11 колонок (последняя — node, §117.5).
 // @Tags     rejected
 // @Produce  text/csv
 // @Param    from              query  string  false  "нижняя граница last_seen (RFC3339)"
