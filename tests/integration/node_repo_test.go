@@ -32,12 +32,13 @@ import (
 const testEncryptionKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" // 32 bytes base64
 
 // defaultPostgresImage — МИНИМАЛЬНАЯ поддерживаемая версия PostgreSQL, а не
-// самая свежая: боевые инсталляции работают на 12, и тест на 16 пропускает
-// синтаксис, которого там нет. Так §71 едва не уехал с `UNIQUE NULLS NOT
-// DISTINCT` (PostgreSQL 15+) — миграция не применилась бы, и сервис не поднялся.
-// Переопределяется переменной NEXUS_TEST_PG_IMAGE, если нужно проверить работу
-// на более новой версии.
-const defaultPostgresImage = "postgres:12-alpine"
+// самая свежая: тест на более новой пропускает синтаксис, которого на бою нет.
+// Так §71 едва не уехал с `UNIQUE NULLS NOT DISTINCT` (PostgreSQL 15+), когда
+// минимумом был 12. С §116 минимум — 16: бой переехал в контейнер этого же
+// образа. Версия закреплена точно, вровень с compose-файлами (страж
+// tests/deploy TestPostgresImage_PinnedEverywhere). Переопределяется
+// переменной NEXUS_TEST_PG_IMAGE, если нужно проверить работу на другой версии.
+const defaultPostgresImage = "postgres:16.16-alpine"
 
 func postgresImage() string {
 	if img := os.Getenv("NEXUS_TEST_PG_IMAGE"); img != "" {

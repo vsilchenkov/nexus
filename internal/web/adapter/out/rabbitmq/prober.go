@@ -106,8 +106,7 @@ func (p *Prober) dial(in usecase.RMQProbeParams) (*amqp.Connection, error) {
 
 // authErrorText переводит ошибку handshake в понятную причину.
 func authErrorText(err error) string {
-	var ae *amqp.Error
-	if errors.As(err, &ae) {
+	if ae, ok := errors.AsType[*amqp.Error](err); ok {
 		switch ae.Code {
 		case amqp.AccessRefused: // 403
 			return "доступ запрещён: проверьте логин/пароль или права на vhost"

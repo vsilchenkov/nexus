@@ -142,4 +142,51 @@ describe("RejectedDrawer", () => {
     expect(view.container.querySelector(".bg-black\\/40")).toBeNull();
     expect(view.container.querySelector("aside")).not.toBeNull();
   });
+
+  // §117.6: блок «Узел» — текущий путь, команда, статус и настоящие ссылки.
+  // «Включить» ведёт на вкладку «Очередь» и есть только у выключенного узла.
+  it("блок узла: ссылки на узел и «Включить» у выключенного", async () => {
+    renderDrawer(
+      details({
+        reason: "node_disabled",
+        node: { id: "n1", path: "tg", status: "disabled", team_slug: "vika", team_name: "Вика" },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("rejected.node.title")).toBeInTheDocument());
+    expect(screen.getByText("rejected.details.open_node").closest("a")).toHaveAttribute(
+      "href",
+      "/nodes/n1",
+    );
+    expect(screen.getByText("rejected.node.enable").closest("a")).toHaveAttribute(
+      "href",
+      "/nodes/n1?tab=queue",
+    );
+    expect(screen.getByText("node.status.disabled")).toBeInTheDocument();
+  });
+
+  it("у включённого узла «Включить» нет", async () => {
+    renderDrawer(
+      details({
+        reason: "method_not_allowed",
+        node: { id: "n1", path: "tg", status: "enabled", team_slug: "vika", team_name: "Вика" },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("rejected.node.title")).toBeInTheDocument());
+    expect(screen.queryByText("rejected.node.enable")).not.toBeInTheDocument();
+  });
+
+  it("удалённый узел — пояснение без ссылки, отказ без узла — без блока", async () => {
+    const { view } = renderDrawer(details({ node_deleted: true }));
+    await waitFor(() => expect(screen.getByText("rejected.node.deleted_hint")).toBeInTheDocument());
+    expect(screen.queryByText("rejected.node.title")).not.toBeInTheDocument();
+    view.unmount();
+
+    renderDrawer(details());
+    await waitFor(() => expect(screen.getByText("telephony")).toBeInTheDocument());
+    expect(screen.queryByText("rejected.node.title")).not.toBeInTheDocument();
+    expect(screen.queryByText("rejected.node.deleted_hint")).not.toBeInTheDocument();
+  });
 });
+

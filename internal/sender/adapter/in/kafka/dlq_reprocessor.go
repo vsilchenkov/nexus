@@ -36,6 +36,8 @@ type DLQReprocessor struct {
 	topic        string
 	stall        StallGuard      // §113.6
 	passGuard    *passStallGuard // nil — сторож выключен
+	// deliveries — контекст доставки (§118.8): остановка чтения его не отменяет.
+	deliveries deliveryScope
 }
 
 // DLQReprocessorOption — функциональная опция NewDLQReprocessor.
@@ -101,21 +103,24 @@ func (r *DLQReprocessor) Run(ctx context.Context) {
 
 	tick := time.NewTicker(r.interval)
 	defer tick.Stop()
+	// §118.8: доставка и commit — на своём контексте, ctx останавливает чтение.
+	dctx, release := r.deliveries.begin(ctx)
+	defer release()
 
-	r.pass(ctx)
+	r.pass(ctx, dctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			r.pass(ctx)
+			r.pass(ctx, dctx)
 		}
 	}
 }
 
 // pass — проход и его итог для сторожа зависшего reader'а (§113.6).
-func (r *DLQReprocessor) pass(ctx context.Context) {
-	r.passGuard.PassDone(ctx, r.sweepOnce(ctx))
+func (r *DLQReprocessor) pass(ctx, dctx context.Context) {
+	r.passGuard.PassDone(ctx, r.sweepOnce(ctx, dctx))
 }
 
 // sweepOnce — один проход: обрабатываем DLQ-сообщения (до maxScan), КАЖДОЕ
@@ -134,7 +139,10 @@ func (r *DLQReprocessor) pass(ctx context.Context) {
 // следующий проход читал X+1 и его commit перешагивал X.
 //
 // Возвращает число обработанных (закоммиченных) сообщений.
-func (r *DLQReprocessor) sweepOnce(ctx context.Context) int {
+//
+// ctx останавливает чтение и паузы повторов, dctx — доставку и commit (§118.8):
+// сообщение, взятое до остановки, доигрывается и коммитится.
+func (r *DLQReprocessor) sweepOnce(ctx, dctx context.Context) int {
 	start := time.Now()
 	seen := make(map[string]bool)
 	delivered := 0
@@ -152,10 +160,10 @@ func (r *DLQReprocessor) sweepOnce(ctx context.Context) int {
 		}
 
 		hdrs := headersToMap(msg.Headers)
-		if !r.processInPlace(ctx, msg, hdrs) {
+		if !r.processInPlace(ctx, dctx, msg, hdrs) {
 			return delivered // shutdown посреди повторов: без commit, перечитается после рестарта
 		}
-		if err := r.consumer.Commit(ctx, msg); err != nil {
+		if err := r.consumer.Commit(dctx, msg); err != nil {
 			r.logger.ErrorWithOp("dlq reprocess commit failed", err, "dlq.reprocess.commit",
 				r.logger.Str("topic", r.topic))
 		}
@@ -186,9 +194,9 @@ func (r *DLQReprocessor) sweepOnce(ctx context.Context) int {
 // processInPlace обрабатывает DLQ-сообщение до финального исхода: Retry
 // (republish не записался / временная ошибка чтения узла) повторяется на месте
 // (§113.2). false — ctx отменён раньше финального исхода.
-func (r *DLQReprocessor) processInPlace(ctx context.Context, msg kafka.Message, hdrs map[string]string) bool {
+func (r *DLQReprocessor) processInPlace(ctx, dctx context.Context, msg kafka.Message, hdrs map[string]string) bool {
 	return r.retry.run(ctx, func() bool {
-		return r.processor.ProcessMessage(ctx, msg.Value, hdrs) != usecase.ReprocessRetry
+		return r.processor.ProcessMessage(dctx, msg.Value, hdrs) != usecase.ReprocessRetry
 	}, func(attempt int, wait time.Duration) {
 		r.logger.Debug("dlq reprocess: retrying message in place",
 			r.logger.Str("topic", r.topic),
@@ -200,7 +208,25 @@ func (r *DLQReprocessor) processInPlace(ctx context.Context, msg kafka.Message, 
 	})
 }
 
-// Stop корректно завершает consumer DLQ-sweeper'а.
+// Shutdown — мягкая остановка прохода (§118.8): ждёт выхода Run (runDone) не
+// дольше ctx — доставка в полёте доигрывается и коммитится; по истечении
+// обрывает её и ждёт ещё drainAbortGrace. Reader закрывается только после
+// этого: commit идёт через него. Чтение Run прекращает сам — по отмене своего
+// контекста (runner отменяет его первым).
+func (r *DLQReprocessor) Shutdown(ctx context.Context, runDone <-chan struct{}) {
+	if !waitDone(ctx, runDone) {
+		r.logger.Warn("dlq reprocessor: drain ceiling reached, aborting in-flight delivery",
+			r.logger.Str("topic", r.topic))
+		r.deliveries.Abort()
+		graceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), drainAbortGrace)
+		_ = waitDone(graceCtx, runDone)
+		cancel()
+	}
+	r.deliveries.Abort()
+	r.Stop()
+}
+
+// Stop закрывает reader DLQ-sweeper'а (без дренажа — штатный путь Shutdown).
 func (r *DLQReprocessor) Stop() {
 	if r.consumer != nil {
 		_ = r.consumer.Close()

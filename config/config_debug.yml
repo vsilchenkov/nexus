@@ -208,7 +208,10 @@ sender:
     deny_ping_without_stream: false
 
 web:
-  http_addr: :8000
+  # Адрес Web под отладкой. Переопределяется WEB_HTTP_ADDR в .env (envFile VS Code) — когда
+  # :8000 на машине занят другим сервисом; задача «web: open browser when ready» берёт адрес
+  # отсюда же (с учётом .env).
+  http_addr: ${WEB_HTTP_ADDR::8000}
   idle_timeout_sec: 120
   # Единый вход: Web реверс-проксирует /api/v1/request|requestAsync|callback
   # в Receiver. Локально Receiver слушает на localhost:8080.

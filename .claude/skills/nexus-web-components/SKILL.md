@@ -66,9 +66,10 @@ Layout helpers: `font-mono` for IDs/codes/paths, fixed `spacing.sidebar` (220px)
 
 ## Forms are controlled `useState` — not react-hook-form
 
-Despite `react-hook-form` / `zod` being in `package.json`, **`src/` uses controlled inputs with
-`useState`** (see [pages/settings/ApiTokens.tsx](web-ui/src/pages/settings/ApiTokens.tsx)). Follow
-that pattern; do **not** introduce RHF/zod without asking.
+**`src/` uses controlled inputs with `useState`** (see
+[pages/settings/ApiTokens.tsx](web-ui/src/pages/settings/ApiTokens.tsx)). Follow that pattern; do
+**not** introduce RHF/zod without asking. `react-hook-form` / `zod` / `@hookform/resolvers` were
+never used and were removed from `package.json` in §116 (zod 3 carried an open advisory).
 
 ```tsx
 const [name, setName] = useState("");

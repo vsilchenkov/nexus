@@ -69,7 +69,8 @@ func (p *dropCommitProcessor) firstResult(t *testing.T) senderuc.HandleResult {
 // Если Sender упал (или был остановлен) после успешного HTTP-вызова, но до
 // commit'а offset'а, сообщение будет доставлено ПОВТОРНО после рестарта —
 // внешний приёмник получит дубль. Дедупликации в Nexus нет; идемпотентность на
-// стороне приёмника (в envelope для этого есть стабильный id).
+// стороне приёмника: ключ — заголовок X-Nexus-Id, одинаковый у обеих доставок
+// (§118.7; до §118 получатель не видел ни одного идентификатора шины).
 func TestSender_Async_AtLeastOnce_RedeliveryAfterCrashBeforeCommit(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
@@ -117,4 +118,8 @@ func TestSender_Async_AtLeastOnce_RedeliveryAfterCrashBeforeCommit(t *testing.T)
 	// И ровно один дубль: повторная доставка коммитится штатно.
 	time.Sleep(5 * time.Second)
 	require.Equal(t, 2, rec.count("/alo"), "ровно один дубль — сообщение не крутится по кругу")
+
+	// §118.7: обе доставки несут один и тот же ключ — получатель может отсеять дубль.
+	require.Equal(t, []string{"alo-1", "alo-1"}, rec.idsFor("/alo"),
+		"X-Nexus-Id = id конверта, одинаковый у повторной доставки")
 }

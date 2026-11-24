@@ -309,9 +309,9 @@ func TestNotifCollect_SameNamePathsSplitByTeam(t *testing.T) {
 // до §101 не приписывается никому.
 func TestNotifCollect_IncompleteNodeListKeepsLegacyRowsOut(t *testing.T) {
 	t.Parallel()
-	nodes := failingNodeRepo{failTeam: "t-msg", notifNodeRepo: notifNodeRepo{byTeam: map[string][]*domain.Node{
+	nodes := failingNodeRepo{failTeam: "t-msg", byTeam: map[string][]*domain.Node{
 		"t-wh": {{ID: "n3", Path: "solo", TeamID: "t-wh"}},
-	}}}
+	}}
 	prom := notifProm{errs: map[port.NodeKey]float64{
 		{Team: "webhook", Path: "solo"}: 1,
 		{Path: "solo"}:                  4,

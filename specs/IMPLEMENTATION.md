@@ -14,7 +14,7 @@
 
 | Параметр                | Значение                                                              |
 |-------------------------|-----------------------------------------------------------------------|
-| Go-версия               | 1.26                                                                  |
+| Go-версия               | 1.27.4 (§116; образ сборки `golang:1.27.4-alpine`)                    |
 | Тип проекта             | три stateless backend-сервиса (Receiver, Sender, Web) + SPA админка   |
 | Архитектура             | Clean Architecture: `handler → usecase → port → adapter`              |
 | Главный поток           | `POST /api/v1/request/<team_slug>/{path}` → Web (единый вход, reverse-proxy) → Receiver → gRPC Sender → внешний URL → лог в ClickHouse `nexus_<team_slug>.<table>` |
@@ -489,7 +489,7 @@
 | **§88.7: хук гашения ссылок в `ChangePassword`** | ✅ Phase 88.5 | [auth.go](../internal/web/usecase/auth.go) `WithPasswordResetInvalidator` + `invalidateResetLinks`. Хук стоит в `ChangePassword`, потому что это ЕДИНСТВЕННАЯ точка смены пароля (`ChangeOwnPassword` делегирует, админский handler зовёт её же, подтверждение восстановления тоже) — покрываются все каналы разом. Best-effort рядом с `DeleteByUser`: пароль уже сменён, откатывать операцию из-за недоступного хранилища нельзя. Закрываемая дыра: без него старая ссылка из почты позволяла бы перебить только что установленный пароль |
 | **§88.4.2: `UserRepo.GetByEmail`** | ✅ Phase 88.4 | [user_repo.go](../internal/web/adapter/out/postgres/user_repo.go): `lower(email) = lower($1) LIMIT 2` под индексом `users_email_lower_idx`. Берутся ДВЕ строки намеренно: колонка не уникальна, и несколько совпадений → `ErrUserEmailAmbiguous`, который вызывающий трактует как «не найден». Иначе владелец общего адреса получил бы ссылку на чужую учётную запись |
 | **§88.4.1: таблица `one_time_tokens` — общая, а не под один сценарий** | ✅ Phase 88.4 | Имя и состав зафиксированы в ТЗ до реализации. Восстановление пароля — первый потребитель; следующие названы в §88.12 (подтверждение смены email, приглашение пользователя), инварианты у всех одни. Разводит колонка `purpose` под `CHECK` (образец `users.role`: опечатка иначе даёт токены, которые молча никогда не найдутся) + `payload JSONB` под данные назначения. **Погашение обязано фильтровать по `purpose` — граница безопасности:** без фильтра ссылка на слабое действие предъявляется на сильном эндпоинте; закрепить тестом. `purpose` входит в сигнатуру КАЖДОГО метода порта, кроме чистки — забыть его тогда невозможно. `Consume` возвращает запись целиком, а не `userID`: следующему потребителю нужен `payload` |
-| **§88.4.1: `uuid_generate_v4()`, а не `gen_random_uuid()`** | ⛔ Phase 88.4 | Грабля PG 12 (на бою именно она): `gen_random_uuid()` встроена только с PG 13, до этого требует `pgcrypto`, а в схеме включён лишь `uuid-ossp` (миграция 0001). Все существующие миграции используют `uuid_generate_v4()` — новая не должна выбиваться. Дефект поймался бы и в integration (testcontainers поднимает `postgres:12-alpine`), но дешевле не вносить |
+| **§88.4.1: `uuid_generate_v4()`, а не `gen_random_uuid()`** | ⛔ Phase 88.4 | Грабля PG 12 (на бою тогда была именно она): `gen_random_uuid()` встроена только с PG 13, до этого требует `pgcrypto`, а в схеме включён лишь `uuid-ossp` (миграция 0001). Все миграции до §116 используют `uuid_generate_v4()`. **С §116 минимум — PostgreSQL 16**, и `gen_random_uuid()` в новых миграциях допустима (встроена, расширение не нужно); `uuid-ossp` остаётся в схеме, применённые миграции не переписываются. Integration-тесты гоняются на минимальной версии (`postgres:16.16-alpine`) |
 | **§88.8.4: `POST /api/settings/mail/test`** | ✅ Phase 88.2 | [app_settings_handler.go](../internal/web/adapter/in/http/app_settings_handler.go) `TestMail` + [routes.go](../internal/web/adapter/in/http/routes.go) в `authedAdmin`. Тело — секция целиком плюс `to`: у почты, в отличие от Telegram, адрес назначения не является частью настроек. `SettingsTester.TestMail` берёт таймаут ИЗ САМИХ НАСТРОЕК, а не из общего `pingTimeout` = 5 с: для ping'а ClickHouse пяти секунд хватает, а полный SMTP-диалог через корпоративный релей в них не укладывается — рабочая конфигурация показывала бы «context deadline exceeded». Негодные значения секции отсекаются до похода в сеть (иначе оператор видит ошибку резолвера вместо «порт вне диапазона»); «не смогли отправить» — это `TestResult{OK:false}`, а не 500 (общий контракт с CH/Sentry/Telegram), тогда как `mail sender == nil` — дефект wiring'а и потому Go-ошибка |
 | **§87.5: сетка карточек роли 2×2, чип `warn`** | ✅ Phase 87.3 |
 | **§88.2: секция `mail` в `app_settings` — шесть точек интеграции** | ✅ Phase 88.1 | [domain/mail.go](../internal/domain/mail.go) (`MailSettings`, `Resolve()`, `ValidateMailSettings` по полям, `ValidateMailConsistency` по смерженному, `MailPasswordResetReady`). Секция обязана попасть в: struct [app_settings.go](../internal/domain/app_settings.go), анонимную структуру [app_settings_repo.go](../internal/web/adapter/out/postgres/app_settings_repo.go) `Update`, `mergeAppSettings`, `changedSections`, маскирование в `Get` ([app_settings.go](../internal/web/usecase/app_settings.go)) и `sectionsFor` [reloader.go](../internal/platform/reloader/reloader.go). Регресс на потерю секции — `TestAppSettingsRepo_MailRoundTrip_E2E` ([app_settings_repo_test.go](../tests/integration/app_settings_repo_test.go)), проверен красным на коде без `Mail` в `Update` |
@@ -2546,13 +2546,14 @@ Kafka и память) и «сколько РАЗРЕШЕНО сегодня» (
   превращается в append: таблица растёт, а чтение отдаёт произвольную из копий. Держит инвариант
   integration-тест «двойной upsert глобального префа даёт ОДНУ строку».
   **Грабля, которую едва не пропустили:** просится `UNIQUE NULLS NOT DISTINCT`, и первая редакция
-  миграции была именно такой — но это PostgreSQL 15+, а боевые инсталляции работают на **12**.
-  Тесты (testcontainers) и docker-compose поднимают 16, поэтому все гейты были зелёными, а на бою
+  миграции была именно такой — но это PostgreSQL 15+, а боевые инсталляции тогда работали на **12**.
+  Тесты (testcontainers) и docker-compose поднимали 16, поэтому все гейты были зелёными, а на бою
   миграция не применилась бы и Web/Receiver не поднялись бы вообще. Отсюда два следствия: выражение
   `ON CONFLICT` в репозитории обязано совпадать с выражением индекса, и **дефолтный образ в
-  integration-тестах — минимальная поддерживаемая версия** (`postgres:12-alpine`,
-  `defaultPostgresImage` в `tests/integration/node_repo_test.go`, переопределяется
-  `NEXUS_TEST_PG_IMAGE`). Тестировать на версии свежее боевой — значит не тестировать совместимость.
+  integration-тестах — минимальная поддерживаемая версия** (тогда `postgres:12-alpine`, с §116 —
+  `postgres:16.16-alpine`; `defaultPostgresImage` в `tests/integration/node_repo_test.go`,
+  переопределяется `NEXUS_TEST_PG_IMAGE`). Тестировать на версии свежее боевой — значит не
+  тестировать совместимость.
 - **Два FK, а не один.** Составной FK на `user_teams` даёт инвариант «преф ⊆ членство» и каскад на
   исключение из команды, но по правилу MATCH SIMPLE строки с `team_id IS NULL` он не проверяет — их
   каскад закрывает отдельный FK на `users(id)`. Тест «удаление пользователя сносит и глобальные
@@ -3213,7 +3214,8 @@ make images-list                               # какие версии сох�
 make images-rollback V=1.21.1                  # вернуть :latest без пересборки
 python scripts/release/rollback_info.py v1.20.2 v1.21.0   # §74.6: строка «Откат» для CHANGELOG
 cp scripts/release/release_notes_template.md desc_1.0.0.md # §9.5-E: заготовка описания GitLab-релиза
-python scripts/release/create_release.py v1.0.0 v1.0.0 desc_1.0.0.md
+GITLAB_TOKEN=… python scripts/release/create_release.py v1.0.0 v1.0.0 desc_1.0.0.md   # gitlab.vozovoz.ru, токен с правом api
+GITLAB_TOKEN=… python scripts/release/create_release.py --check                      # доступ к GitLab, id проекта, ветка
 
 # Зеркало на GitHub (github.com/vsilchenkov/nexus, публичное) — с 09.09.2026
 #   push идёт ТОЛЬКО из PowerShell: ключ отдаёт SSH-агент Bitwarden, который виден
@@ -3447,8 +3449,33 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   consumer-группе (heartbeat идёт, партиции назначены), но `FetchMessage` больше не возвращается;
   `nexus_kafka_lag` (из `Reader.Stats`) при этом 0, `nexus_kafka_in_flight` — 0. **Закрыто §113:**
   lag из брокера (зависание видно по `nexus_kafka_lag`) и сторож (Phase 113.7, см. 4.98) для всех
-  четырёх групп. Осталось: обновление kafka-go (может убрать первопричину) и воспроизведение
+  четырёх групп. Осталось: обновление kafka-go (может убрать первопричину; на 23.11.2026 v0.4.51 —
+  последняя, §116 обновлять было не на что) и воспроизведение
   зависания на стенде — сторож проверен на имитации «стоящей» партиции, а не на живом зависании.
+
+- **`type` записей RabbitMQAsync в логе — `requestAsync`, а не `RabbitMQAsync` (найдено стендом
+  перед 1.42.0, не регрессия — так с июня 2026).** ТЗ §27.10 обещает `type = RabbitMQAsync`, но
+  `buildSendInput` ([async_envelope.go](../internal/sender/usecase/async_envelope.go)) ставит
+  `RootMethod: RootMethodRequestAsync` для всего, что пришло через Kafka. Последствия: по `type` не
+  отличить сообщения из RabbitMQ от HTTP-async (обход — колонка IP `rabbitmq://…`); фильтр повтора
+  из логов (`ClassifyReplayCandidate`, правило «pull-запись — не async-путь») RabbitMQ-записи не
+  отсекает. Отдельное ТЗ: брать тип из узла/конверта, решить судьбу старых записей (фильтры и отчёты
+  по `type`), проверить повтор из логов RabbitMQ-узла end-to-end.
+
+- **`kafka.consumer.auto_offset_reset` не применяется (найдено стендом перед 1.42.0).** Ключ
+  разбирается (`config.go` `AutoOffsetReset`), но reader'ы всех групп Sender'а создаются с
+  `StartOffset: kafka.FirstOffset` ([consumer.go](../internal/platform/kafka/consumer.go)). Новая
+  группа (смена `consumer_group`, новый `instance.id`, стенд пар на общей Kafka) перечитает всю
+  историю топика — для DLQ это повтор всех недоставленных за срок хранения. Комментарии конфигов и
+  §8 с 1.42.0 говорят правду. Решить: применять ключ (`LastOffset` при `latest`) или удалить его.
+
+- **Мажорные версии npm `web-ui` — отдельное ТЗ** (вынесено из §116.3). React 18 → 19,
+  react-router 6 → 7, Tailwind 3 → 4 (конфиг в CSS), Vite 5 → 8, Vitest 1 → 5, TypeScript 5.9 → 7,
+  i18next 23 → 27 (+ react-i18next, languagedetector), ESLint 9 → 10 (+ плагины react-hooks 7 с
+  правилами React Compiler), jsdom, lucide-react 0.x → 1.x, tailwind-merge 3, @testing-library/
+  jest-dom 8, @types/react 19, @types/node 22+. Приоритет — `react-router-dom` 7 (уязвимость в
+  бандле) и Vite/Vitest (уязвимости dev-сервера и раннера), см. 4.101. Нужен прогон каждой
+  страницы на стенде.
 
 0. **Горизонтальное масштабирование Receiver/Web (нулевой простой при обновлении)** — вынесено
    из §74 отдельным ТЗ. Сейчас у каждого сервиса один экземпляр, и `docker compose up` даёт
@@ -4946,6 +4973,12 @@ vitest-кейсы nodeValidation.
 - **Дырка в наблюдаемости.** Ни метрика, ни алерт не отличают «контрагент сменил УЦ» от любой другой
   ошибки доставки — инцидент обнаружил пользователь, а не мониторинг. Кандидат на будущее: алерт на
   «узел, у которого error_rate прыгнул с ~0 до ~100% за один интервал».
+- **Плановая замена leaf у контрагента ≠ пересборка образа.** На уведомление «меняем сертификат,
+  новый во вложении» (Альфа, 25.11.2026) проверяется только одно: выпущен ли новый leaf тем же
+  корнем, что лежит в `deploy/certs/`. Если тем же, образы не трогаем. Процедура и журнал проверок —
+  в [deploy/certs/README.md](../deploy/certs/README.md) «Контрагент прислал новый сертификат».
+  Остаточный риск — сервер перестанет присылать Sub CA (Go не ходит по AIA), его видно только
+  после замены.
 - **CI не собирает Dockerfile'ы** (job'ы только test/lint/build/security). Правка образа проверяется
   исключительно локальной сборкой — см. процедуру проверки в
   [deploy/certs/README.md](../deploy/certs/README.md).
@@ -7821,3 +7854,238 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
   шага».
 - **Граница, дописанная в ТЗ §115.10:** «Остановить» после того, как сервер дописал файл в сокет,
   в аудите остаётся завершённой выгрузкой (Web о разрыве не узнаёт) — замечено на стенде.
+
+### 4.101 §116 — Go 1.27.4, обновление зависимостей и PostgreSQL 16.16
+
+Раздел [116-go127-deps-pg16.md](sections/116-go127-deps-pg16.md).
+Ветка `feature/go127-deps-pg16` (от `dev`). Миграций схемы нет, ключей `config.yml` нет.
+Меняется развёртывание базы на боевом сервере (§116.5).
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §116 | ✅ Phase 116.0 | [sections/116-go127-deps-pg16.md](sections/116-go127-deps-pg16.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md) |
+| §116.2 Go 1.27.4 | ✅ Phase 116.1 | [go.mod](../go.mod) `go 1.27.4`; `GO_VERSION` и `GOLANGCI_LINT_VERSION` в [.gitlab-ci.yml](../.gitlab-ci.yml) (job `go-lint` — `go install` на `.go-base` вместо образа `golangci/golangci-lint:v2.12-alpine`); `FROM golang:1.27.4-alpine` в [deploy/docker/](../deploy/docker/) (`receiver`, `sender`, `web`, `loadtest`); страж [tests/deploy/versions_test.go](../tests/deploy/versions_test.go) `TestGoVersion_SameInGoModDockerfilesAndCI`; DEVELOPMENT §2, DEPLOYMENT (§1, §5.4, §6, §13), README, CLAUDE.md |
+| §116.2 модернизация `go fix` 1.27 | ✅ Phase 116.2 | 27 файлов `go fix` (`errors.AsType` вместо `var x; errors.As(err, &x)`, повышенные поля во вложенных литералах — `PartitionPosition{First: …}` вместо `{Watermark: Watermark{…}}`, в integration-тестах `atomic.Int32`, `wg.Go`, `range n`) + `modernize` v2.15: `slices.Clip` в [sender/startup.go](../internal/sender/startup.go) `fields`, `reflect.TypeAssert` в [metrics/node_labels_test.go](../internal/platform/metrics/node_labels_test.go). Поведение не меняется |
+| §116.3 Go-модули | ✅ Phase 116.3 | Все прямые и косвенные до последних ([go.mod](../go.mod)): clickhouse-go 2.51, pgx 5.13, grpc 1.85, prometheus client_golang 1.25, sentry-go 0.50, testcontainers 0.45, otel 1.47, x/crypto 0.59, tint 1.2 и др. Логгер **`github.com/vsilchenkov/logging` v1.8.0** (свой обработчик событий Sentry, Go 1.27.4, тесты). Правки API: [prometheus/client.go](../internal/web/adapter/out/prometheus/client.go) (`Query`/`QueryRange` вернули 4 значения — `Infos`), заглушки `driver.Conn` (`QueryFormat`, `InsertFormat`) в [clickhouse/manager_test.go](../internal/platform/clickhouse/manager_test.go) и [usecase/settings_tester_test.go](../internal/web/usecase/settings_tester_test.go), `tint.NewTextHandler` в [bootstrap/logger.go](../internal/platform/bootstrap/logger.go), fan-out — `slog.NewMultiHandler` (обёртка `logging.NewMultiHandler` удалена). Регрессия [platform/logging/logging_test.go](../internal/platform/logging/logging_test.go) `TestSentryHandler_ErrorLogBecomesEvent`. `govulncheck`: 7 вызываемых уязвимостей (x/net, klauspost/compress, brotli) → 0. CI: trivy 0.55.0 → 0.76.2 |
+| §116.3 npm `web-ui` | ✅ Phase 116.3 | `npm update --save` — [package.json](../web-ui/package.json) и lock в пределах мажорных версий; удалены неиспользуемые `zod`, `react-hook-form`, `@hookform/resolvers`; скилы `nexus-web-overview`, `nexus-web-components`; CI `NODE_VERSION` 20 → 22; пересобран [internal/web/static/](../internal/web/static/) |
+| §116.4 PostgreSQL 16 — минимум, образ закреплён | ✅ Phase 116.4 | `postgres:16.16-alpine` в [docker-compose.yml](../docker-compose.yml), [deploy/docker-compose.yml](../deploy/docker-compose.yml), [deploy/docker-compose.deps.yml](../deploy/docker-compose.deps.yml) и `defaultPostgresImage` ([tests/integration/node_repo_test.go](../tests/integration/node_repo_test.go)); страж [tests/deploy/versions_test.go](../tests/deploy/versions_test.go) `TestPostgresImage_PinnedEverywhere` (красный на прежнем `12-alpine` и на плавающем теге); правило «минимум 16, возможности 13–16 разрешены» — DEVELOPMENT («Шаг 2. Применить миграции», integration-образы), DEPLOYMENT (§12 бэкап, заметка 0031), ТЗ §71/§94/§99/§103 и `nexus_spec.md`, грабля §88.4.1 выше; комментарии кода «на бою 12»; общий стек ПК — `services` `bf83a7e` (16.11 → 16.16), [docs/STAND_TESTING.md](../docs/STAND_TESTING.md). Тексты применённых миграций не тронуты |
+| §116.5 перенос нативного кластера в контейнер | ✅ Phase 116.5 | [scripts/deploy/pg_migrate_native.sh](../scripts/deploy/pg_migrate_native.sh) (`check`/`dump`/`restore`/`verify`); защитные отказы без Docker — [tests/deploy/pg_migrate_test.go](../tests/deploy/pg_migrate_test.go) (оборванный дамп, нет снимков, непустой том, оборванный `pg_dumpall`, клиент без stdin по сокету); репетиция [scripts/stand/pg_migrate_rehearsal.sh](../scripts/stand/pg_migrate_rehearsal.sh) — пройдена 23.11.2026 (5 баз, 4 роли, 29 таблиц, вход по md5); DEPLOYMENT §5.4.4 (процедура, сеть, откат) и вариант B, шаблоны `deploy/docker-compose.override.yml` и `…ha.external-pg.override.yml`, DEVELOPMENT («Репетиция переноса PostgreSQL»), ТЗ §116.5 |
+| §116.7 ревизия перед сдачей | ✅ Phase 116.7 | Независимый разбор скрипта переноса (2 блокера, 7 важных, 9 мелких) + своя ревизия diff'а. Скрипт переписан: `dump` отказывает при подключённых клиентах и сверяет счётчики записи до/после, новая подкоманда `fence`; `check`/`restore` отказывают при порте на всех интерфейсах, `pg_hba` тома — частные сети; `ON_ERROR_STOP` + код выхода psql; снимок — схема, настройки баз и ролей, ACL, последовательности, `infinity`, сбои запросов не прячутся; `.post.sql` — свойства `postgres`/`template1` и `ALTER SYSTEM` сеансовых настроек; проба кодировки с локалью; вход приложения до переключения; ловушки и подсказка про том; `PGDATABASE` вместо `-d`. Тесты [pg_migrate_test.go](../tests/deploy/pg_migrate_test.go) (+ клиенты, запись во время дампа, fence, порт), репетиция расширена; DEPLOYMENT §5.4.4 (порт до окна, `fence`, `start.conf`, `nginx -s reload`, уборка дампа), описание релиза, ТЗ §116.3/§116.5–116.7; `check` скрывает значения `*conninfo*`/`*passphrase*`/`*password*`; `safego` — порог `sentry.level` |
+
+Неочевидности:
+
+- **Плавающий тег образа сборки — тихая мина.** У golang-образов `GOTOOLCHAIN=local`. Образ
+  старее `go` в `go.mod` роняет сборку, а `docker compose build` берёт плавающий тег из кеша, не
+  сверяясь с реестром (DEPLOYMENT §13, строка про `go.mod requires go >= …`). Точный тег
+  `golang:1.27.4-alpine` Docker при отсутствии скачивает сам. Страж в `tests/deploy` держит одну
+  версию в `go.mod`, Dockerfile'ах и CI.
+- **golangci-lint на Go 1.27 обязан быть ≥ v2.14 и собран тем же Go.** Образ
+  `golangci/golangci-lint:v2.12-alpine` собран с x/tools < v0.50 и не читает export data
+  версии 5. Он печатал бы «0 issues» при неработающих линтерах — тот же класс дефекта, ради
+  которого в CI проверяется наличие `modernize`. Локальный бинарь —
+  `GOTOOLCHAIN=go1.27.4 go install …@v2.15.0` (на ПК стоит Go 1.27.3, нужный тулчейн
+  `GOTOOLCHAIN=auto` скачивает сам), проверка — `go version -m "$(which golangci-lint).exe"`.
+- **Новые анализаторы `modernize` v2.15** (`slicesclip`, `reflecttypeassert`) нашли два места,
+  `go fix` 1.27 переписал 27 файлов на `errors.AsType` и повышенные поля в составных литералах.
+  По правилу CLAUDE.md это отдельный коммит (Phase 116.2), без смены поведения.
+- **sentry-go/slog ≥ v0.48 больше не создаёт события Sentry — главная мина обновления.** В
+  v0.48 из `sentryslog.Option` удалены `Level` и `EventLevel`: обработчик шлёт только Sentry
+  Logs (а без `EnableLogs` — никуда). Логгер v1.7.9 на этом просто не собирался (`unknown field
+  Level`). Закрепить sentry на v0.47 — значит законсервировать старый SDK; «починить» вызов под
+  новый `Option` — значит молча выключить Sentry: ошибки nexus попадают туда только событием
+  этого обработчика (`safego.Recover`, recovery-middleware, `logger.Error`). Решение — логгер
+  v1.8.0 со своим обработчиком событий (перенос `eventHandler`/`DefaultConverter` из
+  sentryslog v0.47 с тем же контрактом: атрибуты → теги события, их маскирует
+  `platform/sentry` в `BeforeSend`; `error`/`err` → исключение; hub — из контекста записи).
+  Регрессионный тест nexus зелёный и на v1.7.9, и на v1.8.0 — контракт события совпадает.
+  Если когда-то перейдём на Sentry Logs — это отдельное решение, а не побочный эффект `go get -u`.
+- **`MultiHandler` вендора заменён `slog.NewMultiHandler`** (Go 1.26). В stdlib запись
+  клонируется для каждого обработчика, ошибки объединяются `errors.Join` (у вендора — первая).
+  В логгере v1.8.0 `MultiHandler`/`NewMultiHandler` — устаревшие псевдонимы stdlib.
+- **`go get -u ./...` не трогает тестовые зависимости под тегом `integration`.** testcontainers и
+  miniredis остались бы на старых версиях. Полное обновление —
+  `GOFLAGS=-tags=integration go get -u -t ./...`, затем `go mod tidy`.
+- **npm: уязвимости, которые закрываются только мажорами** (`npm audit` после обновления, 7 шт.):
+  в бандле — `react-router-dom` 6 (moderate: open redirect через `\` в `<Link>`/`useNavigate`);
+  в инструментах — `vite` 5 и `esbuild` (dev-сервер), `vitest` 1 / `tinypool` / `vite-node`
+  (раннер тестов, UI не запускается). Это вход для отдельного ТЗ мажоров (§7 «Куда копать
+  дальше»). `zod` 3 (high) ушёл вместе с пакетом: в `src/` он не использовался.
+- **vitest на Windows: `No test suite found` во всех 108 файлах** — не обновление, а строчная
+  буква диска в рабочем каталоге (`c:\…` у терминала расширения VS Code). Из `C:\…` — 1069 тестов
+  зелёные (DEVELOPMENT, «Фронтовые unit-тесты»).
+- **Перенос кластера: почему скрипт, а не две команды** (подробно — ТЗ §116.5). Нативный клиент на
+  бою — 12, а `pg_dumpall` должен быть не старее цели: клиент 16.16 берётся из образа и ходит к
+  нативному сокету от UID `postgres` хоста (peer: сервер сам переводит UID в имя). Хеши md5 из 12
+  не принимает `scram-sha-256` образа — том инициализируется с `POSTGRES_HOST_AUTH_METHOD=md5`.
+  Суперпользователь тома — `postgres`, а не `PG_USER`: иначе `ALTER ROLE nexus NOSUPERUSER` из
+  дампа падает (PG 16 не снимает суперпользователя с bootstrap-роли) и вместе с ним не
+  применяется пароль. `postgres`/`template1` дамп не пересоздаёт — их кодировка и локаль задаются
+  `POSTGRES_INITDB_ARGS` из снимка источника, иначе сверка баз расходится. Готовность — по TCP:
+  при инициализации временный сервер слушает только сокет.
+- **Две ловушки shell, найденные до первого прогона.** `docker run -i`/`docker exec -i` внутри
+  `while read` съедает stdin цикла — обходится только первая база; клиент к источнику и `tgt_psql`
+  — без `-i` (страж в `pg_migrate_test.go`). Счётчик провалов внутри конвейера остаётся в
+  подоболочке — провалы копятся в файле. Снимки сортируются `LC_ALL=C` в shell, а не `ORDER BY`:
+  glibc-источник и musl-цель упорядочивают текст по-разному, и сверка разошлась бы на одинаковых
+  данных.
+- **Порт — существующим приёмом, без новой переменной.** Публикация закрывается
+  `ports: !override` в локальном override, как в standalone-шаблоне (§5.3.1); первая редакция ТЗ
+  предлагала `PG_PUBLISH` — отказались: ещё одна переменная `.env` ради одной строки override.
+- **Ревизия скрипта переноса — чем опасен «зелёный verify».** Первая редакция сверяла цель со
+  снимком на момент дампа и считала только строки. Запись в источник ПОСЛЕ дампа (клиент чужой
+  системы, cron) терялась молча, а `UPDATE` счётчики строк не меняет вовсе. Теперь — отказ `dump`
+  при подключённых клиентах, счётчики `n_tup_ins + n_tup_upd + n_tup_del` по `pg_stat_user_tables`
+  каждой базы до и после дампа и подкоманда `fence` перед остановкой нативного сервера.
+  Пользовательские таблицы, а не `pg_stat_database`: `ANALYZE` автовакуума пишет в каталоги и дал бы
+  ложную тревогу. Задержка коллектора статистики PG 12 — `sleep 2` (`NEXUS_PG_STATS_DELAY` только
+  для тестов). Обрыв на post-data (индексы, ограничения, права) счётчики строк тоже не видят —
+  отсюда снимок схемы числом объектов по видам без объектов расширений (версия расширения в 16
+  может быть новее).
+- **«Слушал только localhost» на бою не бывает.** Контейнеры ходили к нативному серверу через
+  `host.docker.internal`, значит он слушал адрес шлюза docker-сети или `*`. Оговорка «закройте порт,
+  если…» никогда бы не сработала, и роли всех баз оказались бы открыты для перебора с
+  `host all all all md5` на `0.0.0.0:5432` в обход ufw. Порт закрывается до окна, `check`/`restore`
+  иначе отказывают, а `pg_hba` тома пускает по паролю только частные сети.
+- **`pg_dumpall` без `--clean` теряет свойства `postgres`/`template1`.** Настройки базы и ролей в
+  ней, права, лимит и комментарий этих двух баз не дампятся (их не пересоздают). Их строит
+  `.post.sql` из каталога источника: `aclexplode` → REVOKE/GRANT, `pg_db_role_setting` → ALTER … SET
+  (у `search_path` и других списочных GUC значение без кавычек — оно уже в синтаксисе списка). В
+  сверке права — разобранные и отсортированные без grantor'а, NULL — как `acldefault`.
+- **Сеансовые настройки — из `pg_file_settings`, а не из сеанса.** `ALTER DATABASE postgres SET
+  TimeZone` перекрыл бы серверное значение в сеансе снимка, и `ALTER SYSTEM` перенёс бы его. У
+  `timezone_abbreviations` `boot_val` = NULL (значение подставляется при старте) — `format('%L',
+  NULL)` даёт голое `NULL` и синтаксическую ошибку; NULL не переносится, в сверке — `-`.
+- **Две несовместимости 12 ↔ 16, найденные репетицией.** `'rel:' || c.relkind` (тип `"char"`) в 16 —
+  `operator is not unique: unknown || "char"`, в 12 работало: явный `::text`. И `VALID UNTIL
+  'infinity'`: `extract(epoch …)::bigint` падает в обеих версиях — срок через `isfinite`. Оба места
+  на источнике прошли бы, а упали бы на цели или в окне — поэтому `check` снимает пробный снимок.
+- **Вход приложения — до переключения, по сети контейнера.** Через `127.0.0.1` внутри контейнера
+  проверять нельзя: там в `pg_hba` образа `trust`. `restore` подключается к адресу контейнера
+  (`hostname -i`) — правило частных сетей, `md5`, пароль из `.env` через `-e PGPASSWORD` без значения
+  (в `argv` docker его нет).
+- **Смена образа `postgres` пересоздаёт базу посреди выката (найдено при выпуске 1.42.0).** На
+  сервере, где база уже в контейнере стека, `docker compose up -d --build web receiver sender`
+  обрабатывает и зависимости: сменился образ (`16-alpine` → `16.16-alpine`) — compose пересоздаёт
+  контейнер `postgres` (проверено экспериментом с двумя сервисами). Минорное 16.x → 16.16 на том же
+  томе безопасно, но пауза базы приходится на середину выката. Поэтому в DEPLOYMENT §9.1.13 и в
+  описании релиза — отдельный шаг `docker compose pull postgres && docker compose up -d postgres` до
+  сервисов. У пар §93 обратная проблема: `rolling.sh` идёт с `--no-deps`, и база осталась бы на
+  прежней 16.x — шаг обязателен. Там же: `kafka` — собираемый сервис (§75), поэтому в процедурах
+  `up -d --build` только с именами сервисов, иначе пересоберётся и пересоздастся брокер.
+- **Клоны row-триггеров на партициях ломали сверку 12 → 16 (найдено ревизией перед 1.42.0).** В 12
+  клон триггера родителя на партиции помечен `tgisinternal`, с 15 — нет (у него `tgparentid`), и
+  снимок схемы давал `trg|2` на источнике против `trg|4` на цели: `verify` в `restore` срывал бы окно
+  на любом кластере с партиционированной таблицей. Клоны исключаются по зависимости `'P'` в
+  `pg_depend` — она есть в обеих версиях (`tgparentid` в 12 нет). Проверено на голых 12 и 16.16 и
+  репетицией (в чужую базу добавлена партиционированная таблица с row-триггером; BEFORE ROW на
+  партиционированной таблице 12 не умеет — только AFTER).
+- **Публикация 5432 на LAN-адресе проходит проверку без `NEXUS_PG_ALLOW_PUBLIC`.** `port_public`
+  считает опасной только публикацию без адреса (`0.0.0.0`/`::`); `"<IP>:5432:5432"` — явный адрес.
+  Нужна, когда к базе ходят другие серверы (так было с нативным): тот же адрес, что слушал нативный
+  (`ss -ltn`), иначе клиенты других серверов после переноса не достучатся.
+
+### 4.102 §117 — переход к узлу из «Отказов»
+
+Раздел [117-rejected-node-link.md](sections/117-rejected-node-link.md).
+Ветка `feature/rejected-node-link` (от `dev`, отдельный worktree — в общем дереве параллельно
+работала другая сессия). Миграции 0044–0045, ключей `config.yml` нет.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §117 | ✅ Phase 117.0 | [sections/117-rejected-node-link.md](sections/117-rejected-node-link.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md), отсылка из §94.11 |
+| Скил `handoff` и правило «handoff после каждого раздела ТЗ» | ✅ Phase 117.0 | [.claude/skills/handoff/SKILL.md](../.claude/skills/handoff/SKILL.md) (перенесён из routix и адаптирован), [CLAUDE.md](../CLAUDE.md) §0 «порядок сдачи ТЗ» п. 4 и §11; документы — `handoffs/`, коммитятся вместе с ТЗ (решение пользователя 24.11.2026) |
+| §117.7 маскирование токена бота в журнале отказов | ✅ Phase 117.1 | `rejectTarget` и `rejectRawPath` в [reject_middleware.go](../internal/receiver/adapter/in/http/reject_middleware.go) — через `sensitive.MaskBotTokens`; миграция [0044](../migrations/0044_rejected_mask_bot_tokens.up.sql) удаляет накопленные группы и сэмплы с секретом; тесты `TestRejectLogMiddleware_MasksBotToken` (красный на старом коде), `TestRejectedMigration_DeletesUnmaskedBotTokens_E2E` |
+| §117.3 Receiver фиксирует узел отказа | ✅ Phase 117.2 | Наблюдатель резолва — `usecase.ResolvedNode{TeamSlug, Path, ID}` вместо пары строк ([route.go](../internal/receiver/usecase/route.go): `RouteInput.OnNodeResolved`, `NodeRootMethod`); `nodeLabelSetter` кладёт ID под `RejectNodeIDKey` ([handler.go](../internal/receiver/adapter/in/http/handler.go), [reject_middleware.go](../internal/receiver/adapter/in/http/reject_middleware.go)) → `rejectlog.Sample.NodeID` → агрегат (последний непустой, [collector.go](../internal/receiver/adapter/out/rejectlog/collector.go)) → UPSERT `node_id = COALESCE(EXCLUDED.node_id, …)` ([repo.go](../internal/receiver/adapter/out/rejectlog/repo.go)); миграция [0045](../migrations/0045_rejected_node_id.up.sql) |
+| §117.5 Web отдаёт узел группы | ✅ Phase 117.3 | [rejected_repo.go](../internal/web/adapter/out/postgres/rejected_repo.go): `rejectedGroupReadFrom` = прежний FROM + `LEFT JOIN nodes n ON n.id = g.node_id LEFT JOIN teams nt …` — только для выборок, сканирующих группу (список, карточка); счётчики, сводка и «пометить все» идут по прежнему FROM без join'а узла. `domain.RejectedGroup.Node *RejectedNode` (путь/статус/команда — ТЕКУЩИЕ) и `NodeDeleted` (`node_id` есть, строки узла нет); JSON `node` / `node_deleted` и последняя колонка CSV `node` ([rejected_handler.go](../internal/web/adapter/in/http/rejected_handler.go)); Swagger обновлён |
+| §117.6 UI: ссылка в строке и блок «Узел» в карточке | ✅ Phase 117.4 | [RejectedTab.tsx](../web-ui/src/pages/logs/RejectedTab.tsx) `RejectedRowNode` — «↗ узел» соседом растянутой ссылки строки с `ABOVE_STRETCH` (не вложена: ссылка в ссылке невалидна); удалённый узел — текст без подъёма (клик по нему открывает карточку, как по строке). [RejectedDrawer.tsx](../web-ui/src/components/logs/RejectedDrawer.tsx) `RejectedNodeBlock` — путь, команда, `Pill` статуса, «Открыть узел» и «Включить» (`?tab=queue`) по ТЕКУЩЕМУ статусу. Хелперы `rejectedNodeHref`/`rejectedNodeEnableHref` в [lib/rejected.ts](../web-ui/src/lib/rejected.ts); i18n `rejected.node.*`; Vitest в `RejectedTab.test.tsx`, `RejectedDrawer.test.tsx`; бандл пересобран |
+| §117 ревизия перед сдачей | ✅ Phase 117.5 | (1) узел ЧУЖОЙ команды скрыт от не-администратора — `RejectedUsecase.scopeNode` в [rejected.go](../internal/web/usecase/rejected.go), тест `TestRejected_ForeignTeamNodeHiddenFromOperator` (красный на коде 117.4); (2) `DEPLOYMENT.md` возвращены окончания строк CRLF |
+
+**Неочевидности §117:**
+
+- **Узел фиксируется при отказе, а не ищется по пути на чтении.** Путь группы — путь АДРЕСА: у
+  passthrough-хвоста (`tg/bot42:…/sendMessage` при узле `tg`), legacy-«чтения B» (`/request/a/b` →
+  группа «команда a, путь b», узел `a/b` команды default) и переименованного узла он с путём узла
+  не совпадает. Сопоставление по пути (как у страницы Kafka) промахивалось бы ровно здесь.
+- **Узел вне ключа группы, `COALESCE` при UPSERT.** Иначе переименование или пересоздание узла
+  дробило бы одну проблему клиента на группы, а отказ до резолва в ту же группу затирал бы узел.
+- **Join с узлом — только в выборках, сканирующих группу** (`rejectedGroupReadFrom`): счётчики,
+  сводка и «пометить все» идут по прежнему FROM, лишний join им не нужен.
+- **Узел чужой команды скрыт от оператора** (найдено ревизией). Группа своей команды указывает на
+  чужой узел при legacy-«чтении B»; без правила журнал раскрывал бы путь, статус и название чужой
+  команды, хотя до §117 за пределы команды не выходил.
+- **Маскирование до разбора адреса** (`rejectTarget`): токен может стоять и в первом сегменте
+  короткой формы. Накопленное с секретом удаляется миграцией 0044 — `UPDATE` с маской упёрся бы в
+  уникальный ключ (две группы одного бота с разными секретами совпали бы).
+- **Секрет в `team_slug` — миграция 0046 (найдено ревизией перед 1.42.0).** До §117 `rejectTarget`
+  резал адрес на слог и путь без маски, и токен в первом сегменте короткой формы
+  (`/api/v1/request/bot<id>:<secret>/sendMessage`, SDK Telegram на корне шины) уходил в `team_slug`
+  (≤ 64 символа — токен влезает целиком). 0044 чистила только `node_path`. Новая миграция, а не правка
+  0044: та уже применена на общей базе стенда. Регрессия — тот же
+  `TestRejectedMigration_DeletesUnmaskedBotTokens_E2E` с группой, у которой секрет в слоге.
+- **Порядок выката — сначала Receiver**, а не «любой» (так ошибочно было в §117 ТЗ): старый Receiver
+  пишет путь без маски и без узла; правило DEPLOYMENT §9.1.11 было верным, ТЗ выровнено.
+- **`DEPLOYMENT.md` хранится с CRLF, остальные `.md` — с LF.** Правка скриптом через текстовый режим
+  Python (`open(...).read()` + запись с `newline=""`) молча переводит файл на LF, и diff ветки
+  показывает изменённым весь файл (7 761 строка вместо 21). Править такие файлы — в бинарном режиме
+  или инструментом, сохраняющим окончания строк.
+
+Handoff по §117 — [handoffs/handoff-20261124-131555.md](../handoffs/handoff-20261124-131555.md).
+
+### 4.103 §118 — дедупликация доставки: анализ, `X-Nexus-Id`, мягкая остановка Sender
+
+Раздел [118-delivery-dedup.md](sections/118-delivery-dedup.md).
+Ветка `feature/delivery-dedup` (от `dev`). Миграций и ключей `config.yml` нет.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §118 (анализ, Д1–Д5, замер) | ✅ Phase 118.0 | [sections/118-delivery-dedup.md](sections/118-delivery-dedup.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); правки §3.6, §27.4/§27.14, §16, §30, §109 |
+| §118.7 Д1: сквозной `X-Nexus-Id` к получателю | ✅ Phase 118.1 | Константа `domain.HeaderNexusID` ([headers.go](../internal/domain/headers.go)), ею же заменены литералы ack §83 в Receiver и чтение ответа в повторах Web. `SendUsecase.outgoingHeaders` ([nexus_id.go](../internal/sender/usecase/nexus_id.go)) — единая точка для async, sync, DLQ-репроцессора и sweeper'а: клон карты, клиентский заголовок удаляется в любом регистре, `X-Nexus-Id = in.ID` (= ID записи лога). Puller RabbitMQAsync — `msgID()` один раз на сообщение ([puller.go](../internal/receiver/usecase/puller.go)). Тесты: `TestSend_NexusIDHeader_*`, `TestPullerWorker_IDConsistentWithoutMessageID` (красный на старом коде), integration — у передоставленного сообщения тот же `X-Nexus-Id` |
+| §118.8 Д2: мягкая остановка Sender | ✅ Phase 118.2 | `deliveryScope` ([delivery_scope.go](../internal/sender/adapter/in/kafka/delivery_scope.go)) — контекст доставки `WithCancel(WithoutCancel(parent))`, отменяется только `Abort`. [ConsumerGroup](../internal/sender/adapter/in/kafka/consumer.go): `runOne(ctx, dctx)`, пауза повторов на ctx, `Handle` и `Commit` на dctx; `Shutdown(ctx)` — дренаж, по потолку `Abort` + `drainAbortGrace`, reader'ы закрываются после выхода горутин; `Stop()` — прежняя немедленная остановка. [DLQReprocessor](../internal/sender/adapter/in/kafka/dlq_reprocessor.go) и [PausedSweeper](../internal/sender/adapter/in/kafka/paused_sweeper.go) — то же в `sweepOnce(ctx, dctx)`, `Shutdown(ctx, runDone)`. [App.Stop](../internal/sender/app.go) → `stopDeliveries`: три дренажа и `GracefulStop` gRPC параллельно под одним `shutdown.timeout_sec`. `stop_grace_period: 45s` во всех compose + страж [compose_grace_test.go](../tests/deploy/compose_grace_test.go). Тесты: [drain_test.go](../internal/sender/adapter/in/kafka/drain_test.go) (дренаж до commit, обрыв по потолку — для всех трёх циклов), integration `TestSender_Async_GracefulStopDoesNotRedeliver` |
+
+**Неочевидности §118:**
+
+- **«Перестать читать» и «оборвать доставку» — разные сигналы.** runner отменяет контекст
+  приложения ДО `App.Stop`; до §118 на нём же шла доставка, и HTTP к получателю рвался посреди
+  отправки. Теперь чтение (FetchMessage, пауза retry-in-place, тики проходов) остаётся на контексте
+  приложения, а обработка и commit — на `deliveryScope` с `context.WithoutCancel` (значения —
+  логгер, трейс — наследуются, отмена — нет).
+- **Reader закрывается ПОСЛЕ выхода горутин.** Прежний `Stop` закрывал reader'ы до `wg.Wait` —
+  при дренаже commit доставленного сообщения пошёл бы в закрытый reader, и повтор вернулся бы.
+  Busy-loop «reader closed», ради которого был такой порядок, не возникает: цикл выходит по отмене
+  контекста чтения на голове итерации.
+- **Дренажи и `GracefulStop` gRPC — параллельно, под одним потолком.** Последовательно потолки
+  сложились бы (30 + 30 с) и не уложились в `stop_grace_period` 45 с — SIGKILL посреди сброса логов
+  в ClickHouse.
+- **`X-Nexus-Id`, а не `Idempotency-Key`.** С `Idempotency-Key`/`X-Idempotency-Key` `net/http`
+  считает POST повторяемым (тело из `bytes.Reader`, есть `GetBody`) и сам переотправляет его на
+  переиспользованном соединении после ошибки чтения до первого байта ответа — то есть уже после
+  отправки. Для получателя без поддержки ключа это добавочный источник повторов.
+- **Клиентский `X-Nexus-Id` удаляется в любом регистре.** Заголовки — `map[string]string`, клиент
+  HTTP ставит их обходом карты (`Header.Set` канонизирует ключ), порядок обхода случаен: ключ
+  `x-nexus-id` через раз перебивал бы значение шины.
+- **ID, негодный для заголовка, не ставится (найдено ревизией перед 1.42.0).** У RabbitMQAsync ID —
+  AMQP `message_id` издателя: управляющий символ (`
+`, `
+`, ` `) заставил бы `net/http`
+  отвергать каждую попытку ещё до отправки — сообщение уходило бы в DLQ вместо доставки, хотя до
+  §118 доставлялось. Проверка — `httpguts.ValidHeaderFieldValue` (та же, что в `net/http`); заголовок
+  клиента при этом всё равно удаляется. Тест со стабом HTTP-клиента — регрессия на значение, а не на
+  транспорт.
+- **Нагрузочный прогон перед 1.42.0 (стенд).** Нативный стенд: 500 RPS × 10 мин, микс
+  sync/async/dyn-url/Bearer/Basic — 299 891 запрос, 0 ошибок, p95 79 мс (из них mock 50±30 мс), приём
+  async p95 7,7 мс, 0 рестартов consumer'а, 0 ошибок commit; все 90 181 async-сообщение имеют запись
+  в логе. Чистый async 50 RPS × 3 мин: 9 000 = 9 000 доставлено. Пары §93 под 100 RPS с выкатом
+  `rolling.sh` всех шести реплик: 35 869 запросов, 0 ошибок клиентам, async 17 865 без потерь, 5
+  повторных доставок — все в секунды пересоздания sender-1/sender-2 (ребаланс отклоняет commit
+  доставки в полёте у соседки, граница §118.9), с тем же ID. Одиночный Sender (бой srv-p-1c-bus)
+  соседа в группе не имеет — этот механизм там не срабатывает.
+- **Бюджет остановки: 45 с не покрывают худший случай.** 5 (drain) + 30 (потолок) + 5
+  (`drainAbortGrace`) + сброс логов в ClickHouse (до 15 с) > 45 с. Обычная остановка укладывается;
+  при доставке дольше потолка и медленном ClickHouse SIGKILL обрывает сброс. Значения не поднимались
+  (не регрессия: одиночный стек до §118 убивался через 10 с) — граница записана в §118.9 и DEPLOYMENT
+  §9.1.12 с рецептом override. Reader'ы слотов держатся до конца самой долгой доставки намеренно:
+  досрочное закрытие — ребаланс и отклонённый commit доставок в полёте.
+| §118.10 честность про producer Kafka | ✅ Phase 118.3 | Комментарии [producer.go](../internal/platform/kafka/producer.go), пакетный [kafka.go](../internal/platform/kafka/kafka.go) (был «заглушка Phase 0»), поля `KafkaProducerSection` ([config.go](../internal/platform/config/config.go)), ключи `kafka.producer.*` в [config.yml](../config/config.yml); ТЗ §5.3, §8, §15 и сводный. Поведение не меняется |
+| §118 ревизия перед сдачей | ✅ Phase 118.4 | Границы §118.9 дополнены: `X-Nexus-Id` уходит и сторонним API (случайный UUID, отключения нет); мягкая остановка опирается на порядок runner'а (чтение отменяется до `App.Stop`). Обходных путей остановки нет: скрипты деплоя не задают свой `-t` для сервисов приложения |
+
+Handoff по §118 — [handoffs/handoff-20261124-133959.md](../handoffs/handoff-20261124-133959.md).

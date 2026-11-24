@@ -18,8 +18,8 @@ Stack (see [web-ui/package.json](web-ui/package.json)):
 - **Tailwind 3** + `clsx` + `tailwind-merge` (`cn`) for styling. See `nexus-web-components`.
 - **react-i18next** + `i18next` with `en.json` / `ru.json`. See `nexus-web-i18n`.
 - **@radix-ui** (popover, tooltip) + **cmdk** (combobox), wrapped in `components/ui/`.
-- **react-hook-form** / **zod** / **@hookform/resolvers** are in `package.json` but **not used** in
-  `src/` — forms are controlled `useState` inputs. Don't introduce RHF without asking.
+- Forms are controlled `useState` inputs. **react-hook-form** / **zod** / **@hookform/resolvers**
+  were never used and were removed from `package.json` in §116 — don't reintroduce them without asking.
 - **vitest** + **@testing-library/react** + **jsdom** are configured, but **no tests exist yet**.
   See `nexus-web-testing`.
 

@@ -275,7 +275,7 @@ func TestResolveNode_InvalidUTF8(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			invalid := 0
-			reader := pgLikeNodeReader{mapNodeReader: mapNodeReader{nodes: nodes}, invalid: &invalid}
+			reader := pgLikeNodeReader{nodes: nodes, invalid: &invalid}
 
 			node, remainder, _, err := resolveNode(ctx, reader, tc.team, tc.path)
 

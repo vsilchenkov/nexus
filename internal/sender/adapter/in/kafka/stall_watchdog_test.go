@@ -43,7 +43,7 @@ func (f *fakeInspector) set(pos ...kafkapf.PartitionPosition) {
 }
 
 func part(p int, committed, last int64) kafkapf.PartitionPosition {
-	return kafkapf.PartitionPosition{Partition: p, Watermark: kafkapf.Watermark{First: 0, Last: last}, Committed: committed}
+	return kafkapf.PartitionPosition{Partition: p, First: 0, Last: last, Committed: committed}
 }
 
 // fakeTarget — экземпляр группы: client.id, «ждёт с», прочитанные позиции

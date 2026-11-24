@@ -52,12 +52,12 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 
 	// 1. Mock внешнего узла — всегда 500. Считаем число попыток.
 	var (
-		hits    int32
+		hits    atomic.Int32
 		gotPath atomic.Value
 	)
 	gotPath.Store("")
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		gotPath.Store(r.URL.Path)
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"err":"boom"}`))
@@ -148,7 +148,7 @@ func TestSender_Async_DLQ_E2E(t *testing.T) {
 	require.NoError(t, dlqReader.CommitMessages(ctx, msg))
 
 	// 7. Mock должен был получить ровно retry_count+1 = 3 попытки.
-	require.EqualValues(t, 3, atomic.LoadInt32(&hits), "expected 3 upstream attempts")
+	require.EqualValues(t, 3, hits.Load(), "expected 3 upstream attempts")
 	require.Equal(t, "/upstream", gotPath.Load().(string))
 
 	// 8. Headers DLQ-сообщения.
@@ -204,10 +204,10 @@ func TestSender_DLQReprocessor_E2E(t *testing.T) {
 	// 1. Mock: 500 пока recovered=false, затем 200 — «приёмник был мёртв, ожил».
 	var (
 		recovered atomic.Bool
-		hits      int32
+		hits      atomic.Int32
 	)
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		if recovered.Load() {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`ok`))
@@ -260,7 +260,7 @@ func TestSender_DLQReprocessor_E2E(t *testing.T) {
 	// 3. Кладём N сообщений прямо в DLQ (как основной consumer после retry).
 	const n0 = 5
 	ids := make(map[string]bool, n0)
-	for i := 0; i < n0; i++ {
+	for i := range n0 {
 		id := fmt.Sprintf("reproc-e2e-%d", i)
 		ids[id] = true
 		env := senderuc.Envelope{
@@ -316,7 +316,7 @@ func TestSender_DLQReprocessor_E2E(t *testing.T) {
 		180*time.Second, 500*time.Millisecond,
 		"DLQ reprocessor must redeliver ALL messages after recovery (none lost)")
 
-	require.GreaterOrEqual(t, atomic.LoadInt32(&hits), int32(n0), "reprocessor must hit the upstream for each message")
+	require.GreaterOrEqual(t, hits.Load(), int32(n0), "reprocessor must hit the upstream for each message")
 }
 
 // kafkaHeadersToMap — берём первое значение на ключ (как делает Sender).

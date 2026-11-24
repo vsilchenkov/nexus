@@ -56,13 +56,13 @@ func TestSender_Async_E2E(t *testing.T) {
 	// 1. Mock внешнего узла. Считаем количество вызовов — нужно ровно 1.
 	var (
 		mu      sync.Mutex
-		hits    int32
+		hits    atomic.Int32
 		gotBody []byte
 		gotAuth string
 		gotPath string
 	)
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		mu.Lock()
 		gotPath = r.URL.Path
 		gotAuth = r.Header.Get("Authorization")
@@ -149,10 +149,10 @@ func TestSender_Async_E2E(t *testing.T) {
 	// 7. Ждём обработки. Sender должен прочитать сообщение, выполнить HTTP-вызов,
 	//    закоммитить offset. Таймаут — 60 sec (Kafka rebalance может занять время).
 	deadline := time.Now().Add(60 * time.Second)
-	for atomic.LoadInt32(&hits) == 0 && time.Now().Before(deadline) {
+	for hits.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(200 * time.Millisecond)
 	}
-	if got := atomic.LoadInt32(&hits); got != 1 {
+	if got := hits.Load(); got != 1 {
 		t.Fatalf("expected 1 upstream hit, got %d", got)
 	}
 

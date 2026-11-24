@@ -136,9 +136,16 @@ go run ./cmd/loadtest \
 ### No-loss проверка async/rmq через ClickHouse (§10.2)
 
 При заданном `--ch-addr` loadtest после прогона ждёт `--ch-flush-grace` (батч-флаш sender'а в CH) и
-сверяет число строк `type IN ('requestAsync','RabbitMQAsync')` в `--ch-table` с числом отправленных
-async + rmq запросов. Потеря (`ch_rows < expected`) → exit 1. Дубликаты at-least-once
-(`ch_rows > expected`) нарушением не считаются. Пустой `--ch-addr` пропускает проверку.
+сверяет число **уникальных ID** строк `type IN ('requestAsync','RabbitMQAsync')` **узлов этого
+прогона** (`node_id` созданных узлов) в `--ch-table` с числом отправленных async + rmq запросов.
+Потеря (`ch_rows < expected`) → exit 1. Дубликаты at-least-once нарушением не считаются. Пустой
+`--ch-addr` пропускает проверку.
+
+> До 1.42.0 считались строки всей таблицы: на стенде с историей прошлых прогонов сверка проходила
+> мгновенно, нагрузчик выходил и гасил mock-получатель, пока Sender ещё сливал бэклог, — хвост
+> доставок упирался в закрытый порт («connection refused», затем `circuit_breaker_open`). Если в
+> `ch_rows` всё равно видны `done=0` в последнюю секунду прогона — это тот же признак: mock закрыт
+> раньше, чем дослит бэклог.
 
 ```bash
 go run ./cmd/loadtest --admin-password ... \

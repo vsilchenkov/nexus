@@ -56,18 +56,37 @@ type RouteInput struct {
 	// очередь — там root_method как раз request) и §16 (callback, у которого
 	// свой гейт — обязательная HMAC-подпись).
 	ExternalAsync bool
-	// OnNodeResolved (§101.3) — наблюдатель резолва: usecase сообщает ему слог
-	// команды, в которой узел НАЙДЕН, и путь узла сразу после резолва — до
-	// проверок, способных отказать. Handler ставит по ним метки метрик: из адреса
-	// их брать нельзя (хвост passthrough-адреса несёт секреты, а слог в
+	// OnNodeResolved (§101.3) — наблюдатель резолва: usecase сообщает ему
+	// найденный узел сразу после резолва — до проверок, способных отказать.
+	// Handler ставит по нему метки метрик и узел журнала отказов (§117.3): из
+	// адреса их брать нельзя (хвост passthrough-адреса несёт секреты, а слог в
 	// legacy-адресе может оказаться частью пути). nil — не вызывается.
-	OnNodeResolved func(teamSlug, nodePath string)
+	OnNodeResolved func(ResolvedNode)
+}
+
+// ResolvedNode — что usecase сообщает наблюдателю резолва (§101.3, §117.3).
+//
+// Структура, а не позиционные строки: три параметра одного типа подряд легко
+// перепутать местами, и компилятор этого не заметит.
+type ResolvedNode struct {
+	// TeamSlug — слог команды, в которой узел НАЙДЕН (в legacy-адресе может
+	// отличаться от слога из URL).
+	TeamSlug string
+	// Path — путь узла, без хвоста passthrough-адреса.
+	Path string
+	// ID — идентификатор узла: по нему журнал отказов ведёт на узел (§117).
+	ID string
+}
+
+// resolvedOf собирает ResolvedNode найденного узла.
+func resolvedOf(teamSlug string, node *domain.Node) ResolvedNode {
+	return ResolvedNode{TeamSlug: teamSlug, Path: node.Path, ID: node.ID}
 }
 
 // notifyResolved зовёт наблюдатель резолва, если он задан.
-func (in RouteInput) notifyResolved(teamSlug, nodePath string) {
+func (in RouteInput) notifyResolved(teamSlug string, node *domain.Node) {
 	if in.OnNodeResolved != nil {
-		in.OnNodeResolved(teamSlug, nodePath)
+		in.OnNodeResolved(resolvedOf(teamSlug, node))
 	}
 }
 
@@ -105,7 +124,7 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 	if err != nil {
 		return nil, err
 	}
-	in.notifyResolved(teamSlug, node.Path)
+	in.notifyResolved(teamSlug, node)
 	// §51.9: маршрутизация невосстановима постфактум — на debug видно, какой
 	// узел выбран и какой хвост пути уйдёт дальше.
 	// Путь и хвост задал клиент: у passthrough-адреса в хвосте токен бота.
@@ -146,13 +165,13 @@ func (u *RouteUsecase) Route(ctx context.Context, in RouteInput) (*RouteOutput, 
 // onResolved — наблюдатель резолва (см. RouteInput.OnNodeResolved), nil допустим.
 // Зовётся и для выключенного узла: отказ по нему метится путём узла так же, как
 // по legacy-адресу.
-func (u *RouteUsecase) NodeRootMethod(ctx context.Context, teamSlug, nodePath string, onResolved func(teamSlug, nodePath string)) (domain.RootMethod, error) {
+func (u *RouteUsecase) NodeRootMethod(ctx context.Context, teamSlug, nodePath string, onResolved func(ResolvedNode)) (domain.RootMethod, error) {
 	node, _, foundIn, err := resolveNode(ctx, u.nodes, teamSlug, nodePath)
 	if err != nil {
 		return "", err
 	}
 	if onResolved != nil {
-		onResolved(foundIn, node.Path)
+		onResolved(resolvedOf(foundIn, node))
 	}
 	if node.Status == domain.NodeStatusDisabled {
 		// Наружу — «узла нет» (см. checkNodeAcceptsSync), но ошибка несёт

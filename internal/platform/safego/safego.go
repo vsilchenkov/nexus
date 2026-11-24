@@ -22,9 +22,11 @@ import (
 //		// ...
 //	}()
 //
-// logger.Error в v1.7.9 сам отправляет событие в Sentry (sentryslog-хендлер,
-// EventLevel включает Error). У фоновой горутины нет request-scoped hub'а, так
-// что событие уходит в глобальный CurrentHub — это корректно. Stacktrace точки
+// logger.Error сам отправляет событие в Sentry (SentryHandler логгера
+// vsilchenkov/logging: событие на каждую запись не ниже порога sentry.level,
+// Error проходит любой допустимый порог). У фоновой
+// горутины нет request-scoped hub'а, так что событие уходит в глобальный
+// CurrentHub — это корректно. Stacktrace точки
 // паники кладётся атрибутом stack.
 func Recover(logger logging.Logger, op string) {
 	r := recover()

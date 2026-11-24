@@ -104,11 +104,9 @@ func newRejectedUC(t *testing.T, repo port.RejectedRepo, teams port.TeamRepo, no
 
 func rejectedGroup(id, slug, path string) *domain.RejectedGroup {
 	return &domain.RejectedGroup{
-		ID: id,
-		RejectedGroupKey: domain.RejectedGroupKey{
-			TeamSlug: slug, NodePath: path,
-			Reason: domain.RejectReasonNodeNotFound, HTTPMethod: "POST",
-		},
+		ID:       id,
+		TeamSlug: slug, NodePath: path,
+		Reason: domain.RejectReasonNodeNotFound, HTTPMethod: "POST",
 		Status: 404, Count: 5,
 	}
 }
@@ -389,4 +387,40 @@ func TestLevenshtein(t *testing.T) {
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, levenshtein(tt.a, tt.b), "%q vs %q", tt.a, tt.b)
 	}
+}
+
+// TestRejected_ForeignTeamNodeHiddenFromOperator (ревизия §117): группа своей
+// команды может указывать на узел ЧУЖОЙ — legacy-«чтение B» резолвит адрес
+// `/request/a/b` в узел `a/b` команды default, а группа пишется как «команда a,
+// путь b». Оператор команды a не должен узнавать из журнала путь, статус и
+// название команды узла, к которой он не относится; администратор видит всё.
+func TestRejected_ForeignTeamNodeHiddenFromOperator(t *testing.T) {
+	t.Parallel()
+
+	own := rejectedGroup("g1", "vika", "orders")
+	own.Node = &domain.RejectedNode{ID: "n1", Path: "orders", TeamSlug: "vika", Status: domain.NodeStatusDisabled}
+	foreign := rejectedGroup("g2", "vika", "b")
+	foreign.Node = &domain.RejectedNode{ID: "n2", Path: "vika/b", TeamSlug: "default", Status: domain.NodeStatusEnabled}
+	fresh := func() *rejectedRepoStub {
+		a, b := *own, *foreign
+		na, nb := *own.Node, *foreign.Node
+		a.Node, b.Node = &na, &nb
+		return &rejectedRepoStub{groups: []*domain.RejectedGroup{&a, &b}}
+	}
+	teams := &rejectedTeamRepo{team: &domain.Team{ID: "team-1", Slug: "vika"}}
+	operator := RejectedScope{TeamID: "team-1"}
+
+	res, err := newRejectedUC(t, fresh(), teams, nil).List(context.Background(), operator, port.RejectedFilter{})
+	require.NoError(t, err)
+	require.Len(t, res.Groups, 2)
+	assert.NotNil(t, res.Groups[0].Node, "узел своей команды виден")
+	assert.Nil(t, res.Groups[1].Node, "узел чужой команды скрыт")
+
+	d, err := newRejectedUC(t, fresh(), teams, nil).Details(context.Background(), operator, "g2")
+	require.NoError(t, err)
+	assert.Nil(t, d.Group.Node, "и в карточке")
+
+	res, err = newRejectedUC(t, fresh(), teams, nil).List(context.Background(), RejectedScope{IsAdmin: true}, port.RejectedFilter{})
+	require.NoError(t, err)
+	assert.NotNil(t, res.Groups[1].Node, "администратор видит узел любой команды")
 }

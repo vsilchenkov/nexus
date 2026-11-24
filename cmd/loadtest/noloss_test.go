@@ -79,7 +79,7 @@ func TestPollUntilStableCanceledBeforeFirstCount(t *testing.T) {
 
 func TestCheckNoLossSkippedWithoutAddr(t *testing.T) {
 	t.Parallel()
-	res := checkNoLoss(context.Background(), flags{}, 5)
+	res := checkNoLoss(context.Background(), flags{}, 5, nil)
 	assert.False(t, res.enabled)
 	assert.NoError(t, res.err)
 }
@@ -87,7 +87,7 @@ func TestCheckNoLossSkippedWithoutAddr(t *testing.T) {
 func TestCheckNoLossRejectsBadTable(t *testing.T) {
 	t.Parallel()
 	// addr задан, но имя таблицы невалидно — ошибка возвращается до коннекта.
-	res := checkNoLoss(context.Background(), flags{CHAddr: "127.0.0.1:9000", CHTable: "bad; DROP"}, 0)
+	res := checkNoLoss(context.Background(), flags{CHAddr: "127.0.0.1:9000", CHTable: "bad; DROP"}, 0, nil)
 	assert.True(t, res.enabled)
 	assert.Error(t, res.err)
 }
@@ -141,4 +141,40 @@ func TestReportPassedNoLoss(t *testing.T) {
 		r.NoLoss = true
 		assert.True(t, r.passed(100))
 	})
+}
+
+// TestNoLossWhere: сверка считает строки только узлов прогона — лог-таблица
+// общая, и счёт по всей таблице на стенде с историей проходил мгновенно
+// (нагрузчик выходил и гасил mock посреди слива бэклога). id подставляются в
+// SQL, поэтому не-UUID отвергается.
+func TestNoLossWhere(t *testing.T) {
+	t.Parallel()
+
+	const byType = "type IN ('requestAsync','RabbitMQAsync')"
+	tests := []struct {
+		name    string
+		ids     []string
+		want    string
+		wantErr bool
+	}{
+		{name: "без id — вся таблица", ids: nil, want: byType},
+		{
+			name: "узлы прогона",
+			ids:  []string{"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"},
+			want: byType + " AND node_id IN ('11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222')",
+		},
+		{name: "инъекция отвергается", ids: []string{"x') OR 1=1 --"}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := noLossWhere(tc.ids)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }

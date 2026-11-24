@@ -78,14 +78,18 @@ func writeAggregate(ctx context.Context, tx pgx.Tx, a *domain.RejectedAggregate)
 //
 // resolved_at сбрасывается при любом новом отказе (§94.6): иначе однажды
 // закрытая группа скрывала бы возобновившуюся проблему.
+//
+// node_id (§117.3) пишется, только когда пачка его знает: COALESCE не даёт
+// отказу до резолва затереть узел, известный группе раньше.
 func upsertGroup(ctx context.Context, tx pgx.Tx, a *domain.RejectedAggregate) (string, error) {
 	var id string
 	err := tx.QueryRow(ctx, `
 INSERT INTO rejected_groups
-    (team_slug, node_path, reason, http_method, status, first_seen, last_seen, count, clients)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0)
+    (team_slug, node_path, reason, http_method, status, first_seen, last_seen, count, clients, node_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, NULLIF($9, '')::uuid)
 ON CONFLICT ON CONSTRAINT rejected_groups_key DO UPDATE SET
     status      = EXCLUDED.status,
+    node_id     = COALESCE(EXCLUDED.node_id, rejected_groups.node_id),
     first_seen  = LEAST(rejected_groups.first_seen, EXCLUDED.first_seen),
     last_seen   = GREATEST(rejected_groups.last_seen, EXCLUDED.last_seen),
     count       = rejected_groups.count + EXCLUDED.count,
@@ -93,7 +97,7 @@ ON CONFLICT ON CONSTRAINT rejected_groups_key DO UPDATE SET
     resolved_by = NULL
 RETURNING id`,
 		a.Key.TeamSlug, a.Key.NodePath, string(a.Key.Reason), a.Key.HTTPMethod,
-		a.Status, a.FirstSeen, a.LastSeen, a.Count).Scan(&id)
+		a.Status, a.FirstSeen, a.LastSeen, a.Count, a.NodeID).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("rejectlog: upsert group: %w", err)
 	}

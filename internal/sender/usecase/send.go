@@ -234,10 +234,12 @@ func (u *SendUsecase) Send(ctx context.Context, in SendInput) SendOutput {
 	}
 
 	req := &port.HTTPRequest{
-		Method:    in.Method,
-		URL:       in.TargetURL,
-		NodePath:  in.NodePath, // §50: только для служебного лога редиректов
-		Headers:   in.Headers,
+		Method:   in.Method,
+		URL:      in.TargetURL,
+		NodePath: in.NodePath, // §50: только для служебного лога редиректов
+		// §118.7: + X-Nexus-Id — ключ дедупликации для получателя, одинаковый
+		// на всех попытках этого вызова и на повторах сообщения.
+		Headers:   u.outgoingHeaders(in),
 		Body:      in.Body,
 		TimeoutMs: in.TimeoutMs,
 	}

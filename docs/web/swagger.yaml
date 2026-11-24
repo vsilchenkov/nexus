@@ -2699,6 +2699,16 @@ definitions:
         type: string
       last_seen:
         type: string
+      node:
+        allOf:
+        - $ref: '#/definitions/internal_web_adapter_in_http.rejectedNodeResponse'
+        description: |-
+          Node — узел, к которому относится отказ (§117.5), по ТЕКУЩЕМУ состоянию;
+          нет — отказ до резолва или группа накоплена до §117.
+      node_deleted:
+        description: 'NodeDeleted — узел был, но удалён: показывается «узел удалён»
+          без ссылки.'
+        type: boolean
       node_path:
         type: string
       reason:
@@ -2731,6 +2741,19 @@ definitions:
         type: integer
       total:
         type: integer
+    type: object
+  internal_web_adapter_in_http.rejectedNodeResponse:
+    properties:
+      id:
+        type: string
+      path:
+        type: string
+      status:
+        type: string
+      team_name:
+        type: string
+      team_slug:
+        type: string
     type: object
   internal_web_adapter_in_http.rejectedResolveAllResponse:
     properties:
@@ -8209,8 +8232,8 @@ paths:
       - rejected
   /api/rejected/export.csv:
     get:
-      description: Те же фильтры, что у списка. CSV в UTF-8 с BOM (для Excel), 10
-        колонок.
+      description: Те же фильтры, что у списка. CSV в UTF-8 с BOM (для Excel), 11
+        колонок (последняя — node, §117.5).
       parameters:
       - description: нижняя граница last_seen (RFC3339)
         in: query

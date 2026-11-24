@@ -167,3 +167,39 @@ func TestRejectedSummaryResponse_CarriesState(t *testing.T) {
 	assert.Contains(t, string(raw), `"retention_days":0`)
 	assert.Contains(t, string(raw), `"collecting":false`)
 }
+
+// TestRejectedGroupResponse_Node (§117.5): узел группы уходит в ответ только
+// когда он есть; удалённый — флагом без объекта; отказ без узла — ни того, ни
+// другого (интерфейс по этому решает, показывать ли ссылку).
+func TestRejectedGroupResponse_Node(t *testing.T) {
+	t.Parallel()
+
+	withNode := toRejectedGroupResponse(&domain.RejectedGroup{
+		ID: "g1", NodePath: "tg/sendMessage",
+		Node: &domain.RejectedNode{
+			ID: "n1", Path: "tg", Status: domain.NodeStatusDisabled,
+			TeamSlug: "vika", TeamName: "Вика",
+		},
+	})
+	raw, err := json.Marshal(withNode)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw),
+		`"node":{"id":"n1","path":"tg","status":"disabled","team_slug":"vika","team_name":"Вика"}`)
+	assert.NotContains(t, string(raw), "node_deleted")
+
+	deleted := toRejectedGroupResponse(&domain.RejectedGroup{ID: "g2", NodeDeleted: true})
+	raw, err = json.Marshal(deleted)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"node_deleted":true`)
+	assert.NotContains(t, string(raw), `"node":`)
+
+	none := toRejectedGroupResponse(&domain.RejectedGroup{ID: "g3"})
+	raw, err = json.Marshal(none)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), `"node":`)
+	assert.NotContains(t, string(raw), `"node_deleted"`)
+
+	assert.Equal(t, "tg", rejectedNodeCSV(&domain.RejectedGroup{Node: &domain.RejectedNode{Path: "tg"}}))
+	assert.Equal(t, "(deleted)", rejectedNodeCSV(&domain.RejectedGroup{NodeDeleted: true}))
+	assert.Empty(t, rejectedNodeCSV(&domain.RejectedGroup{}))
+}

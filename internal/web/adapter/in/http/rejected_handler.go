@@ -51,6 +51,20 @@ type rejectedGroupResponse struct {
 	Clients    int32      `json:"clients"`
 	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 	ResolvedBy string     `json:"resolved_by,omitempty"`
+	// Node — узел, к которому относится отказ (§117.5), по ТЕКУЩЕМУ состоянию;
+	// нет — отказ до резолва или группа накоплена до §117.
+	Node *rejectedNodeResponse `json:"node,omitempty"`
+	// NodeDeleted — узел был, но удалён: показывается «узел удалён» без ссылки.
+	NodeDeleted bool `json:"node_deleted,omitempty"`
+}
+
+// rejectedNodeResponse — узел группы отказов (§117.5).
+type rejectedNodeResponse struct {
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	Status   string `json:"status"`
+	TeamSlug string `json:"team_slug"`
+	TeamName string `json:"team_name"`
 }
 
 // rejectedClientResponse — клиент группы.
@@ -271,7 +285,7 @@ func (h *RejectedHandler) Delete(c *gin.Context) {
 
 // Export godoc
 // @Summary  Выгрузка журнала отказов в CSV (§94.6).
-// @Description  Те же фильтры, что у списка. CSV в UTF-8 с BOM (для Excel), 10 колонок.
+// @Description  Те же фильтры, что у списка. CSV в UTF-8 с BOM (для Excel), 11 колонок (последняя — node, §117.5).
 // @Tags     rejected
 // @Produce  text/csv
 // @Param    from              query  string  false  "нижняя граница last_seen (RFC3339)"
@@ -298,9 +312,11 @@ func (h *RejectedHandler) Export(c *gin.Context) {
 
 	w := csv.NewWriter(c.Writer)
 	defer w.Flush()
+	// node — ТЕКУЩИЙ путь узла отказа (§117.5); добавлен последней колонкой,
+	// чтобы не сдвигать прежние у тех, кто разбирает выгрузку по номерам.
 	_ = w.Write([]string{
 		"team_slug", "node_path", "reason", "http_method", "status",
-		"count", "clients", "first_seen", "last_seen", "resolved_at",
+		"count", "clients", "first_seen", "last_seen", "resolved_at", "node",
 	})
 	for _, g := range res.Groups {
 		resolved := ""
@@ -311,6 +327,7 @@ func (h *RejectedHandler) Export(c *gin.Context) {
 			g.TeamSlug, g.NodePath, string(g.Reason), g.HTTPMethod, strconv.Itoa(int(g.Status)),
 			strconv.FormatInt(g.Count, 10), strconv.Itoa(int(g.Clients)),
 			g.FirstSeen.Format(time.RFC3339), g.LastSeen.Format(time.RFC3339), resolved,
+			rejectedNodeCSV(g),
 		})
 	}
 }
@@ -385,11 +402,32 @@ func rejectedFilterFromQuery(c *gin.Context, defaultLimit, maxLimit int) port.Re
 }
 
 func toRejectedGroupResponse(g *domain.RejectedGroup) rejectedGroupResponse {
-	return rejectedGroupResponse{
+	out := rejectedGroupResponse{
 		ID: g.ID, TeamSlug: g.TeamSlug, TeamID: g.TeamID, TeamName: g.TeamName,
 		NodePath: g.NodePath, Reason: string(g.Reason), HTTPMethod: g.HTTPMethod,
 		Status: g.Status, FirstSeen: g.FirstSeen, LastSeen: g.LastSeen,
 		Count: g.Count, Clients: g.Clients,
 		ResolvedAt: g.ResolvedAt, ResolvedBy: g.ResolvedBy,
+		NodeDeleted: g.NodeDeleted,
+	}
+	if n := g.Node; n != nil {
+		out.Node = &rejectedNodeResponse{
+			ID: n.ID, Path: n.Path, Status: string(n.Status),
+			TeamSlug: n.TeamSlug, TeamName: n.TeamName,
+		}
+	}
+	return out
+}
+
+// rejectedNodeCSV — значение колонки node выгрузки: путь узла, пометка
+// удалённого или пусто, если отказ к узлу не относится.
+func rejectedNodeCSV(g *domain.RejectedGroup) string {
+	switch {
+	case g.Node != nil:
+		return g.Node.Path
+	case g.NodeDeleted:
+		return "(deleted)"
+	default:
+		return ""
 	}
 }

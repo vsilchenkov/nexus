@@ -22,6 +22,114 @@
 
 ## [Unreleased]
 
+## [1.42.0] - 2026-11-24
+
+**Откат:** 3 миграции (0044–0046). down 0045 удаляет `rejected_groups.node_id` — «Отказы» снова
+без ссылки на узел (при повторном накате узел заполнится при следующем отказе группы); down 0044 и
+0046 ничего не восстанавливают — группы отказов с открытым секретом токена бота (в пути и в слоге
+команды), удалённые при обновлении, потеряны (§117.4). Схема обратно совместима: код 1.41.1
+стартует на ней, откатывать её не нужно. Код откатывается как обычно (`images.sh rollback`) и от
+места базы не зависит. **База** — отдельно и только в окне переноса: вернуть нативный PostgreSQL 12
+(DEPLOYMENT §5.4.4, «Откат базы»); всё, что записано в контейнер после переключения, при этом
+теряется.
+
+Платформенный релиз (ТЗ §116): Go 1.27.4, обновление зависимостей и перенос боевого PostgreSQL 12
+в контейнер `postgres:16.16-alpine` стека — **вместе со всеми базами и учётными записями
+кластера**. У §116 миграций схемы, новых ключей `config.yml` и изменений интерфейса нет. Обновляются
+все три сервиса. На сервере с нативным PostgreSQL перенос базы рекомендуется делать **отдельным
+этапом до обновления кода** (код 1.41.1 работает на 16): этап 1 — перенос, прежний Nexus на новой
+базе; этап 2 — Nexus 1.42.0 (DEPLOYMENT §9.1.13). Где база уже в контейнере стека — минорное
+обновление 16.x → 16.16 отдельным шагом `up -d postgres`.
+
+Плюс ТЗ §117 — переход к узлу из «Отказов» (миграции 0044–0046; **выкат — сначала Receiver**,
+DEPLOYMENT §9.1.11) и ТЗ §118 — дедупликация доставки: сквозной `X-Nexus-Id` и мягкая остановка
+Sender (миграций и ключей `config.yml` нет, DEPLOYMENT §9.1.12).
+
+### Added
+
+- **«Логи → Отказы»: переход к узлу** (§117). У отказов, причина которых относится к существующему
+  узлу (узел выключен, метод запрещён, нет авторизации, адрес запрещён, адрес не того типа), — ссылка
+  «↗ узел» в строке таблицы и блок «Узел» в карточке: текущий путь, команда, статус, «Открыть узел»
+  и «Включить» (вкладка «Очередь») у выключенного. Узел запоминается в момент отказа
+  (`rejected_groups.node_id`), удалённый показывается «узел удалён»; узел чужой команды оператору не
+  показывается. CSV-выгрузка — последняя колонка `node`.
+- **Заголовок `X-Nexus-Id` в каждом запросе к получателю** (§118.7): ID записи лога доставки,
+  одинаковый на всех повторах сообщения (in-process ретраи, DLQ, передоставка Kafka) — ключ, по
+  которому получатель (1С) может отсеивать повторы. Одноимённый заголовок клиента заменяется.
+  ID, негодный для значения заголовка (AMQP `message_id` издателя RabbitMQAsync с управляющими
+  символами), не ставится — доставка идёт без ключа, а не отвергается `net/http`. Анализ
+  дедупликации на уровне шины и варианты — ТЗ §118.
+
+### Changed
+
+- **PostgreSQL 16 — минимальная поддерживаемая версия.** Боевой нативный PostgreSQL 12 (срок
+  поддержки закончился в 2024 году) переносится в bundled-контейнер стека скриптом
+  `scripts/deploy/pg_migrate_native.sh` (`check` → `dump` → `restore` → `fence` → `verify`,
+  DEPLOYMENT §5.4.4): `pg_dumpall` клиентом 16.16 по сокету хоста, восстановление во временный
+  контейнер без публикации порта, пока нативный сервер ещё работает; переносятся и свойства баз
+  `postgres`/`template1`, и сеансовые настройки сервера (часовой пояс, форматы). Сверка баз, ролей с
+  хешами паролей, настроек, точных счётчиков строк и схемы; `dump` и `fence` отказывают, если в
+  источник писали после дампа. Прежние пароли работают: `pg_hba` тома пускает по `md5` (принимает
+  хеши PostgreSQL 12) только частные сети; порт контейнера публикуется на явных адресах
+  (`127.0.0.1`, LAN-адрес сервера для клиентов других серверов, шлюз docker-сети для соседних
+  стеков) — Docker публикует порт в обход ufw. Образ закреплён точной версией `postgres:16.16-alpine` во всех
+  compose-файлах, integration-тестах и CI (был плавающий `16-alpine`). Новые миграции могут
+  использовать возможности PostgreSQL 13–16.
+- **Go 1.27.4** (GO-2026-6859: гонка `http.MaxBytesReader` в HTTP/1-сервере `net/http` роняла
+  процесс; Nexus использует его в импорте резервной копии). Базовый образ сборки закреплён —
+  `golang:1.27.4-alpine` вместо плавающего `golang:1.26-alpine`, отдельный `docker pull` перед
+  сборкой больше не нужен.
+- **Зависимости.** Go-модули — до последних версий (clickhouse-go 2.51, pgx 5.13, grpc 1.85,
+  prometheus client 1.25, sentry-go 0.50, otel 1.47, x/crypto 0.59 и др.); `govulncheck` — 0
+  уязвимостей (было 7: `x/net`, `klauspost/compress`, `brotli`). Логгер
+  `github.com/vsilchenkov/logging` v1.8.0: события Sentry теперь строит его собственный
+  обработчик — `sentry-go/slog` с v0.48 их не создаёт, и простой подъём версии молча выключил бы
+  Sentry. npm-пакеты интерфейса — в пределах мажорных версий; неиспользуемые `zod`,
+  `react-hook-form`, `@hookform/resolvers` удалены.
+- **CI:** golangci-lint v2.15.0 через `go install` (образ v2.12 не читает export data Go 1.27),
+  Node 22, trivy 0.76.2.
+- **Переезд GitLab на `gitlab.vozovoz.ru/bus/nexus`.** На боевых серверах (srv-p-1c-bus, nexus-kz)
+  `origin` переключён на новый адрес с deploy-токеном `nexus-deploy` (только чтение: `git fetch --tags`
+  и `git checkout v<версия>` работают, push и API — нет). `scripts/release/create_release.py` переписан
+  по образцу `create_github_release.py`: хост и путь проекта берёт из remote `origin` (project id
+  больше не зашит), токен — personal access token с правом `api` из `GITLAB_TOKEN`, режимы
+  `--check` / `--dry-run` / `--update`. Compare-ссылки внизу этого файла переведены на новый хост
+  (старый по HTTPS не отвечает).
+- **`stop_grace_period: 45s`** у receiver/sender/web во всех compose-файлах (раньше — только в
+  HA-профиле, в одиночном стеке Docker убивал сервис через 10 с посреди дренажа). Применяется
+  пересозданием контейнера (`up -d`).
+
+### Fixed
+
+- **Деплой Sender'а больше не рождает повторную доставку** (§118.8). Остановка обрывала
+  async-доставку посреди HTTP-запроса, offset не коммитился, и после старта сообщение уходило
+  получателю второй раз. Теперь чтение очередей прекращается сразу, а доставки в полёте
+  доигрываются и коммитятся под потолком `shutdown.timeout_sec` (параллельно с `GracefulStop`
+  gRPC); дольше потолка — обрыв, как раньше. В паре реплик §93 остаётся at-least-once на
+  ребалансе группы (реплика выходит или входит — commit доставки в полёте у соседки отклоняется):
+  на стенде выкат обеих реплик Sender'а под 50 async/с дал 5 повторов из 17 865, с тем же
+  `X-Nexus-Id`; потерь и ошибок клиентам — ноль (§118.9).
+- **RabbitMQAsync без AMQP `message_id`:** ID в заголовке Kafka и ID конверта совпадают (были двумя
+  разными UUID).
+- Документация и `config.yml` больше не утверждают, что producer Kafka идемпотентен: `kafka-go` этого
+  не умеет, ключи `retries`/`enable_idempotence`/`max_in_flight_requests`/`delivery_timeout_ms` не
+  применяются (§118.10). Поведение не менялось. То же для `kafka.consumer.auto_offset_reset`:
+  reader'ы всех групп Sender'а всегда стартуют с начала топика — новая группа на брокере с историей
+  перечитает её целиком (комментарии конфигов и §8 теперь об этом говорят).
+- **Нагрузочный тест (`cmd/loadtest`): сверка «нет потерь»** считала строки всей лог-таблицы, и на
+  стенде с историей прошлых прогонов проходила сразу же — нагрузчик выходил и гасил mock-получатель
+  посреди слива бэклога. Теперь считаются уникальные ID узлов своего прогона.
+- **Сверка переноса PostgreSQL** не спотыкается о клоны row-триггеров на партициях (в 12 они
+  помечены как внутренние, с 15 — нет): `verify` сорвал бы окно на кластере с партиционированной
+  таблицей.
+
+### Security
+
+- **Журнал отказов хранил секрет токена Telegram-бота** из пути passthrough-узла — в PostgreSQL, в
+  интерфейсе «Отказов» и CSV. Теперь путь маскируется (`bot<id>:***`), накопленные группы с
+  открытым секретом удаляют миграции 0044 (секрет в пути) и 0046 (секрет в слоге команды: прежний
+  Receiver резал адрес `/api/v1/request/bot<id>:<secret>/…` на «команду» и путь без маски) (§117.7).
+
 ## [1.41.1] - 2026-10-08
 
 **Откат:** без отката схемы (миграций нет). Меняется только образ Web — откатывается он один.
@@ -3937,74 +4045,75 @@ ClickHouse (§21), идентификатор узла в логах для об
 
 ---
 
-[Unreleased]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.41.1...HEAD
-[1.41.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.41.0...v1.41.1
-[1.41.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.40.1...v1.41.0
-[1.40.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.40.0...v1.40.1
-[1.40.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.39.0...v1.40.0
-[1.39.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.38.1...v1.39.0
-[1.38.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.38.0...v1.38.1
-[1.38.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.37.0...v1.38.0
-[1.37.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.36.0...v1.37.0
-[1.36.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.35.1...v1.36.0
-[1.35.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.35.0...v1.35.1
-[1.35.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.34.1...v1.35.0
-[1.34.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.34.0...v1.34.1
-[1.34.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.33.0...v1.34.0
-[1.33.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.32.1...v1.33.0
-[1.32.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.32.0...v1.32.1
-[1.32.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.6...v1.32.0
-[1.31.6]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.5...v1.31.6
-[1.31.5]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.4...v1.31.5
-[1.31.4]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.3...v1.31.4
-[1.31.3]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.2...v1.31.3
-[1.31.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.1...v1.31.2
-[1.31.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.31.0...v1.31.1
-[1.31.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.30.1...v1.31.0
-[1.30.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.30.0...v1.30.1
-[1.30.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.29.2...v1.30.0
-[1.29.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.29.1...v1.29.2
-[1.29.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.29.0...v1.29.1
-[1.29.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.28.1...v1.29.0
-[1.28.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.28.0...v1.28.1
-[1.28.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.27.2...v1.28.0
-[1.27.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.27.1...v1.27.2
-[1.27.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.27.0...v1.27.1
-[1.27.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.26.0...v1.27.0
-[1.26.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.25.0...v1.26.0
-[1.25.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.24.0...v1.25.0
-[1.24.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.23.1...v1.24.0
-[1.23.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.23.0...v1.23.1
-[1.23.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.22.5...v1.23.0
-[1.22.5]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.22.4...v1.22.5
-[1.21.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.21.0...v1.21.1
-[1.21.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.20.2...v1.21.0
-[1.20.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.20.1...v1.20.2
-[1.20.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.20.0...v1.20.1
-[1.20.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.19.0...v1.20.0
-[1.19.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.18.1...v1.19.0
-[1.18.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.18.0...v1.18.1
-[1.18.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.17.0...v1.18.0
-[1.17.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.2...v1.17.0
-[1.16.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.1...v1.16.2
-[1.16.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.16.0...v1.16.1
-[1.16.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.2...v1.16.0
-[1.15.2]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.1...v1.15.2
-[1.15.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.15.0...v1.15.1
-[1.15.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.14.0...v1.15.0
-[1.14.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.13.0...v1.14.0
-[1.13.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.12.0...v1.13.0
-[1.12.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.11.0...v1.12.0
-[1.11.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.10.0...v1.11.0
-[1.10.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.9.1...v1.10.0
-[1.9.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.9.0...v1.9.1
-[1.9.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.8.0...v1.9.0
-[1.5.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.5.0...v1.5.1
-[1.5.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.4.1...v1.5.0
-[1.4.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.4.0...v1.4.1
-[1.4.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.3.0...v1.4.0
-[1.3.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.2.0...v1.3.0
-[1.2.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.1.0...v1.2.0
-[1.1.0]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.3...v1.1.0
-[1.0.3]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.1...v1.0.3
-[1.0.1]: https://gitlab.ci.vozovoz.ru/bus/nexus/-/compare/v1.0.0...v1.0.1
+[Unreleased]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.42.0...HEAD
+[1.42.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.41.1...v1.42.0
+[1.41.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.41.0...v1.41.1
+[1.41.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.40.1...v1.41.0
+[1.40.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.40.0...v1.40.1
+[1.40.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.39.0...v1.40.0
+[1.39.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.38.1...v1.39.0
+[1.38.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.38.0...v1.38.1
+[1.38.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.37.0...v1.38.0
+[1.37.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.36.0...v1.37.0
+[1.36.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.35.1...v1.36.0
+[1.35.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.35.0...v1.35.1
+[1.35.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.34.1...v1.35.0
+[1.34.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.34.0...v1.34.1
+[1.34.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.33.0...v1.34.0
+[1.33.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.32.1...v1.33.0
+[1.32.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.32.0...v1.32.1
+[1.32.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.6...v1.32.0
+[1.31.6]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.5...v1.31.6
+[1.31.5]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.4...v1.31.5
+[1.31.4]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.3...v1.31.4
+[1.31.3]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.2...v1.31.3
+[1.31.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.1...v1.31.2
+[1.31.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.31.0...v1.31.1
+[1.31.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.30.1...v1.31.0
+[1.30.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.30.0...v1.30.1
+[1.30.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.29.2...v1.30.0
+[1.29.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.29.1...v1.29.2
+[1.29.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.29.0...v1.29.1
+[1.29.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.28.1...v1.29.0
+[1.28.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.28.0...v1.28.1
+[1.28.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.27.2...v1.28.0
+[1.27.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.27.1...v1.27.2
+[1.27.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.27.0...v1.27.1
+[1.27.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.26.0...v1.27.0
+[1.26.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.25.0...v1.26.0
+[1.25.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.24.0...v1.25.0
+[1.24.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.23.1...v1.24.0
+[1.23.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.23.0...v1.23.1
+[1.23.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.22.5...v1.23.0
+[1.22.5]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.22.4...v1.22.5
+[1.21.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.21.0...v1.21.1
+[1.21.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.20.2...v1.21.0
+[1.20.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.20.1...v1.20.2
+[1.20.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.20.0...v1.20.1
+[1.20.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.19.0...v1.20.0
+[1.19.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.18.1...v1.19.0
+[1.18.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.18.0...v1.18.1
+[1.18.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.17.0...v1.18.0
+[1.17.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.16.2...v1.17.0
+[1.16.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.16.1...v1.16.2
+[1.16.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.16.0...v1.16.1
+[1.16.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.15.2...v1.16.0
+[1.15.2]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.15.1...v1.15.2
+[1.15.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.15.0...v1.15.1
+[1.15.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.14.0...v1.15.0
+[1.14.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.13.0...v1.14.0
+[1.13.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.12.0...v1.13.0
+[1.12.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.11.0...v1.12.0
+[1.11.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.10.0...v1.11.0
+[1.10.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.9.1...v1.10.0
+[1.9.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.9.0...v1.9.1
+[1.9.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.8.0...v1.9.0
+[1.5.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.5.0...v1.5.1
+[1.5.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.4.1...v1.5.0
+[1.4.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.4.0...v1.4.1
+[1.4.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.3.0...v1.4.0
+[1.3.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.2.0...v1.3.0
+[1.2.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.1.0...v1.2.0
+[1.1.0]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.0.3...v1.1.0
+[1.0.3]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.0.1...v1.0.3
+[1.0.1]: https://gitlab.vozovoz.ru/bus/nexus/-/compare/v1.0.0...v1.0.1

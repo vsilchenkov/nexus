@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/receiver/adapter/out/rejectlog"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
 	"nexus/internal/web/usecase/port"
@@ -432,4 +434,200 @@ func TestRejectedFlush_GarbageSampleKeepsBatch_E2E(t *testing.T) {
 
 	paths := []string{groups[0].NodePath, groups[1].NodePath}
 	assert.ElementsMatch(t, []string{"telephony", string(utf8.RuneError)}, paths)
+}
+
+// TestRejectedMigration_DeletesUnmaskedBotTokens_E2E (§117.7, миграции 0044 и
+// 0046): накопленные до §117 группы и сэмплы с открытым секретом токена бота
+// удаляются — и с секретом в пути (0044), и в слоге команды (0046: код до §117
+// резал адрес на слог и путь без маски, и токен первого сегмента оседал в
+// team_slug), — а группы без секрета (в том числе уже маскированные
+// `bot<id>:***`) остаются вместе со своими клиентами и сэмплами.
+//
+// Проверяется на реальном PostgreSQL: регулярное выражение миграции обязано
+// совпадать с sensitive.MaskBotTokens, а каскады — с DDL 0040.
+func TestRejectedMigration_DeletesUnmaskedBotTokens_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	dir, err := filepath.Abs("../../migrations")
+	require.NoError(t, err)
+	mg, err := pgpf.NewMigratorFromDSN(pool.Config().ConnString(), dir, logging.NewNoop())
+	require.NoError(t, err)
+	defer mg.Close()
+	latest, err := mg.MaxLocalVersion()
+	require.NoError(t, err)
+	const before = 43 // схема до 0044 — как у боевой базы до выката §117
+	require.NoError(t, mg.Down(int(latest-before)))
+
+	// Данные пишутся SQL'ем схемы 0043, а не писателем журнала: текущий писатель
+	// знает колонки более поздних миграций (node_id, §117.3).
+	const secret = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+	leaked := "tg/bot123456:" + secret + "/sendMessage"
+	for i, g := range []struct{ team, path string }{
+		{"default", leaked},
+		{"default", "tg/BOT123456:***/sendMessage"},
+		// Короткий «секрет» — обычный путь, его MaskBotTokens не трогает.
+		{"default", "robot1:short"},
+		// Токен в первом сегменте короткой формы: до §117 он уходил в слог.
+		{"bot123456:" + secret, "sendMessage"},
+	} {
+		team, path := g.team, g.path
+		var id string
+		require.NoError(t, pool.QueryRow(ctx, `
+INSERT INTO rejected_groups (team_slug, node_path, reason, http_method, status, first_seen, last_seen, count, clients)
+VALUES ($1, $2, 'node_not_found', 'POST', 404, now(), now(), 1, 1) RETURNING id`, team, path).Scan(&id))
+		_, err := pool.Exec(ctx, `
+INSERT INTO rejected_clients (group_id, client_ip, count, first_seen, last_seen)
+VALUES ($1, $2::inet, 1, now(), now())`, id, fmt.Sprintf("10.0.0.%d", i+1))
+		require.NoError(t, err)
+		_, err = pool.Exec(ctx, `
+INSERT INTO rejected_samples (group_id, at, client_ip, http_method, raw_path, status, body_bytes, request_id, headers)
+VALUES ($1, now(), $2::inet, 'POST', $3, 404, 0, '', '{}'::jsonb)`, id, fmt.Sprintf("10.0.0.%d", i+1), "/api/v1/"+team+"/"+path)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, mg.Up())
+
+	reader := pgrepo.NewRejectedRepoPg(pool, logging.NewNoop())
+	groups, err := reader.ListRejected(ctx, port.RejectedFilter{IncludeResolved: true})
+	require.NoError(t, err)
+	paths := make([]string, 0, len(groups))
+	for _, g := range groups {
+		paths = append(paths, g.NodePath)
+		assert.NotContains(t, g.NodePath, secret)
+		assert.NotContains(t, g.TeamSlug, secret, "секрет в слоге команды (0046)")
+	}
+	assert.ElementsMatch(t, []string{"tg/BOT123456:***/sendMessage", "robot1:short"}, paths)
+
+	var leftovers int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM rejected_samples WHERE raw_path LIKE '%' || $1 || '%'`, secret).Scan(&leftovers))
+	assert.Zero(t, leftovers, "сэмплы с секретом уходят вместе с группой")
+	var kept int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM rejected_samples`).Scan(&kept))
+	assert.Equal(t, 2, kept, "сэмплы оставшихся групп не тронуты")
+}
+
+// TestRejectedFlush_KeepsNodeID_E2E (§117.3): узел группы пишется, когда пачка
+// его знает, и не затирается пачкой без узла (отказ до резолва в ту же группу).
+// В ключ группы узел не входит — новый узел той же группы просто заменяет
+// прежний, а не открывает вторую группу.
+func TestRejectedFlush_KeepsNodeID_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	writer := rejectlog.NewRepo(pool)
+	now := time.Now().UTC().Truncate(time.Second)
+	k := rejectedKey("default", "orders/create")
+	const nodeA = "11111111-1111-4111-8111-111111111111"
+	const nodeB = "22222222-2222-4222-8222-222222222222"
+
+	nodeOf := func() string {
+		t.Helper()
+		var id *string
+		require.NoError(t, pool.QueryRow(ctx, `SELECT node_id::text FROM rejected_groups`).Scan(&id))
+		if id == nil {
+			return ""
+		}
+		return *id
+	}
+	flush := func(nodeID string) {
+		t.Helper()
+		a := rejectedAgg(k, 1, now, now, nil, nil)
+		a.NodeID = nodeID
+		require.NoError(t, writer.Flush(ctx, []domain.RejectedAggregate{a}))
+	}
+
+	flush("")
+	assert.Empty(t, nodeOf(), "отказ до резолва — узла нет")
+
+	flush(nodeA)
+	assert.Equal(t, nodeA, nodeOf())
+
+	flush("")
+	assert.Equal(t, nodeA, nodeOf(), "пачка без узла не затирает известный")
+
+	flush(nodeB)
+	assert.Equal(t, nodeB, nodeOf(), "узел пересоздан с тем же путём — группа та же, узел новый")
+
+	var groups int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM rejected_groups`).Scan(&groups))
+	assert.Equal(t, 1, groups, "узел не входит в ключ группы")
+}
+
+// TestRejectedRead_NodeCurrentAndDeleted_E2E (§117.5): чтение отдаёт узел
+// группы по его ТЕКУЩЕМУ состоянию (переименование и смена статуса после
+// отказа видны), а после удаления узла — признак «удалён» без объекта. Join
+// не дублирует строки и не мешает счётчикам.
+func TestRejectedRead_NodeCurrentAndDeleted_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	defaultTeam := resolveDefaultTeamID(t, ctx, pool)
+	var nodeID string
+	require.NoError(t, pool.QueryRow(ctx, `
+INSERT INTO nodes (path, root_method, target_url, team_id, status)
+VALUES ('orders/create', 'request', 'https://example.com/hook', $1, 'disabled') RETURNING id::text`,
+		defaultTeam).Scan(&nodeID))
+
+	writer := rejectlog.NewRepo(pool)
+	reader := pgrepo.NewRejectedRepoPg(pool, logging.NewNoop())
+	now := time.Now().UTC().Truncate(time.Second)
+	withNode := rejectedAgg(rejectedKey("default", "orders/create"), 2, now, now, nil, nil)
+	withNode.NodeID = nodeID
+	require.NoError(t, writer.Flush(ctx, []domain.RejectedAggregate{
+		withNode,
+		rejectedAgg(rejectedKey("default", "nosuch"), 1, now, now, nil, nil),
+	}))
+
+	byPath := func() map[string]*domain.RejectedGroup {
+		t.Helper()
+		groups, err := reader.ListRejected(ctx, port.RejectedFilter{IncludeResolved: true})
+		require.NoError(t, err)
+		require.Len(t, groups, 2, "join с узлом не дублирует группы")
+		out := map[string]*domain.RejectedGroup{}
+		for _, g := range groups {
+			out[g.NodePath] = g
+		}
+		return out
+	}
+
+	// Узел переименован и включён после отказа — чтение показывает текущее.
+	_, err := pool.Exec(ctx, `UPDATE nodes SET path = 'orders/create-v2', status = 'enabled' WHERE id = $1::uuid`, nodeID)
+	require.NoError(t, err)
+	got := byPath()
+	g := got["orders/create"]
+	require.NotNil(t, g.Node)
+	assert.Equal(t, nodeID, g.Node.ID)
+	assert.Equal(t, "orders/create-v2", g.Node.Path)
+	assert.Equal(t, domain.NodeStatusEnabled, g.Node.Status)
+	assert.Equal(t, "default", g.Node.TeamSlug)
+	assert.NotEmpty(t, g.Node.TeamName)
+	assert.False(t, g.NodeDeleted)
+	assert.Nil(t, got["nosuch"].Node, "отказ до резолва — без узла")
+	assert.False(t, got["nosuch"].NodeDeleted)
+
+	one, err := reader.GetRejected(ctx, g.ID)
+	require.NoError(t, err)
+	require.NotNil(t, one.Node, "карточка тоже несёт узел")
+
+	// Узел удалён — группа остаётся, узел помечен удалённым.
+	_, err = pool.Exec(ctx, `DELETE FROM nodes WHERE id = $1::uuid`, nodeID)
+	require.NoError(t, err)
+	got = byPath()
+	assert.Nil(t, got["orders/create"].Node)
+	assert.True(t, got["orders/create"].NodeDeleted)
+
+	s, err := reader.SummaryRejected(ctx, port.RejectedFilter{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), s.Groups)
 }

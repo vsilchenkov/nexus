@@ -58,7 +58,7 @@ func TestPerNodeMetrics_CarryTeamLabel(t *testing.T) {
 		if !v.Type().Field(i).IsExported() {
 			continue
 		}
-		c, ok := v.Field(i).Interface().(prometheus.Collector)
+		c, ok := reflect.TypeAssert[prometheus.Collector](v.Field(i))
 		if !ok {
 			continue
 		}

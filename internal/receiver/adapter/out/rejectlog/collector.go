@@ -44,7 +44,9 @@ const flushTimeout = 30 * time.Second
 // Тела запроса здесь нет и быть не может: только размер. Значения query в
 // RawPath уже замаскированы вызывающим, Headers — отобранный белый список.
 type Sample struct {
-	Key       domain.RejectedGroupKey
+	Key domain.RejectedGroupKey
+	// NodeID — узел, найденный до отказа (§117.3); пусто — отказ до резолва.
+	NodeID    string
 	Status    int32
 	At        time.Time
 	ClientIP  string
@@ -267,7 +269,11 @@ func (c *Collector) drain(buf map[domain.RejectedGroupKey]*aggregate) {
 
 // aggregate — состояние одной группы между сбросами.
 type aggregate struct {
-	key     domain.RejectedGroupKey
+	key domain.RejectedGroupKey
+	// nodeID — последний непустой узел группы за интервал (§117.3). Пустой не
+	// затирает известный: в одну группу (тот же адрес, причина и метод) могут
+	// попасть отказы и до, и после резолва только при смене конфигурации узлов.
+	nodeID  string
 	status  int32
 	first   time.Time
 	last    time.Time
@@ -291,6 +297,9 @@ func (c *Collector) absorb(buf map[domain.RejectedGroupKey]*aggregate, s Sample)
 		buf[s.Key] = a
 	}
 	a.status = s.Status
+	if s.NodeID != "" {
+		a.nodeID = s.NodeID
+	}
 	a.count++
 	if s.At.Before(a.first) {
 		a.first = s.At
@@ -388,6 +397,7 @@ func (a *aggregate) toDomain() domain.RejectedAggregate {
 	}
 	return domain.RejectedAggregate{
 		Key:       a.key,
+		NodeID:    a.nodeID,
 		Status:    a.status,
 		FirstSeen: a.first,
 		LastSeen:  a.last,

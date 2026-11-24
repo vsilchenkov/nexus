@@ -58,7 +58,7 @@ func TestSender_CHRetryViaKafka(t *testing.T) {
 	// --- Фаза 1: CH «лежит» — провайдер с nil-conn, insert падает → retry в Kafka.
 	const n = 12
 	downWriter := chlog.NewWithRetrier(clickhouse.StaticProvider(nil), chCfg, retrier, nil, nil, logger)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		downWriter.Write(ctx, table, retryRec(fmt.Sprintf("rec-%02d", i), int32(200+i)))
 	}
 	// Stop дренирует канал и делает финальный flushAll: insertBatch(nil)→ошибка →

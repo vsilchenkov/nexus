@@ -251,16 +251,20 @@ type KafkaTopicSection struct {
 }
 
 type KafkaProducerSection struct {
-	Acks                string `yaml:"acks"`
-	CompressionType     string `yaml:"compression_type"`
-	LingerMs            int    `yaml:"linger_ms"`
-	BatchSize           int    `yaml:"batch_size"`
-	BufferMemory        int    `yaml:"buffer_memory"`
-	Retries             int    `yaml:"retries"`
-	DeliveryTimeoutMs   int    `yaml:"delivery_timeout_ms"`
-	EnableIdempotence   bool   `yaml:"enable_idempotence"`
-	MaxInFlightRequests int    `yaml:"max_in_flight_requests"`
-	RequestTimeoutMs    int    `yaml:"request_timeout_ms"`
+	Acks            string `yaml:"acks"`
+	CompressionType string `yaml:"compression_type"`
+	LingerMs        int    `yaml:"linger_ms"`
+	BatchSize       int    `yaml:"batch_size"`
+	BufferMemory    int    `yaml:"buffer_memory"`
+	// Retries, DeliveryTimeoutMs, EnableIdempotence, MaxInFlightRequests —
+	// разбираются, но НЕ применяются (§118.10): segmentio/kafka-go не умеет
+	// идемпотентный producer и сам повторяет батч до 10 раз. Поля оставлены,
+	// чтобы существующие config.yml продолжали разбираться без ошибок.
+	Retries             int  `yaml:"retries"`
+	DeliveryTimeoutMs   int  `yaml:"delivery_timeout_ms"`
+	EnableIdempotence   bool `yaml:"enable_idempotence"`
+	MaxInFlightRequests int  `yaml:"max_in_flight_requests"`
+	RequestTimeoutMs    int  `yaml:"request_timeout_ms"`
 }
 
 type KafkaConsumerSection struct {

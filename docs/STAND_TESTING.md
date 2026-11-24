@@ -40,12 +40,31 @@ COMPOSE_FILE=deploy/docker-compose.stand-ha.yml ./scripts/deploy/rolling.sh --sk
 docker compose -f deploy/docker-compose.stand-ha.yml down
 ```
 
-**Kafka стенда анонсирует два адреса.** В `e:/git_rep/services/docker-compose.yml` у брокера два
+**Kafka стенда анонсирует два адреса.** В `C:/git_rep/services/docker-compose.yml` у брокера два
 клиентских listener'а: `localhost:9092` для нативных `make run-*` с хоста и `kafka:29092` для
 контейнеров в его сети. Одного мало: клиент идёт по АНОНСИРОВАННОМУ адресу, поэтому с единственным
 `advertised=localhost` контейнер уходит на самого себя и падает на старте
 («dial controller localhost:9092: connection refused»). Стек `services` под git не заведён — правки
 в нём нигде не версионируются, помните об этом при переустановке машины.
+
+**Пары читают `config/config.yml`, а не `config_debug.yml` — их consumer-группа `nexus-sender`, а не
+`nexus-sender-dev`.** Reader'ы Sender'а стартуют с НАЧАЛА топика (`auto_offset_reset` не применяется):
+если в Kafka стенда этой группы нет или она давно не читала, пары перечитают всю историю
+`nexus.async` (сотни тысяч сообщений) и DLQ и разошлют их по старым узлам. Проверка —
+`kafka-consumer-groups.sh --describe --group nexus-sender` (в контейнере брокера с `-e KAFKA_OPTS=`,
+иначе CLI падает на JMX-агенте). Безопасный путь, которым шёл прогон перед 1.42.0, — отдельный
+пустой брокер только для пар: `docker run -d --name kafka-rel142 --network services_default …`
+образом брокера стенда (KRaft, `KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-rel142:9092`) и в
+локальном override `environment: KAFKA_BROKERS: kafka-rel142:9092` у всех шести реплик; после
+прогона — удалить контейнер и его анонимные тома. Нативный Sender на время прогона гасить.
+
+**Windows + Docker Compose v5: собирать из `C:\`, а не `c:\`.** Compose передаёт bake каталог
+проекта из рабочего каталога терминала (у терминала VS Code — `c:\…`), а путь к Dockerfile — с
+`C:\…`; bake считает Dockerfile лежащим вне разрешённого каталога и падает с `additional privileges
+requested: pass "--allow=fs.read=…"` (через compose — просто `failed to execute bake`).
+`COMPOSE_BAKE=false` не помогает. Запускать `docker compose … --build` и `rolling.sh` из PowerShell
+после `Set-Location 'C:\git_rep\_go\nexus'` (для `rolling.sh` — `& 'C:\Program Files\Git\bin\bash.exe'
+-c './scripts/deploy/rolling.sh …'`). На Linux-сервере букв дисков нет — бой это не затрагивает.
 
 **После ручного `docker compose up -d` реплик обязателен `docker compose exec nginx nginx -s reload`** —
 иначе балансировщик держит старые адреса контейнеров (в прогоне это дало 55 % ошибок, пока reload не
@@ -69,8 +88,9 @@ docker compose -f deploy/docker-compose.stand-ha.yml down
 | echosrv (получатель) | http://localhost:9999 |
 
 Зависимости для нативного запуска берутся из **постоянного docker-стека `services`**
-(compose-проект `services`, уже запущен на машине разработчика): PostgreSQL `:5432`,
-Redis `:6379`, ClickHouse `:19000` (native) / `:18123` (HTTP), Kafka `:9092`.
+(compose-проект `services`, уже запущен на машине разработчика): PostgreSQL `:5432`
+(`postgres:16.16-alpine`, как на бою и в integration-тестах, — коммит `bf83a7e` репозитория
+`services`; версия — `docker exec postgres postgres --version`), Redis `:6379`, ClickHouse `:19000` (native) / `:18123` (HTTP), Kafka `:9092`.
 Адреса/креды зашиты в [config/config_debug.yml](../config/config_debug.yml) и **уже
 соответствуют `services`** (postgres `postgres`/`vOkjDn`/db `nexus`; redis ACL-пользователь
 `sa`/`I2MV5s`; clickhouse `default` без пароля; kafka `localhost:9092`).
@@ -78,10 +98,15 @@ Redis `:6379`, ClickHouse `:19000` (native) / `:18123` (HTTP), Kafka `:9092`.
 > **Не поднимай свои зависимости через `make docker-up-dev`** — это создаёт
 > дублирующие контейнеры `nexus-*`, которые не могут занять опубликованные порты
 > (их держит `services`) и только путают (две Redis/Postgres). Используй уже
-> поднятый `services`. Prometheus в `services` **нет** — метрики панели (Overview
-> KPI/throughput) деградируют в нули (это норма; per-node KPI/график узла всё равно
-> считаются из ClickHouse). RabbitMQ в `services` тоже нет — для RabbitMQAsync подними
-> его отдельно. Docker-стек Варианта A (`.env`) — отдельная история.
+> поднятый `services`. Prometheus в `services` **есть** (`:9099`, скрейпит
+> `host.docker.internal:8000/8080/9091`), и `config_debug.yml` по умолчанию смотрит
+> на него — метрики панели живые. Если его погасить, они деградируют в нули (это
+> норма; per-node KPI/график узла всё равно считаются из ClickHouse). RabbitMQ в
+> `services` нет — для RabbitMQAsync подними его отдельно. Docker-стек Варианта A
+> (`.env`) — отдельная история.
+>
+> Стек `services` живёт в `C:/git_rep/services/` (до переезда на новый ПК 11.2026 —
+> `e:/git_rep/services/`) и под git не заведён.
 
 ---
 
@@ -110,9 +135,9 @@ make set-admin-password PASSWORD=secret   # bootstrap пароля admin (иде
 ```bash
 # ВАЖНО: нативный --debug-запуск читает ENCRYPTION_KEY из окружения (НЕ из .env).
 # Ключ должен совпадать с тем, которым зашифрованы креды в БД (значение из .env).
-# PROMETHEUS_URL опционален: в стеке `services` Prometheus НЕТ — без него метрики
-# панели деградируют в нули (норма). Если нужен — подними Prometheus отдельно и
-# задай PROMETHEUS_URL на его адрес.
+# PROMETHEUS_URL опционален: по умолчанию config_debug.yml берёт Prometheus стека
+# `services` (http://localhost:9099). Без Prometheus метрики панели деградируют в
+# нули (норма).
 # PowerShell:
 $env:ENCRYPTION_KEY = (Select-String -Path .env -Pattern '^ENCRYPTION_KEY=').Line.Split('=',2)[1]
 # bash:
@@ -197,8 +222,14 @@ for i in $(seq 1 500); do
 done
 ```
 
-> Очередь `nexus.stand` создаётся узлом-puller'ом при старте; если её ещё нет,
-> создайте её в management UI (Queues → Add) до публикации.
+> Очередь `nexus.stand` Nexus **не создаёт**: puller объявляет её пассивно (`QueueDeclarePassive`,
+> §27 — очередь принадлежит издателю), и без неё узел уходит в деградацию с ERROR
+> `queue "nexus.stand" not found` в логе Receiver'а. У RabbitMQ стенда данные в анонимном томе —
+> после пересоздания контейнера очередь пропадает. Создать (puller подключится сам в течение минуты):
+>
+> ```bash
+> curl -fsS -u guest:guest -X PUT -H 'content-type: application/json' -d '{"durable":true}' >   http://localhost:15672/api/queues/%2F/nexus.stand
+> ```
 
 ---
 
@@ -218,7 +249,9 @@ done
   нет — это ожидаемо (#8 неприменим).
 
 ### 3.3 Методы (#5)
-- В логах ClickHouse каждого узла поле `method` совпадает с `outgoing_method`.
+- В логах ClickHouse каждого узла поле `http_method` совпадает с `outgoing_method`.
+  Колонка `method` с §39 хранит подпуть path-passthrough, у обычного узла она **пустая** —
+  это не регрессия.
 - Запрос «неправильным» входящим методом отклоняется с `405`. Проверка:
   ```bash
   curl -i -X DELETE http://localhost:8000/api/v1/request/default/stand/req-noauth-post
@@ -294,13 +327,14 @@ done
 | В ответ приходит HTML index.html | Бьёте по старому `/v1/...` вместо `/api/v1/...`, либо не через единый вход |
 | 405 на всех запросах | `incoming_method` узла не совпадает с методом запроса (#5) |
 | target_url unreachable / 502 | echosrv недоступен Receiver'у — проверьте `ECHO_URL` (host.docker.internal vs localhost) |
-| RabbitMQAsync без трафика | RabbitMQ не поднят (`--profile stand`) или очередь `nexus.stand` не создана |
+| RabbitMQAsync без трафика, ERROR `rmq node degraded … queue "nexus.stand" not found` | RabbitMQ не поднят (`--profile stand`) или очередь `nexus.stand` не создана — Nexus её не создаёт, команда в §2 (RabbitMQAsync) |
 | IP в логах `::1` | проверьте, что собран код с нормализацией IPv4 (Phase D) |
 | Сервис падает с exit 1 «invalid ENCRYPTION_KEY» при `make run-*` | нативный запуск не видит `.env` — экспортируйте `ENCRYPTION_KEY` в окружение (см. Вариант B) |
 | Логи/метрики узла: `clickhouse search: code 60 ... Unknown table` | таблица логов не создана — убедитесь, что есть дефолтный CH-шаблон (узел без `clickhouse_template_id` берёт его); фикс #7 §28 |
 | `node not found` на адресе с путём-со-слешем | бейте по адресу как в UI; фикс #8 §28 резолвит legacy-путь в default-команде |
 | Нативный сервис запущен с `--debug`, но Debug/Info в логе пропадают сразу после строки `log level applied from app_settings` | Уровень логов из «Настройки → Общие» / консоли «Логи» (§51) применяется на лету и перекрывает флаг. На общем стенде там бывает `2` (error). Поднимите уровень в консоли «Логи» или `PUT /api/settings/app` `{"logging":{"level":5}}`, после проверки верните прежний |
 | §106: NetBIOS-хост на Windows-стенде даёт `source=dns` и имя в нижнем регистре без суффикса (`srv-d-sqldev-hq`), а не `source=netbios` | На Windows системный резолвер Go сам добирает NetBIOS-имя через PTR-lookup. На бою (Linux-контейнер) работает чистый Go-резолвер, и PTR даёт NXDOMAIN. Для проверки этапа NetBIOS запускайте Sender с `GODEBUG=netdns=go` и удалите `nexus:rdns:<ip>` в Redis |
+| Playwright MCP не стартует: `Failed to load Chrome DLL from …\ms-playwright\chromium-<rev>\chrome-win64\chrome.dll` — «Не найден указанный модуль» или «файл занят другим процессом» | Корпоративный антивирус удаляет `chrome.dll` скачанного Playwright-браузера через минуту-две после распаковки (переезд на новый ПК 23.11.2026). Поэтому `.mcp.json` запускает **установленный Google Chrome** (`--browser chrome`), а не скачанный Chromium; после правки `.mcp.json` перезапусти сессию Claude Code. Обход без MCP (как в routix): Node-сценарий на `playwright-core` из `%LOCALAPPDATA%/npm-cache/_npx/*/node_modules` с `chromium.launch({ channel: "chrome" })`, адрес — `http://127.0.0.1:8000` |
 | `web listen: ... :8000: bind: Only one usage of each socket address` (или `address already in use`) | На порту уже висит **старый** экземпляр сервиса с прошлого прогона — стенд не был выключен. Завершите его (см. §5) и запускайте заново |
 | Контейнер `clickhouse` стека `services` в рестарт-лупе, в `docker logs` только `get_mempolicy: Operation not permitted` | Настоящая ошибка в `clickhouse-server.err.log` **внутри** контейнера (`docker cp clickhouse:/var/log/clickhouse-server/clickhouse-server.err.log .`). Известный случай: `Code: 36 … If 'engine' is specified for system table, TTL parameters should be specified directly inside 'engine'` — конфиг `logs_ttl.xml` задавал `<ttl>` для `query_log`/`opentelemetry_span_log`, у которых в `config.xml` образа уже есть `<engine>`. Лечится правкой `services/clickhouse/logs_ttl.xml` (2026-08-04 он вынесен из контейнера в репозиторий стека и монтируется через compose — правки больше не теряются при пересоздании) |
 

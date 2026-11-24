@@ -229,7 +229,8 @@ func main() {
 	if m := report.Modes[string(modeAsync)]; m != nil {
 		asyncSent = m.Sent
 	}
-	report.applyNoLoss(checkNoLoss(ctx, f, asyncSent+rmqLoad.published.Load()))
+	report.applyNoLoss(checkNoLoss(ctx, f, asyncSent+rmqLoad.published.Load(),
+		append(nodeIDs(nodes), rmqLoad.ids...)))
 	report.KafkaPage = kafkaPage.stop()
 	report.SenderMetrics = sender.finish(ctx)
 

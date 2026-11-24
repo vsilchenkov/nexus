@@ -5,7 +5,7 @@
 # Запускается под compose-профилем `loadtest` (см. deploy/docker-compose.yml),
 # чтобы при обычном `docker compose up` стек поднимался без него.
 
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27.4-alpine AS builder
 WORKDIR /src
 
 RUN apk add --no-cache git ca-certificates

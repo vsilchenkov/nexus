@@ -90,7 +90,7 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
      (не `./...` из корня — он спотыкается о стороннюю `.go`-заглушку в `web-ui/node_modules/`),
      затем `gofmt -w` на затронутые файлы (или `gofmt -l .` для проверки). Это держит код в
      актуальных идиомах Go и не даёт упасть CI job `lint` (`golangci-lint` проверяет `gofmt`).
-     **Осторожно: на Go 1.26 `go fix` правит и ЧУЖИЕ файлы** — переписывает `strings.Cut`,
+     **Осторожно: на Go 1.26+ `go fix` правит и ЧУЖИЕ файлы** — переписывает `strings.Cut`,
      `wg.Add(1)`+`defer wg.Done()` → `wg.Go`, инлайнит хелперы с `//go:fix inline` в `new(expr)`.
      Поэтому после него всегда смотри `git status --short` и добавляй в коммит **точечно**
      (никогда `git commit -a`): автоправки — либо откат, либо ОТДЕЛЬНЫЙ коммит. Инлайн может
@@ -101,8 +101,9 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
    - **`golangci-lint run --timeout=5m` — обязательно перед коммитом, не только `go vet`.**
      `go vet`/`gofmt` НЕ ловят `nilerr` (проверил `err != nil` → вернул `nil`),
      `staticcheck` (QF1001 De Morgan и пр.) и остальные линтеры из `.golangci.yml`. Их ловит
-     только golangci-lint, и CI job `lint` на них падает (образ `golangci/golangci-lint:v2.12-alpine`,
-     rolling — версия может обгонять локальную, гоняй именно его). Пропуск этого шага = красный CI
+     только golangci-lint, и CI job `lint` на них падает (v2.15.0 через `go install` на
+     `golang:1.27.4` — `GOLANGCI_LINT_VERSION` в `.gitlab-ci.yml`; локальный бинарь собирай тем же
+     Go, см. DEVELOPMENT §2, иначе на Go 1.27 он печатает «0 issues» при неработающих линтерах). Пропуск этого шага = красный CI
      и перепушивание постфактум.
    - Если менял Swagger-аннотации — `make swagger`.
    - Если менял integration-сценарий — `make test-integration` (нужен Docker).
@@ -240,9 +241,14 @@ Web Service отдаёт REST API под `/api/*` и SPA (`embed.FS`) на вс�
 1. полный `make test` + `golangci-lint run` + `make test-integration` (нужен Docker) — зелёные;
 2. **ревизия всего diff'а** (см. выше) и исправление найденного;
 3. **живой прогон на стенде браузером** (см. выше) — фича проверена как пользователем, стенд погашен;
-4. проверка `git log` («все коммиты на месте, ничего не амеnd'нуто»);
-5. краткий итоговый отчёт пользователю: коммиты, найденное ревизией и стендом, ссылки на
-   обновлённые разделы IMPLEMENTATION.md.
+4. **handoff** (скил `handoff`) — документ `handoffs/handoff-<дата-время>.md`: где остановилась
+   работа, что ждёт пользователя, состояние гейтов и стенда, следующие шаги. Делается **после
+   каждого завершённого раздела ТЗ** и **коммитится вместе с ТЗ** — в ветку раздела, завершающим
+   коммитом (решение пользователя 24.11.2026). Ссылается на IMPLEMENTATION.md, ТЗ и коммиты, а не
+   копирует их; секретов в нём быть не должно — он уходит в репозиторий;
+5. проверка `git log` («все коммиты на месте, ничего не амеnd'нуто»);
+6. краткий итоговый отчёт пользователю: коммиты, найденное ревизией и стендом, ссылки на
+   обновлённые разделы IMPLEMENTATION.md и путь handoff.
 
 Слияние в `dev` — отдельный шаг ПОСЛЕ подтверждения пользователя; повторно гонять стенд перед
 merge нужно только если ветка с момента сдачи менялась.
@@ -430,6 +436,9 @@ its `SKILL.md`. Three families are installed:
 - **4 general engineering skills** from `mattpocock/skills` — `prototype` (throwaway UI/logic spikes),
   `tdd` (red-green-refactor; applies to `web-ui/` where `golang-testing` doesn't), `setup-pre-commit`
   (Husky + lint-staged + Prettier for the JS/TS side), `migrate-to-shoehorn` (TS test assertions).
+- **Передача сессии:** `handoff` (из routix, 24.11.2026; основа — `mattpocock/skills`) — документ
+  `handoffs/handoff-<дата-время>.md` по окончании каждого раздела ТЗ, коммитится вместе с ТЗ (см.
+  «порядок сдачи ТЗ» в §0). Ссылается на IMPLEMENTATION.md, ТЗ и коммиты, а не копирует их.
 
 ---
 

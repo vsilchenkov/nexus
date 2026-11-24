@@ -204,7 +204,7 @@ func maskTokensStr(m map[string]string) map[string]string {
 
 // maskTokensAny маскирует токены ботов в строковых значениях map'а на месте,
 // заходя во вложенные map'ы: контексты Sentry (trace, os, runtime…) вложенные.
-// Поля slog-лога sentryslog кладёт не сюда, а в теги (maskTokensStr).
+// Поля slog-лога SentryHandler логгера кладёт не сюда, а в теги (maskTokensStr).
 func maskTokensAny(m map[string]any) map[string]any {
 	for k, v := range m {
 		switch val := v.(type) {
@@ -226,7 +226,7 @@ func capEventStrings(event *sentry.Event) {
 		event.Exception[i].Value = truncateValue(event.Exception[i].Value)
 	}
 	// Contexts — вложенные map'ы SDK и интеграций (trace, request…); поля
-	// slog-лога sentryslog кладёт в теги. Context — алиас map[string]any.
+	// slog-лога SentryHandler логгера кладёт в теги. Context — алиас map[string]any.
 	for name := range event.Contexts {
 		event.Contexts[name] = truncateAny(event.Contexts[name])
 	}

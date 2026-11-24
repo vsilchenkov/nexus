@@ -175,3 +175,30 @@ func TestPullerWorker_EnvelopeCarriesNodeIdentity(t *testing.T) {
 		t.Fatalf("rmq pulled{team=billing} = %v, want 1", v)
 	}
 }
+
+// TestPullerWorker_IDConsistentWithoutMessageID (§118.7): у сообщения без AMQP
+// message_id ID в заголовке Kafka и ID конверта — ОДИН и тот же UUID. До §118
+// msgID() звался дважды и давал два разных: DLQ и sweeper паузы читают ID из
+// заголовка, а получатель видит X-Nexus-Id из конверта — связь терялась.
+func TestPullerWorker_IDConsistentWithoutMessageID(t *testing.T) {
+	cons := &fakeConsumer{batches: [][]RMQDelivery{{
+		{DeliveryTag: 1, Body: []byte(`{"x":1}`)},
+	}}}
+	prod := &fakeProducer{}
+	w := newTestWorker(cons, prod, 0)
+
+	w.pullOnce(context.Background())
+
+	if len(prod.published) != 1 {
+		t.Fatalf("want 1 published, got %d", len(prod.published))
+	}
+	var env struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(prod.published[0], &env); err != nil {
+		t.Fatalf("envelope: %v", err)
+	}
+	if env.ID == "" || env.ID != prod.headers[0]["id"] {
+		t.Fatalf("envelope id %q != kafka header id %q", env.ID, prod.headers[0]["id"])
+	}
+}
