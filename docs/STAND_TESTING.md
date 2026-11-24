@@ -47,6 +47,25 @@ docker compose -f deploy/docker-compose.stand-ha.yml down
 («dial controller localhost:9092: connection refused»). Стек `services` под git не заведён — правки
 в нём нигде не версионируются, помните об этом при переустановке машины.
 
+**Пары читают `config/config.yml`, а не `config_debug.yml` — их consumer-группа `nexus-sender`, а не
+`nexus-sender-dev`.** Reader'ы Sender'а стартуют с НАЧАЛА топика (`auto_offset_reset` не применяется):
+если в Kafka стенда этой группы нет или она давно не читала, пары перечитают всю историю
+`nexus.async` (сотни тысяч сообщений) и DLQ и разошлют их по старым узлам. Проверка —
+`kafka-consumer-groups.sh --describe --group nexus-sender` (в контейнере брокера с `-e KAFKA_OPTS=`,
+иначе CLI падает на JMX-агенте). Безопасный путь, которым шёл прогон перед 1.42.0, — отдельный
+пустой брокер только для пар: `docker run -d --name kafka-rel142 --network services_default …`
+образом брокера стенда (KRaft, `KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-rel142:9092`) и в
+локальном override `environment: KAFKA_BROKERS: kafka-rel142:9092` у всех шести реплик; после
+прогона — удалить контейнер и его анонимные тома. Нативный Sender на время прогона гасить.
+
+**Windows + Docker Compose v5: собирать из `C:\`, а не `c:\`.** Compose передаёт bake каталог
+проекта из рабочего каталога терминала (у терминала VS Code — `c:\…`), а путь к Dockerfile — с
+`C:\…`; bake считает Dockerfile лежащим вне разрешённого каталога и падает с `additional privileges
+requested: pass "--allow=fs.read=…"` (через compose — просто `failed to execute bake`).
+`COMPOSE_BAKE=false` не помогает. Запускать `docker compose … --build` и `rolling.sh` из PowerShell
+после `Set-Location 'C:\git_rep\_go\nexus'` (для `rolling.sh` — `& 'C:\Program Files\Git\bin\bash.exe'
+-c './scripts/deploy/rolling.sh …'`). На Linux-сервере букв дисков нет — бой это не затрагивает.
+
 **После ручного `docker compose up -d` реплик обязателен `docker compose exec nginx nginx -s reload`** —
 иначе балансировщик держит старые адреса контейнеров (в прогоне это дало 55 % ошибок, пока reload не
 выполнили).

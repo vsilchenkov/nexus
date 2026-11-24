@@ -150,7 +150,7 @@ kafka:
     request_timeout_ms: 30000  # Таймаут одного запроса к брокеру (мс).
   # Параметры consumer'а (Sender читает топик).
   consumer:
-    auto_offset_reset: earliest # Старт без сохранённого offset: earliest = с начала, latest = с конца.
+    auto_offset_reset: earliest # НЕ применяется: reader'ы всех групп Sender'а стартуют без сохранённого offset с НАЧАЛА топика (kafka.FirstOffset). Новая группа на брокере с историей перечитает её целиком.
     enable_auto_commit: false   # false = ручной commit offset после обработки (at-least-once, без потерь).
     fetch_min_bytes: 1          # Минимум байт в ответе fetch; 1 = не ждать накопления.
     fetch_max_bytes: 536870912  # Максимум байт за один fetch (байт) = 512 МиБ; ДОЛЖЕН быть ≥ topic.max_message_bytes, иначе крупное сообщение не вычитывается НИКОГДА (consumer молча встаёт на этой партиции).

@@ -110,7 +110,7 @@ kafka:
     request_timeout_ms: 30000
   # === Consumer (Sender ← Kafka) ===
   consumer:
-    auto_offset_reset: earliest        # с начала, если нет закоммиченного offset
+    auto_offset_reset: earliest        # НЕ применяется: reader'ы всегда стартуют с начала (FirstOffset)
     enable_auto_commit: false          # коммитим вручную после успешной доставки
     fetch_min_bytes: 1
     fetch_max_bytes: 52428800          # 50 MB
