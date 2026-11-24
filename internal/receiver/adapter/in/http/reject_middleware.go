@@ -11,6 +11,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/requestid"
+	"nexus/internal/platform/sensitive"
 	"nexus/internal/receiver/adapter/out/rejectlog"
 )
 
@@ -175,9 +176,12 @@ func rejectReason(c *gin.Context) (domain.RejectReason, bool) {
 // канонического пути не существует, а метка к моменту записи уже заменена на
 // маркер «не разрезолвлен» (иначе мусорные пути плодили бы ряды Prometheus).
 // Для узлов с path_passthrough (§39) в пути остаётся хвост запроса — это
-// осознанно: видно, какой именно подпуть дёргают.
+// осознанно: видно, какой именно подпуть дёргают. Но хвост несёт секреты:
+// токен бота маскируется (§117.7) — путь группы виден каждому оператору и
+// уходит в CSV. Маскирование до разбора на слог и путь: токен может стоять и
+// в первом сегменте короткой формы.
 func rejectTarget(c *gin.Context) (teamSlug, nodePath string) {
-	_, rest := SplitVerb(c.Param("path"))
+	_, rest := SplitVerb(sensitive.MaskBotTokens(c.Param("path")))
 	return splitTeamSlugAndPath(rest)
 }
 
@@ -185,12 +189,15 @@ func rejectTarget(c *gin.Context) (teamSlug, nodePath string) {
 //
 // Имена параметров сохраняются (по ним видно, что клиент вообще прислал),
 // значения — нет: там живут токены авторизации (§41, source=query) и
-// пользовательские данные, которым в журнале не место.
+// пользовательские данные, которым в журнале не место. Токен бота в самом пути
+// маскируется (§117.7).
 func rejectRawPath(u *url.URL) string {
 	if u == nil {
 		return ""
 	}
-	path := u.Path
+	// §117.7: секрет токена бота в пути passthrough-адреса — та же утечка, что
+	// и в значениях query.
+	path := sensitive.MaskBotTokens(u.Path)
 	if u.RawQuery == "" {
 		return domain.TruncateRawPath(path)
 	}

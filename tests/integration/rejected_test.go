@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/logging"
+	pgpf "nexus/internal/platform/pg"
 	"nexus/internal/receiver/adapter/out/rejectlog"
 	pgrepo "nexus/internal/web/adapter/out/postgres"
 	"nexus/internal/web/usecase/port"
@@ -432,4 +434,66 @@ func TestRejectedFlush_GarbageSampleKeepsBatch_E2E(t *testing.T) {
 
 	paths := []string{groups[0].NodePath, groups[1].NodePath}
 	assert.ElementsMatch(t, []string{"telephony", string(utf8.RuneError)}, paths)
+}
+
+// TestRejectedMigration_DeletesUnmaskedBotTokens_E2E (§117.7, миграция 0044):
+// накопленные до §117 группы и сэмплы с открытым секретом токена бота
+// удаляются, а группы без секрета (в том числе уже маскированные `bot<id>:***`)
+// остаются вместе со своими клиентами и сэмплами.
+//
+// Проверяется на реальном PostgreSQL: регулярное выражение миграции обязано
+// совпадать с sensitive.MaskBotTokens, а каскады — с DDL 0040.
+func TestRejectedMigration_DeletesUnmaskedBotTokens_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	dir, err := filepath.Abs("../../migrations")
+	require.NoError(t, err)
+	mg, err := pgpf.NewMigratorFromDSN(pool.Config().ConnString(), dir, logging.NewNoop())
+	require.NoError(t, err)
+	defer mg.Close()
+	latest, err := mg.MaxLocalVersion()
+	require.NoError(t, err)
+	const before = 43 // схема до 0044 — как у боевой базы до выката §117
+	require.NoError(t, mg.Down(int(latest-before)))
+
+	const secret = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+	writer := rejectlog.NewRepo(pool)
+	now := time.Now().UTC().Truncate(time.Second)
+	leaked := "tg/bot123456:" + secret + "/sendMessage"
+	require.NoError(t, writer.Flush(ctx, []domain.RejectedAggregate{
+		rejectedAgg(rejectedKey("default", leaked), 3, now, now,
+			[]domain.RejectedClient{rejectedClient("10.0.0.1", 3, now)},
+			[]domain.RejectedSample{rejectedSample("10.0.0.1", now, "/api/v1/default/"+leaked)}),
+		rejectedAgg(rejectedKey("default", "tg/BOT123456:***/sendMessage"), 2, now, now,
+			[]domain.RejectedClient{rejectedClient("10.0.0.2", 2, now)},
+			[]domain.RejectedSample{rejectedSample("10.0.0.2", now, "/api/v1/default/tg/BOT123456:***/sendMessage")}),
+		// Короткий «секрет» — обычный путь, его MaskBotTokens не трогает.
+		rejectedAgg(rejectedKey("default", "robot1:short"), 1, now, now,
+			[]domain.RejectedClient{rejectedClient("10.0.0.3", 1, now)},
+			[]domain.RejectedSample{rejectedSample("10.0.0.3", now, "/api/v1/default/robot1:short")}),
+	}))
+
+	require.NoError(t, mg.Up())
+
+	reader := pgrepo.NewRejectedRepoPg(pool, logging.NewNoop())
+	groups, err := reader.ListRejected(ctx, port.RejectedFilter{IncludeResolved: true})
+	require.NoError(t, err)
+	paths := make([]string, 0, len(groups))
+	for _, g := range groups {
+		paths = append(paths, g.NodePath)
+		assert.NotContains(t, g.NodePath, secret)
+	}
+	assert.ElementsMatch(t, []string{"tg/BOT123456:***/sendMessage", "robot1:short"}, paths)
+
+	var leftovers int
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT count(*) FROM rejected_samples WHERE raw_path LIKE '%' || $1 || '%'`, secret).Scan(&leftovers))
+	assert.Zero(t, leftovers, "сэмплы с секретом уходят вместе с группой")
+	var kept int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM rejected_samples`).Scan(&kept))
+	assert.Equal(t, 2, kept, "сэмплы оставшихся групп не тронуты")
 }

@@ -276,3 +276,23 @@ func TestRejectLogMiddleware_ProxiedDoesNotHideRealReason(t *testing.T) {
 	require.Len(t, sink.samples, 1, "названная обработчиком причина главнее пометки проброса")
 	assert.Equal(t, domain.RejectReasonUnauthorized, sink.samples[0].Key.Reason)
 }
+
+// TestRejectLogMiddleware_MasksBotToken (§117.7): секрет токена Telegram-бота
+// из хвоста passthrough-адреса не попадает ни в путь группы, ни в путь сэмпла.
+// До §117 путь писался как пришёл: секрет оседал в PostgreSQL, в интерфейсе
+// «Отказов» и в CSV-выгрузке, хотя лог, Sentry и метки его маскировали (§109.6).
+func TestRejectLogMiddleware_MasksBotToken(t *testing.T) {
+	t.Parallel()
+
+	const secret = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+	req := httptest.NewRequest(http.MethodPost,
+		"/api/v1/vika/tg/bot123456:"+secret+"/sendMessage?chat_id=1", nil)
+	sink, _, _ := runReject(t, req, rejectWith(http.StatusNotFound, domain.RejectReasonNodeDisabled))
+
+	require.Len(t, sink.samples, 1)
+	s := sink.samples[0]
+	assert.Equal(t, "tg/bot123456:***/sendMessage", s.Key.NodePath)
+	assert.Equal(t, "/api/v1/vika/tg/bot123456:***/sendMessage?chat_id=***", s.RawPath)
+	assert.NotContains(t, s.Key.NodePath, secret)
+	assert.NotContains(t, s.RawPath, secret)
+}
