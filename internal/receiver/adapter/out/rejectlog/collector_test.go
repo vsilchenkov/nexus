@@ -417,3 +417,33 @@ func TestCollectorSanitizesSample(t *testing.T) {
 		})
 	}
 }
+
+// TestCollectorKeepsLastKnownNode (§117.3): агрегат группы несёт последний
+// непустой узел за интервал; отказ без узла его не затирает, а группа без
+// единого резолва уходит без узла.
+func TestCollectorKeepsLastKnownNode(t *testing.T) {
+	t.Parallel()
+
+	w := &fakeWriter{}
+	c, stop := runCollector(t, w, rejectlog.Config{})
+	withNode := func(path, node string) rejectlog.Sample {
+		s := sample(path, "10.0.0.1")
+		s.NodeID = node
+		return s
+	}
+	c.Add(withNode("orders", "node-a"))
+	c.Add(withNode("orders", ""))
+	c.Add(withNode("orders", "node-b"))
+	c.Add(withNode("orders", ""))
+	c.Add(withNode("nosuch", ""))
+	stop()
+
+	byPath := map[string]domain.RejectedAggregate{}
+	for _, a := range w.all() {
+		byPath[a.Key.NodePath] = a
+	}
+	require.Len(t, byPath, 2)
+	assert.Equal(t, "node-b", byPath["orders"].NodeID, "последний известный узел, пустой не затирает")
+	assert.Equal(t, int64(4), byPath["orders"].Count, "узел не дробит группу")
+	assert.Empty(t, byPath["nosuch"].NodeID)
+}

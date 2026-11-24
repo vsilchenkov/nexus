@@ -11,6 +11,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/receiver/adapter/out/rejectlog"
+	"nexus/internal/receiver/usecase"
 )
 
 // captureSink — приёмник журнала для тестов.
@@ -295,4 +296,27 @@ func TestRejectLogMiddleware_MasksBotToken(t *testing.T) {
 	assert.Equal(t, "/api/v1/vika/tg/bot123456:***/sendMessage?chat_id=***", s.RawPath)
 	assert.NotContains(t, s.Key.NodePath, secret)
 	assert.NotContains(t, s.RawPath, secret)
+}
+
+// TestRejectLogMiddleware_RecordsResolvedNode (§117.3): узел, найденный до
+// отказа, попадает в наблюдение журнала; отказ до резолва узла не несёт.
+// Узел берётся из наблюдателя резолва, а не из пути адреса: путь группы —
+// хвост passthrough-адреса, а узел — его корень.
+func TestRejectLogMiddleware_RecordsResolvedNode(t *testing.T) {
+	t.Parallel()
+
+	resolved := func(c *gin.Context) {
+		nodeLabelSetter(c)(usecase.ResolvedNode{TeamSlug: "vika", Path: "tg", ID: "node-1"})
+		rejectWith(http.StatusNotFound, domain.RejectReasonNodeDisabled)(c)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/vika/tg/sendMessage", nil)
+	sink, _, _ := runReject(t, req, resolved)
+	require.Len(t, sink.samples, 1)
+	assert.Equal(t, "node-1", sink.samples[0].NodeID)
+	assert.Equal(t, "tg/sendMessage", sink.samples[0].Key.NodePath, "путь группы — по-прежнему путь адреса")
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/vika/nosuch", nil)
+	sink, _, _ = runReject(t, req, rejectWith(http.StatusNotFound, domain.RejectReasonNodeNotFound))
+	require.Len(t, sink.samples, 1)
+	assert.Empty(t, sink.samples[0].NodeID, "до резолва узла нет")
 }

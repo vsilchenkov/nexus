@@ -28,6 +28,15 @@ func SetRejectReason(c *gin.Context, r domain.RejectReason) {
 	c.Set(RejectReasonKey, string(r))
 }
 
+// RejectNodeIDKey — ключ gin-контекста с ID узла, найденного до отказа (§117.3).
+//
+// Ставит наблюдатель резолва (nodeLabelSetter). Пусто — отказ случился до
+// резолва (узла нет, лимит частоты, пустой путь): у такой группы ссылки на узел
+// нет. Узел берётся отсюда, а не из пути группы: путь группы — путь АДРЕСА, и у
+// passthrough-хвоста, legacy-адреса и переименованного узла он с путём узла
+// расходится.
+const RejectNodeIDKey = "nexus_reject_node_id"
+
 // RejectProxiedKey — ключ gin-контекста: ответ отдан ВНЕШНЕЙ системой, шина
 // его лишь пробросила.
 //
@@ -126,6 +135,7 @@ func RejectLogMiddleware(sink RejectSink, m rejectMetrics) gin.HandlerFunc {
 				Reason:     reason,
 				HTTPMethod: c.Request.Method,
 			},
+			NodeID:    c.GetString(RejectNodeIDKey),
 			Status:    int32(status),
 			ClientIP:  clientIP(c.Request),
 			UserAgent: domain.TruncateUserAgent(c.Request.UserAgent()),

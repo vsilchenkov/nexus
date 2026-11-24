@@ -126,6 +126,39 @@ func TestRoute_Disabled(t *testing.T) {
 	}
 }
 
+// TestRoute_DisabledNotifiesResolvedNode (§117.3): наблюдатель резолва получает
+// найденный узел с его ID ДО отказа «узел выключен» — по этому ID журнал отказов
+// ведёт на узел. Путь — путь узла, без хвоста адреса.
+func TestRoute_DisabledNotifiesResolvedNode(t *testing.T) {
+	t.Parallel()
+	node := &domain.Node{
+		ID:               "0b9c3e6e-6f0e-4b8a-9d55-3b7f1f3c2a10",
+		Path:             "demo/path",
+		RootMethod:       domain.RootMethodRequest,
+		URLMode:          domain.URLModeStatic,
+		TargetURL:        "https://example.com/hook",
+		AuthType:         domain.AuthTypeNone,
+		IncomingAuthType: domain.IncomingAuthTypeNone,
+		Status:           domain.NodeStatusDisabled,
+	}
+	u := NewRouteUsecase(stubNodeReader{node: node}, stubSenderClient{}, 5, logging.NewNoop())
+
+	var got []ResolvedNode
+	_, err := u.Route(context.Background(), RouteInput{
+		NodePath: "demo/path", OnNodeResolved: func(n ResolvedNode) { got = append(got, n) },
+	})
+	require.ErrorIs(t, err, domain.ErrNodeDisabled)
+	require.Len(t, got, 1)
+	assert.Equal(t, node.ID, got[0].ID)
+	assert.Equal(t, "demo/path", got[0].Path)
+
+	got = nil
+	_, err = u.NodeRootMethod(context.Background(), "", "demo/path", func(n ResolvedNode) { got = append(got, n) })
+	require.ErrorIs(t, err, domain.ErrNodeDisabled)
+	require.Len(t, got, 1, "короткий адрес §78.1 тоже сообщает узел до отказа")
+	assert.Equal(t, node.ID, got[0].ID)
+}
+
 // TestRouteAsync_PausedQueued: §3.6 — RouteAsync для paused-узла
 // возвращает Queued=true и не падает.
 func TestRouteAsync_PausedQueued(t *testing.T) {

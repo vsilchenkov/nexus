@@ -460,22 +460,29 @@ func TestRejectedMigration_DeletesUnmaskedBotTokens_E2E(t *testing.T) {
 	const before = 43 // схема до 0044 — как у боевой базы до выката §117
 	require.NoError(t, mg.Down(int(latest-before)))
 
+	// Данные пишутся SQL'ем схемы 0043, а не писателем журнала: текущий писатель
+	// знает колонки более поздних миграций (node_id, §117.3).
 	const secret = "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
-	writer := rejectlog.NewRepo(pool)
-	now := time.Now().UTC().Truncate(time.Second)
 	leaked := "tg/bot123456:" + secret + "/sendMessage"
-	require.NoError(t, writer.Flush(ctx, []domain.RejectedAggregate{
-		rejectedAgg(rejectedKey("default", leaked), 3, now, now,
-			[]domain.RejectedClient{rejectedClient("10.0.0.1", 3, now)},
-			[]domain.RejectedSample{rejectedSample("10.0.0.1", now, "/api/v1/default/"+leaked)}),
-		rejectedAgg(rejectedKey("default", "tg/BOT123456:***/sendMessage"), 2, now, now,
-			[]domain.RejectedClient{rejectedClient("10.0.0.2", 2, now)},
-			[]domain.RejectedSample{rejectedSample("10.0.0.2", now, "/api/v1/default/tg/BOT123456:***/sendMessage")}),
+	for i, path := range []string{
+		leaked,
+		"tg/BOT123456:***/sendMessage",
 		// Короткий «секрет» — обычный путь, его MaskBotTokens не трогает.
-		rejectedAgg(rejectedKey("default", "robot1:short"), 1, now, now,
-			[]domain.RejectedClient{rejectedClient("10.0.0.3", 1, now)},
-			[]domain.RejectedSample{rejectedSample("10.0.0.3", now, "/api/v1/default/robot1:short")}),
-	}))
+		"robot1:short",
+	} {
+		var id string
+		require.NoError(t, pool.QueryRow(ctx, `
+INSERT INTO rejected_groups (team_slug, node_path, reason, http_method, status, first_seen, last_seen, count, clients)
+VALUES ('default', $1, 'node_disabled', 'POST', 404, now(), now(), 1, 1) RETURNING id`, path).Scan(&id))
+		_, err := pool.Exec(ctx, `
+INSERT INTO rejected_clients (group_id, client_ip, count, first_seen, last_seen)
+VALUES ($1, $2::inet, 1, now(), now())`, id, fmt.Sprintf("10.0.0.%d", i+1))
+		require.NoError(t, err)
+		_, err = pool.Exec(ctx, `
+INSERT INTO rejected_samples (group_id, at, client_ip, http_method, raw_path, status, body_bytes, request_id, headers)
+VALUES ($1, now(), $2::inet, 'POST', $3, 404, 0, '', '{}'::jsonb)`, id, fmt.Sprintf("10.0.0.%d", i+1), "/api/v1/default/"+path)
+		require.NoError(t, err)
+	}
 
 	require.NoError(t, mg.Up())
 
@@ -496,4 +503,54 @@ func TestRejectedMigration_DeletesUnmaskedBotTokens_E2E(t *testing.T) {
 	var kept int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM rejected_samples`).Scan(&kept))
 	assert.Equal(t, 2, kept, "сэмплы оставшихся групп не тронуты")
+}
+
+// TestRejectedFlush_KeepsNodeID_E2E (§117.3): узел группы пишется, когда пачка
+// его знает, и не затирается пачкой без узла (отказ до резолва в ту же группу).
+// В ключ группы узел не входит — новый узел той же группы просто заменяет
+// прежний, а не открывает вторую группу.
+func TestRejectedFlush_KeepsNodeID_E2E(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	pool, cleanup := startPostgres(t, ctx)
+	defer cleanup()
+
+	writer := rejectlog.NewRepo(pool)
+	now := time.Now().UTC().Truncate(time.Second)
+	k := rejectedKey("default", "orders/create")
+	const nodeA = "11111111-1111-4111-8111-111111111111"
+	const nodeB = "22222222-2222-4222-8222-222222222222"
+
+	nodeOf := func() string {
+		t.Helper()
+		var id *string
+		require.NoError(t, pool.QueryRow(ctx, `SELECT node_id::text FROM rejected_groups`).Scan(&id))
+		if id == nil {
+			return ""
+		}
+		return *id
+	}
+	flush := func(nodeID string) {
+		t.Helper()
+		a := rejectedAgg(k, 1, now, now, nil, nil)
+		a.NodeID = nodeID
+		require.NoError(t, writer.Flush(ctx, []domain.RejectedAggregate{a}))
+	}
+
+	flush("")
+	assert.Empty(t, nodeOf(), "отказ до резолва — узла нет")
+
+	flush(nodeA)
+	assert.Equal(t, nodeA, nodeOf())
+
+	flush("")
+	assert.Equal(t, nodeA, nodeOf(), "пачка без узла не затирает известный")
+
+	flush(nodeB)
+	assert.Equal(t, nodeB, nodeOf(), "узел пересоздан с тем же путём — группа та же, узел новый")
+
+	var groups int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM rejected_groups`).Scan(&groups))
+	assert.Equal(t, 1, groups, "узел не входит в ключ группы")
 }

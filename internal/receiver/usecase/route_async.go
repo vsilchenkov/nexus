@@ -87,7 +87,7 @@ func (u *RouteAsyncUsecase) RouteAsync(ctx context.Context, in RouteInput) (*Rou
 	if err != nil {
 		return nil, err
 	}
-	in.notifyResolved(teamSlug, node.Path)
+	in.notifyResolved(teamSlug, node)
 	if node.Status == domain.NodeStatusDisabled {
 		// Наружу — 404 «узла нет» (§94.2), в журнале — честное «узел выключен».
 		return nil, domain.ErrNodeDisabled

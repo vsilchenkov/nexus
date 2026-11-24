@@ -224,7 +224,11 @@ type RejectedSample struct {
 // значению, поэтому несколько реплик складываются без синхронизации между
 // собой.
 type RejectedAggregate struct {
-	Key       RejectedGroupKey
+	Key RejectedGroupKey
+	// NodeID — узел, найденный до отказа (§117.3); пусто — отказ до резолва.
+	// В ключ группы не входит: переименование или пересоздание узла не должно
+	// дробить одну проблему клиента на несколько групп.
+	NodeID    string
 	Status    int32
 	FirstSeen time.Time
 	LastSeen  time.Time
