@@ -229,7 +229,11 @@ func (w *PullerWorker) pullOnce(ctx context.Context) {
 // handleDelivery публикует одно сообщение в nexus.async и ack'ает его после
 // подтверждения Kafka. Слишком большое сообщение — reject без requeue.
 func (w *PullerWorker) handleDelivery(ctx context.Context, msg RMQDelivery) {
-	payload, err := w.buildPayload(msg)
+	// §118.7: ID вычисляется ОДИН раз — он уходит и в заголовок Kafka (его
+	// читают DLQ и sweeper паузы), и в конверт (из него Sender ставит
+	// X-Nexus-Id получателю). Без message_id каждый вызов msgID — новый UUID.
+	id := w.msgID(msg)
+	payload, err := w.buildPayload(msg, id)
 	if err != nil {
 		// Конфиг узла битый (не должно случаться после Validate) — reject,
 		// чтобы не зациклиться на одном сообщении.
@@ -248,7 +252,7 @@ func (w *PullerWorker) handleDelivery(ctx context.Context, msg RMQDelivery) {
 	}
 
 	headers := map[string]string{
-		"id":        w.msgID(msg),
+		"id":        id,
 		"node_path": w.node.Path,
 		"node_id":   w.node.ID, // §101.7
 		"team":      w.node.TeamSlug,
@@ -281,7 +285,7 @@ func (w *PullerWorker) handleDelivery(ctx context.Context, msg RMQDelivery) {
 }
 
 // buildPayload формирует Kafka-envelope из AMQP-сообщения (§27.3).
-func (w *PullerWorker) buildPayload(msg RMQDelivery) ([]byte, error) {
+func (w *PullerWorker) buildPayload(msg RMQDelivery, id string) ([]byte, error) {
 	targetURL, _, err := ResolveURL(w.node, nil)
 	if err != nil {
 		return nil, err
@@ -312,7 +316,7 @@ func (w *PullerWorker) buildPayload(msg RMQDelivery) ([]byte, error) {
 		outMethod = "POST"
 	}
 	env := &Envelope{
-		ID:         w.msgID(msg),
+		ID:         id,
 		NodePath:   w.node.Path,
 		NodeID:     w.node.ID, // §101.7: одноимённые pull-узлы различают только id и слог
 		Team:       w.node.TeamSlug,

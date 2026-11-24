@@ -435,7 +435,7 @@ func (h *Handler) handleAsyncFromInput(c *gin.Context, in usecase.RouteInput) {
 		// за объявленным. X-Nexus-Id сохраняет связь ответа с записью журнала —
 		// в кастомном теле идентификатора шины может не быть вовсе.
 		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("X-Nexus-Id", res.ID)
+		c.Header(domain.HeaderNexusID, res.ID)
 		// §83: статус задаёт шаблон ответа приёма, настроенный на узле, — это
 		// тоже не отказ шины (сам приём состоялся, сообщение в очереди).
 		MarkProxiedResponse(c)
