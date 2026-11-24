@@ -166,7 +166,7 @@ PostgreSQL 12 объясняют решения своего времени. М�
 
 | Конфиг                              | Что делает                                                       |
 |-------------------------------------|------------------------------------------------------------------|
-| `Web (debug)`                       | `go run ./cmd/web --debug` под dlv → `:8000`                     |
+| `Web (debug)`                       | `go run ./cmd/web --debug` под dlv → `:8000`; сам открывает приложение в браузере, когда Web поднимется |
 | `Receiver (debug)`                  | `go run ./cmd/receiver --debug` под dlv → `:8080`               |
 | `Sender (debug)`                    | `go run ./cmd/sender --debug` под dlv → `:9190` gRPC + `:9091`  |
 | `Nexus: all (web + receiver + sender)` | **compound** — все три сервиса одной кнопкой (`stopAll: true`) |
@@ -179,6 +179,15 @@ PostgreSQL 12 объясняют решения своего времени. М�
 Все конфиги читают переменные из `${workspaceFolder}/.env` (`envFile`) и используют
 `--debug` → [config/config_debug.yml](./config/config_debug.yml) (все хосты — `localhost`).
 Точки останова, шаг с заходом, инспекция переменных — штатно через dlv-dap.
+
+**Браузер открывается сам.** У `Web (debug)` (и, значит, у `Nexus: all`) стоит preLaunchTask
+`web: open browser when ready`: фоновая задача сразу отпускает запуск отладки, опрашивает
+`/api/version` и, как только отвечает именно Nexus, открывает приложение в браузере по умолчанию.
+Адрес — из `web.http_addr` файла `config_debug.yml`; ждёт до 5 минут (холодная сборка под
+отладчиком), дальше молча сдаётся. Нужен Node.js (он и так нужен для `web-ui`). Отключить —
+переменная окружения `NEXUS_NO_BROWSER=1` для VS Code; другой адрес — `NEXUS_WEB_URL`.
+Почему не `serverReadyAction` по строке лога «web listening»: уровень логов меняется на лету из
+настроек (§51.9), и при уровне warn/error этой строки в выводе нет — браузер молча не открылся бы.
 
 ### Запуск всего сервиса целиком
 
@@ -199,6 +208,7 @@ PostgreSQL 12 объясняют решения своего времени. М�
 | `test: unit` | `go test -race -short ./...` |
 | `test: integration` | `go test -tags=integration -count=1 -v ./tests/integration/...` |
 | `build: all` | сборка `bin/{receiver,sender,web}.exe` |
+| `web: open browser when ready` | фоновая: ждёт ответа Web и открывает браузер ([scripts/dev/open-browser-when-ready.mjs](./scripts/dev/open-browser-when-ready.mjs)); запускается сама перед `Web (debug)` |
 
 ### Кодогенерация и §22-специфика
 

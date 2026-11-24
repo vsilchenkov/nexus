@@ -74,6 +74,32 @@
             "command": "go build -ldflags=\"-s -w\" -o bin/receiver.exe ./cmd/receiver; go build -ldflags=\"-s -w\" -o bin/sender.exe ./cmd/sender; go build -ldflags=\"-s -w\" -o bin/web.exe ./cmd/web",
             "group": "build",
             "problemMatcher": "$go"
+        },
+        {
+            // Открывает Nexus в браузере, когда Web под отладчиком начнёт отвечать.
+            // preLaunchTask конфигурации «Web (debug)» (и «Nexus: all»). Фоновая:
+            // строка «waiting» сразу отпускает запуск отладки, а скрипт опрашивает
+            // /api/version и открывает браузер. Отключить — NEXUS_NO_BROWSER=1 в
+            // окружении VS Code. Подробно — scripts/dev/open-browser-when-ready.mjs.
+            "label": "web: open browser when ready",
+            "type": "shell",
+            "command": "node scripts/dev/open-browser-when-ready.mjs",
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "nexus-open-browser",
+                "pattern": { "regexp": "^nexus-open-browser: never-matches$" },
+                "background": {
+                    "activeBegin": true,
+                    "beginsPattern": "^nexus-open-browser: waiting",
+                    "endsPattern": "^nexus-open-browser: waiting"
+                }
+            },
+            "presentation": {
+                "reveal": "never",
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": true
+            }
         }
     ]
 }

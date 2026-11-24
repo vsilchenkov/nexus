@@ -11,6 +11,10 @@
     // дефолты в config/config_debug.yml через ${VAR:default}-плейсхолдеры.
     //
     // Compound "Nexus: all" поднимает все три сервиса одним кликом.
+    //
+    // «Web (debug)» (и, значит, «Nexus: all») сам открывает приложение в
+    // браузере, как только Web начнёт отвечать: preLaunchTask «web: open browser
+    // when ready» (tasks.json). Отключить — NEXUS_NO_BROWSER=1 в окружении VS Code.
     "version": "0.2.0",
     "configurations": [
         {
@@ -22,7 +26,8 @@
             "program": "${workspaceFolder}/cmd/web",
             "args": ["--debug"],
             "envFile": "${workspaceFolder}/.env",
-            "showLog": true
+            "showLog": true,
+            "preLaunchTask": "web: open browser when ready"
         },
         {
             "name": "Receiver (debug)",
