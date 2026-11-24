@@ -400,12 +400,14 @@ function RejectedRowNode({ group }: { group: RejectedGroup }) {
         to={rejectedNodeHref(group.node)}
         aria-label={t("rejected.node.open_aria", { path: group.node.path })}
         title={t("rejected.node.open_aria", { path: group.node.path })}
+        // inline, а не inline-flex: у flex-контейнера с иконкой первым элементом
+        // базовая линия уезжает, и «↗ узел» вставал выше адреса (стенд §117).
         className={cn(
           ABOVE_STRETCH,
-          "ml-2 inline-flex items-center gap-0.5 whitespace-nowrap text-[11.5px] text-accent hover:underline",
+          "ml-2 whitespace-nowrap text-[11.5px] text-accent hover:underline",
         )}
       >
-        <ArrowUpRight className="h-3 w-3" />
+        <ArrowUpRight className="mr-0.5 inline h-3 w-3 align-[-1px]" />
         {t("rejected.node.row_link")}
       </Link>
     );
