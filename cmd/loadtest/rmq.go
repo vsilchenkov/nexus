@@ -21,6 +21,7 @@ type rmqLoad struct {
 	enabled   bool
 	published atomic.Int64
 	paths     []string
+	ids       []string // id узлов — для сверки no-loss по узлам прогона
 	cleanup   func()
 	cancel    context.CancelFunc
 	done      chan struct{}
@@ -60,13 +61,16 @@ func startRMQLoad(ctx context.Context, c *client, f flags, targetURL string, n i
 			fmt.Printf("rmq load: declare queue: %v\n", derr)
 			continue
 		}
-		path, cerr := c.createRMQNode(ctx, uri, queue, targetURL)
+		path, id, cerr := c.createRMQNode(ctx, uri, queue, targetURL)
 		if cerr != nil {
 			fmt.Printf("rmq load: create node: %v\n", cerr)
 			continue
 		}
 		queues = append(queues, queue)
 		rl.paths = append(rl.paths, path)
+		if id != "" {
+			rl.ids = append(rl.ids, id)
+		}
 	}
 	if len(queues) == 0 {
 		_ = conn.Close()
@@ -132,8 +136,8 @@ func (rl *rmqLoad) report() {
 }
 
 // createRMQNode создаёт узел RabbitMQAsync через Web API, нацеленный на очередь.
-func (c *client) createRMQNode(ctx context.Context, uri amqp.URI, queue, targetURL string) (string, error) {
-	path := fmt.Sprintf("loadtest/rmq-%d", time.Now().UnixNano())
+func (c *client) createRMQNode(ctx context.Context, uri amqp.URI, queue, targetURL string) (path, id string, err error) {
+	path = fmt.Sprintf("loadtest/rmq-%d", time.Now().UnixNano())
 	body, _ := json.Marshal(map[string]any{
 		"path":              path,
 		"root_method":       "RabbitMQAsync",
@@ -153,15 +157,11 @@ func (c *client) createRMQNode(ctx context.Context, uri amqp.URI, queue, targetU
 	req, _ := http.NewRequestWithContext(ctx, "POST", c.baseWeb+"/api/nodes", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: "nexus_session", Value: c.cookie})
-	resp, err := c.hc.Do(req)
+	id, err = c.postCreateNode(req)
 	if err != nil {
-		return "", err
+		return "", "", fmt.Errorf("create rmq node: %w", err)
 	}
-	resp.Body.Close()
-	if resp.StatusCode != 201 {
-		return "", fmt.Errorf("create rmq node status %d", resp.StatusCode)
-	}
-	return path, nil
+	return path, id, nil
 }
 
 // randomPayload — случайный JSON-ish payload заданного диапазона размеров.

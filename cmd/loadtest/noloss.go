@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	chgo "github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/google/uuid"
 )
 
 // tableNameRe — допустимое имя CH-таблицы (db.table или table). Защищает от
@@ -60,7 +62,13 @@ const (
 // единожды, а опрашиваем до стабилизации (см. pollUntilStable): растущий count
 // = ещё дренируется (ждём), плато ниже expected = реальная потеря. Дубликаты
 // (rows>expected) нарушением НЕ считаются. Пустой --ch-addr = пропуск.
-func checkNoLoss(ctx context.Context, f flags, expected int64) noLossResult {
+//
+// Считаются УНИКАЛЬНЫЕ ID строк узлов этого прогона (nodeIDs): лог-таблица общая
+// для всех прогонов, и счёт по всей таблице на стенде с историей проходил сразу
+// же — нагрузчик выходил, гасил mock, и хвост бэклога упирался в закрытый порт
+// (найдено прогоном перед 1.42.0). Повторы попыток одного сообщения (DLQ) ID не
+// размножают. Пустой nodeIDs (API не вернул id) — счёт по всей таблице с WARN.
+func checkNoLoss(ctx context.Context, f flags, expected int64, nodeIDs []string) noLossResult {
 	if f.CHAddr == "" {
 		return noLossResult{}
 	}
@@ -68,6 +76,14 @@ func checkNoLoss(ctx context.Context, f flags, expected int64) noLossResult {
 	if !tableNameRe.MatchString(f.CHTable) {
 		res.err = fmt.Errorf("invalid --ch-table %q", f.CHTable)
 		return res
+	}
+	where, err := noLossWhere(nodeIDs)
+	if err != nil {
+		res.err = err
+		return res
+	}
+	if len(nodeIDs) == 0 {
+		fmt.Println("WARN no-loss: id узлов прогона неизвестны — считаю по всей таблице (на стенде с историей сверка бессмысленна)")
 	}
 
 	conn, err := chgo.Open(&chgo.Options{
@@ -81,8 +97,9 @@ func checkNoLoss(ctx context.Context, f flags, expected int64) noLossResult {
 	}
 	defer conn.Close()
 
-	// #nosec G201 -- f.CHTable провалидирован tableNameRe; фильтр — константы.
-	query := fmt.Sprintf("SELECT count() FROM %s WHERE type IN ('requestAsync','RabbitMQAsync')", f.CHTable)
+	// #nosec G201 -- f.CHTable провалидирован tableNameRe; where — константы и
+	// id узлов, проверенные как UUID (noLossWhere).
+	query := fmt.Sprintf("SELECT uniqExact(ID) FROM %s WHERE %s", f.CHTable, where)
 	count := func(ctx context.Context) (int64, error) {
 		qctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
@@ -106,16 +123,35 @@ func checkNoLoss(ctx context.Context, f flags, expected int64) noLossResult {
 	// придёт. Любой другой выход ниже expected (maxWait/отмена при растущем
 	// count) — бэклог ещё дренировался → inconclusive, не подтверждённая потеря.
 	res.inconclusive = !res.ok && outcome != pollPlateau
-	res.dupRows = countDuplicateRows(ctx, conn, f.CHTable)
+	res.dupRows = countDuplicateRows(ctx, conn, f.CHTable, where)
 	return res
 }
 
-// countDuplicateRows — строк async/rmq сверх уникальных ID (§114.L).
-// Best-effort: ошибка — -1 и строка в выводе, на вердикт no-loss не влияет.
-func countDuplicateRows(ctx context.Context, conn chgo.Conn, table string) int64 {
+// noLossWhere — условие отбора строк сверки: async/rmq-строки узлов прогона.
+// id подставляются в SQL, поэтому каждый проверяется как UUID.
+func noLossWhere(nodeIDs []string) (string, error) {
+	const byType = "type IN ('requestAsync','RabbitMQAsync')"
+	if len(nodeIDs) == 0 {
+		return byType, nil
+	}
+	quoted := make([]string, 0, len(nodeIDs))
+	for _, id := range nodeIDs {
+		if _, err := uuid.Parse(id); err != nil {
+			return "", fmt.Errorf("node id %q is not a UUID: %w", id, err)
+		}
+		quoted = append(quoted, "'"+id+"'")
+	}
+	return byType + " AND node_id IN (" + strings.Join(quoted, ",") + ")", nil
+}
+
+// countDuplicateRows — строк async/rmq сверх уникальных ID (§114.L): повторы
+// попыток (DLQ) и повторные доставки вместе. Best-effort: ошибка — -1 и строка
+// в выводе, на вердикт no-loss не влияет.
+func countDuplicateRows(ctx context.Context, conn chgo.Conn, table, where string) int64 {
 	qctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	q := fmt.Sprintf("SELECT count() - uniqExact(ID) FROM %s WHERE type IN ('requestAsync','RabbitMQAsync')", table)
+	// #nosec G201 -- table провалидирован tableNameRe, where собран noLossWhere.
+	q := fmt.Sprintf("SELECT count() - uniqExact(ID) FROM %s WHERE %s", table, where)
 	var dup int64
 	if err := conn.QueryRow(qctx, q).Scan(&dup); err != nil {
 		fmt.Printf("no-loss: duplicate rows not counted: %v\n", err)

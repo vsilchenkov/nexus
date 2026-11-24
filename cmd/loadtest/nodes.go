@@ -31,6 +31,9 @@ const (
 
 // node — созданный через Web API узел нагрузки.
 type node struct {
+	// id — UUID узла из ответа Web API: по нему сверка no-loss отбирает строки
+	// ИМЕННО этого прогона (лог-таблица общая для всех прогонов).
+	id      string
 	path    string
 	mode    nodeMode
 	urlBase string // для modeDynURL — значение, передаваемое в ?url_base=
@@ -124,21 +127,46 @@ func (c *client) createNodes(ctx context.Context, modes []nodeMode, targetURL st
 		req, _ := http.NewRequestWithContext(ctx, "POST", c.baseWeb+"/api/nodes", bytes.NewReader(raw))
 		req.Header.Set("Content-Type", "application/json")
 		req.AddCookie(&http.Cookie{Name: "nexus_session", Value: c.cookie})
-		resp, err := c.hc.Do(req)
+		id, err := c.postCreateNode(req)
 		if err != nil {
-			return nodes, err
+			return nodes, fmt.Errorf("create node %d (%s): %w", i, mode, err)
 		}
-		resp.Body.Close()
-		if resp.StatusCode != 201 {
-			return nodes, fmt.Errorf("create node %d (%s) status %d", i, mode, resp.StatusCode)
-		}
-		nd := node{path: path, mode: mode}
+		nd := node{id: id, path: path, mode: mode}
 		if mode == modeDynURL {
 			nd.urlBase = targetURL
 		}
 		nodes = append(nodes, nd)
 	}
 	return nodes, nil
+}
+
+// postCreateNode выполняет POST /api/nodes и возвращает id созданного узла.
+// Пустой id не ошибка (сверка no-loss тогда считает всю таблицу и предупреждает).
+func (c *client) postCreateNode(req *http.Request) (string, error) {
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("status %d", resp.StatusCode)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&created) // тело — best-effort: узел уже создан
+	return created.ID, nil
+}
+
+// nodeIDs — непустые id узлов (для сверки no-loss по узлам прогона).
+func nodeIDs(nodes []node) []string {
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if n.id != "" {
+			ids = append(ids, n.id)
+		}
+	}
+	return ids
 }
 
 // nodePaths извлекает пути узлов (для cleanup через deleteNodes).
