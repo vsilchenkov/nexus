@@ -1386,7 +1386,10 @@ APP=$(docker compose config --services | grep -E '^(web|receiver|sender|nginx)(-
 
 # 2. Дамп кластера и снимок для сверки (отказывает, пока кто-то подключён).
 ./scripts/deploy/pg_migrate_native.sh dump
-DUMP=$(ls -t deploy/arc/pg_cluster_*.sql | head -n 1)
+#    Путь дампа dump печатает последней строкой («дальше: … restore <файл>»). Рядом лежит
+#    <файл>.post.sql — он записан ПОЗЖЕ и тоже подходит под pg_cluster_*.sql, поэтому
+#    исключается явно (иначе restore получил бы его вместо дампа).
+DUMP=$(ls -t deploy/arc/pg_cluster_*.sql | grep -v '\.post\.sql$' | head -n 1); echo "$DUMP"
 
 # 3. Включить bundled-postgres в конфигурации стека (сам контейнер ещё не запускается):
 #    - одиночный стек: из docker-compose.override.yml убрать `postgres: profiles: ["disabled"]`
