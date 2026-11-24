@@ -7947,3 +7947,14 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
   проверять нельзя: там в `pg_hba` образа `trust`. `restore` подключается к адресу контейнера
   (`hostname -i`) — правило частных сетей, `md5`, пароль из `.env` через `-e PGPASSWORD` без значения
   (в `argv` docker его нет).
+
+### 4.102 §117 — переход к узлу из «Отказов»
+
+Раздел [117-rejected-node-link.md](sections/117-rejected-node-link.md).
+Ветка `feature/rejected-node-link` (от `dev`, отдельный worktree — в общем дереве параллельно
+работала другая сессия). Миграции 0044–0045, ключей `config.yml` нет.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §117 | ✅ Phase 117.0 | [sections/117-rejected-node-link.md](sections/117-rejected-node-link.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md), отсылка из §94.11 |
+| Скил `handoff` и правило «handoff после каждого раздела ТЗ» | ✅ Phase 117.0 | [.claude/skills/handoff/SKILL.md](../.claude/skills/handoff/SKILL.md) (перенесён из routix и адаптирован), [CLAUDE.md](../CLAUDE.md) §0 «порядок сдачи ТЗ» п. 4 и §11; документы — `handoffs/`, коммитятся вместе с ТЗ (решение пользователя 24.11.2026) |
