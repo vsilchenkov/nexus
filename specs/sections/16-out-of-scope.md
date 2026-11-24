@@ -19,7 +19,7 @@ SaaS-onboarding остаются возможными расширениями �
 Перенесено в полноценный раздел [§27 RabbitMQAsync](27-rabbitmq-async.md). Третий тип узла: Puller-воркер
 (в Receiver) сам забирает сообщения из очереди RabbitMQ (`basic.get`, manual ack), публикует в Kafka
 `nexus.async`, дальше Sender обрабатывает их как обычный `requestAsync`. Убирает прокси-сервис
-RabbitMQ→HTTP. Остаются возможными расширениями (§27.14): exactly-once (дедуп по `message_id`), методы
+RabbitMQ→HTTP. Остаются возможными расширениями (§27.14): exactly-once (дедуп по `message_id`; анализ — §118), методы
 кроме POST, динамический URL/авторизация, несколько очередей на узел, шардинг воркера (leader election),
 push-режим (`basic.consume`), создание exchange+bindings через UI.
 

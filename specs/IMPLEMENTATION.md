@@ -7947,3 +7947,12 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
   проверять нельзя: там в `pg_hba` образа `trust`. `restore` подключается к адресу контейнера
   (`hostname -i`) — правило частных сетей, `md5`, пароль из `.env` через `-e PGPASSWORD` без значения
   (в `argv` docker его нет).
+
+### 4.103 §118 — дедупликация доставки: анализ, `X-Nexus-Id`, мягкая остановка Sender
+
+Раздел [118-delivery-dedup.md](sections/118-delivery-dedup.md).
+Ветка `feature/delivery-dedup` (от `dev`). Миграций и ключей `config.yml` нет.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §118 (анализ, Д1–Д5, замер) | ✅ Phase 118.0 | [sections/118-delivery-dedup.md](sections/118-delivery-dedup.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md); правки §3.6, §27.4/§27.14, §16, §30, §109 |
