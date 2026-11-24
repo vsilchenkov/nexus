@@ -6,8 +6,14 @@ import { Link } from "react-router-dom";
 
 import { api } from "../../api/client";
 import { fmtNum, fmtSize } from "../../lib/format";
-import { reasonLabelKey, type RejectedDetails } from "../../lib/rejected";
-import { Button, CopyButton, ErrorAlert, ShareLinkButton } from "../ui";
+import {
+  reasonLabelKey,
+  rejectedNodeEnableHref,
+  rejectedNodeHref,
+  type RejectedDetails,
+  type RejectedNode,
+} from "../../lib/rejected";
+import { Button, CopyButton, ErrorAlert, Pill, ShareLinkButton } from "../ui";
 import { rejectedPageUrl } from "../../lib/rejectedShare";
 
 type Props = {
@@ -124,6 +130,11 @@ export function RejectedDrawer({ id, onClose, onViewed, onDeleted }: Props) {
             </div>
           )}
 
+          {g?.node && <RejectedNodeBlock node={g.node} />}
+          {g?.node_deleted && (
+            <div className="text-fg-muted">{t("rejected.node.deleted_hint")}</div>
+          )}
+
           {q.data?.suggestion && (
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-accent/40 bg-accent/5 px-3 py-2">
               <span>
@@ -218,3 +229,43 @@ export function RejectedDrawer({ id, onClose, onViewed, onDeleted }: Props) {
     </aside>
   );
 }
+
+// RejectedNodeBlock — узел, к которому относится отказ (§117.6), по его
+// ТЕКУЩЕМУ состоянию: путь, команда, статус. «Включить» ведёт на вкладку
+// «Очередь» (там смена статуса, §35.4) и показывается по текущему статусу, а не
+// по причине отказа: узел могли включить уже после отказа.
+function RejectedNodeBlock({ node }: { node: RejectedNode }) {
+  const { t } = useTranslation();
+  const tone = node.status === "enabled" ? "ok" : node.status === "paused" ? "warn" : "err";
+  return (
+    <section className="rounded-md border border-line px-3 py-2">
+      <h4 className="mb-1 text-[11px] uppercase tracking-wide text-fg-muted">
+        {t("rejected.node.title")}
+      </h4>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="break-all font-medium">{node.path}</span>
+        <span className="text-fg-muted">· {node.team_name || node.team_slug}</span>
+        <Pill tone={tone}>{t(`node.status.${node.status}`)}</Pill>
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+        <Link
+          to={rejectedNodeHref(node)}
+          className="inline-flex items-center gap-1 text-accent hover:underline"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          {t("rejected.details.open_node")}
+        </Link>
+        {node.status === "disabled" && (
+          <Link
+            to={rejectedNodeEnableHref(node)}
+            className="inline-flex items-center gap-1 text-accent hover:underline"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            {t("rejected.node.enable")}
+          </Link>
+        )}
+      </div>
+    </section>
+  );
+}
+

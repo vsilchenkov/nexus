@@ -114,6 +114,9 @@ func (u *RejectedUsecase) List(ctx context.Context, sc RejectedScope, f port.Rej
 	if err != nil {
 		return out, fmt.Errorf("rejected count: %w", err)
 	}
+	for _, g := range groups {
+		u.scopeNode(sc, g)
+	}
 	out.Groups = groups
 	out.Total = total
 	return out, nil
@@ -258,7 +261,29 @@ func (u *RejectedUsecase) get(ctx context.Context, sc RejectedScope, id string) 
 			u.logger.Str("caller_team", slug))
 		return nil, domain.ErrRejectedGroupNotFound
 	}
+	u.scopeNode(sc, g)
 	return g, nil
+}
+
+// scopeNode прячет от не-администратора узел ЧУЖОЙ команды (§117.5).
+//
+// Группа своей команды может указывать на узел другой: legacy-«чтение B»
+// резолвит адрес `/request/a/b` в узел `a/b` команды default, а группа пишется
+// как «команда a, путь b». Без этого правила журнал раскрывал бы оператору путь,
+// статус и название команды, к которой он не относится, — до §117 журнал
+// команды за её пределы не выходил. Сравнение с командой группы равносильно
+// сравнению с командой сессии: не-администратор видит только группы своей
+// команды (applyScope/get). Ссылку он бы всё равно не открыл — страница узла
+// чужой команды отвечает «Узел не доступен» (§101.10).
+func (u *RejectedUsecase) scopeNode(sc RejectedScope, g *domain.RejectedGroup) {
+	if sc.IsAdmin || g.Node == nil || g.Node.TeamSlug == g.TeamSlug {
+		return
+	}
+	u.logger.Debug("rejected: node of another team hidden from caller",
+		u.logger.Str("group", g.ID),
+		u.logger.Str("group_team", g.TeamSlug),
+		u.logger.Str("node_team", g.Node.TeamSlug))
+	g.Node = nil
 }
 
 // applyScope сужает фильтр до области видимости вызывающего.

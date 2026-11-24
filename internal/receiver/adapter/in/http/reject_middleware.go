@@ -11,6 +11,7 @@ import (
 
 	"nexus/internal/domain"
 	"nexus/internal/platform/requestid"
+	"nexus/internal/platform/sensitive"
 	"nexus/internal/receiver/adapter/out/rejectlog"
 )
 
@@ -26,6 +27,15 @@ const RejectReasonKey = "nexus_reject_reason"
 func SetRejectReason(c *gin.Context, r domain.RejectReason) {
 	c.Set(RejectReasonKey, string(r))
 }
+
+// RejectNodeIDKey — ключ gin-контекста с ID узла, найденного до отказа (§117.3).
+//
+// Ставит наблюдатель резолва (nodeLabelSetter). Пусто — отказ случился до
+// резолва (узла нет, лимит частоты, пустой путь): у такой группы ссылки на узел
+// нет. Узел берётся отсюда, а не из пути группы: путь группы — путь АДРЕСА, и у
+// passthrough-хвоста, legacy-адреса и переименованного узла он с путём узла
+// расходится.
+const RejectNodeIDKey = "nexus_reject_node_id"
 
 // RejectProxiedKey — ключ gin-контекста: ответ отдан ВНЕШНЕЙ системой, шина
 // его лишь пробросила.
@@ -125,6 +135,7 @@ func RejectLogMiddleware(sink RejectSink, m rejectMetrics) gin.HandlerFunc {
 				Reason:     reason,
 				HTTPMethod: c.Request.Method,
 			},
+			NodeID:    c.GetString(RejectNodeIDKey),
 			Status:    int32(status),
 			ClientIP:  clientIP(c.Request),
 			UserAgent: domain.TruncateUserAgent(c.Request.UserAgent()),
@@ -175,9 +186,12 @@ func rejectReason(c *gin.Context) (domain.RejectReason, bool) {
 // канонического пути не существует, а метка к моменту записи уже заменена на
 // маркер «не разрезолвлен» (иначе мусорные пути плодили бы ряды Prometheus).
 // Для узлов с path_passthrough (§39) в пути остаётся хвост запроса — это
-// осознанно: видно, какой именно подпуть дёргают.
+// осознанно: видно, какой именно подпуть дёргают. Но хвост несёт секреты:
+// токен бота маскируется (§117.7) — путь группы виден каждому оператору и
+// уходит в CSV. Маскирование до разбора на слог и путь: токен может стоять и
+// в первом сегменте короткой формы.
 func rejectTarget(c *gin.Context) (teamSlug, nodePath string) {
-	_, rest := SplitVerb(c.Param("path"))
+	_, rest := SplitVerb(sensitive.MaskBotTokens(c.Param("path")))
 	return splitTeamSlugAndPath(rest)
 }
 
@@ -185,12 +199,15 @@ func rejectTarget(c *gin.Context) (teamSlug, nodePath string) {
 //
 // Имена параметров сохраняются (по ним видно, что клиент вообще прислал),
 // значения — нет: там живут токены авторизации (§41, source=query) и
-// пользовательские данные, которым в журнале не место.
+// пользовательские данные, которым в журнале не место. Токен бота в самом пути
+// маскируется (§117.7).
 func rejectRawPath(u *url.URL) string {
 	if u == nil {
 		return ""
 	}
-	path := u.Path
+	// §117.7: секрет токена бота в пути passthrough-адреса — та же утечка, что
+	// и в значениях query.
+	path := sensitive.MaskBotTokens(u.Path)
 	if u.RawQuery == "" {
 		return domain.TruncateRawPath(path)
 	}

@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import RejectedTab from "./RejectedTab";
 import { type RejectedGroup } from "../../lib/rejected";
+import { expectLiftedAbove, expectStretchedTo } from "../../test/stretched";
 
 // §94.7: вкладка «Логи → Отказы». Проверяем то, чего не видит бэкенд: что
 // журнал отличает «отказов не было» от «сбор выключен», что фильтры доезжают
@@ -217,4 +218,38 @@ describe("RejectedTab", () => {
     expect(href).toContain("from=");
     expect(href).toContain("to=");
   });
+
+  // §117.6: переход к узлу прямо из строки. Ссылка — только у группы с узлом;
+  // настоящая <a> на страницу узла, поднятая над растянутой ссылкой строки и НЕ
+  // вложенная в неё (ссылка в ссылке невалидна, а без подъёма клик уходил бы в
+  // карточку). Удалённый узел — текст без ссылки; у отказа до резолва — ничего.
+  it("ссылка на узел в строке — только у группы с узлом", async () => {
+    mockServer({
+      groups: [
+        group({
+          id: "g1",
+          node_path: "tg/sendMessage",
+          reason: "node_disabled",
+          node: { id: "n1", path: "tg", status: "disabled", team_slug: "vika", team_name: "Вика" },
+        }),
+        group({ id: "g2", node_path: "nosuch" }),
+        group({ id: "g3", node_path: "gone", node_deleted: true }),
+      ],
+    });
+    renderTab();
+    await waitFor(() => expect(screen.getByText("tg/sendMessage")).toBeInTheDocument());
+
+    const nodeLinks = screen.getAllByRole("link", { name: "rejected.node.open_aria" });
+    expect(nodeLinks).toHaveLength(1);
+    expect(nodeLinks[0]).toHaveAttribute("href", "/nodes/n1");
+
+    const rowLink = screen.getByText("tg/sendMessage").closest("a") as HTMLElement;
+    expect(rowLink.contains(nodeLinks[0])).toBe(false);
+    expectLiftedAbove(nodeLinks[0], rowLink);
+    // Строка по-прежнему целиком открывает карточку.
+    expectStretchedTo(rowLink, rowLink.closest("tr") as HTMLElement);
+
+    expect(screen.getAllByText("rejected.node.deleted")).toHaveLength(1);
+  });
 });
+

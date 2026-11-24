@@ -7947,3 +7947,42 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
   проверять нельзя: там в `pg_hba` образа `trust`. `restore` подключается к адресу контейнера
   (`hostname -i`) — правило частных сетей, `md5`, пароль из `.env` через `-e PGPASSWORD` без значения
   (в `argv` docker его нет).
+
+### 4.102 §117 — переход к узлу из «Отказов»
+
+Раздел [117-rejected-node-link.md](sections/117-rejected-node-link.md).
+Ветка `feature/rejected-node-link` (от `dev`, отдельный worktree — в общем дереве параллельно
+работала другая сессия). Миграции 0044–0045, ключей `config.yml` нет.
+
+| Пункт | Статус | Где |
+|---|---|---|
+| ТЗ §117 | ✅ Phase 117.0 | [sections/117-rejected-node-link.md](sections/117-rejected-node-link.md), индекс [sections/README.md](sections/README.md), сводный [nexus_spec.md](nexus_spec.md), отсылка из §94.11 |
+| Скил `handoff` и правило «handoff после каждого раздела ТЗ» | ✅ Phase 117.0 | [.claude/skills/handoff/SKILL.md](../.claude/skills/handoff/SKILL.md) (перенесён из routix и адаптирован), [CLAUDE.md](../CLAUDE.md) §0 «порядок сдачи ТЗ» п. 4 и §11; документы — `handoffs/`, коммитятся вместе с ТЗ (решение пользователя 24.11.2026) |
+| §117.7 маскирование токена бота в журнале отказов | ✅ Phase 117.1 | `rejectTarget` и `rejectRawPath` в [reject_middleware.go](../internal/receiver/adapter/in/http/reject_middleware.go) — через `sensitive.MaskBotTokens`; миграция [0044](../migrations/0044_rejected_mask_bot_tokens.up.sql) удаляет накопленные группы и сэмплы с секретом; тесты `TestRejectLogMiddleware_MasksBotToken` (красный на старом коде), `TestRejectedMigration_DeletesUnmaskedBotTokens_E2E` |
+| §117.3 Receiver фиксирует узел отказа | ✅ Phase 117.2 | Наблюдатель резолва — `usecase.ResolvedNode{TeamSlug, Path, ID}` вместо пары строк ([route.go](../internal/receiver/usecase/route.go): `RouteInput.OnNodeResolved`, `NodeRootMethod`); `nodeLabelSetter` кладёт ID под `RejectNodeIDKey` ([handler.go](../internal/receiver/adapter/in/http/handler.go), [reject_middleware.go](../internal/receiver/adapter/in/http/reject_middleware.go)) → `rejectlog.Sample.NodeID` → агрегат (последний непустой, [collector.go](../internal/receiver/adapter/out/rejectlog/collector.go)) → UPSERT `node_id = COALESCE(EXCLUDED.node_id, …)` ([repo.go](../internal/receiver/adapter/out/rejectlog/repo.go)); миграция [0045](../migrations/0045_rejected_node_id.up.sql) |
+| §117.5 Web отдаёт узел группы | ✅ Phase 117.3 | [rejected_repo.go](../internal/web/adapter/out/postgres/rejected_repo.go): `rejectedGroupReadFrom` = прежний FROM + `LEFT JOIN nodes n ON n.id = g.node_id LEFT JOIN teams nt …` — только для выборок, сканирующих группу (список, карточка); счётчики, сводка и «пометить все» идут по прежнему FROM без join'а узла. `domain.RejectedGroup.Node *RejectedNode` (путь/статус/команда — ТЕКУЩИЕ) и `NodeDeleted` (`node_id` есть, строки узла нет); JSON `node` / `node_deleted` и последняя колонка CSV `node` ([rejected_handler.go](../internal/web/adapter/in/http/rejected_handler.go)); Swagger обновлён |
+| §117.6 UI: ссылка в строке и блок «Узел» в карточке | ✅ Phase 117.4 | [RejectedTab.tsx](../web-ui/src/pages/logs/RejectedTab.tsx) `RejectedRowNode` — «↗ узел» соседом растянутой ссылки строки с `ABOVE_STRETCH` (не вложена: ссылка в ссылке невалидна); удалённый узел — текст без подъёма (клик по нему открывает карточку, как по строке). [RejectedDrawer.tsx](../web-ui/src/components/logs/RejectedDrawer.tsx) `RejectedNodeBlock` — путь, команда, `Pill` статуса, «Открыть узел» и «Включить» (`?tab=queue`) по ТЕКУЩЕМУ статусу. Хелперы `rejectedNodeHref`/`rejectedNodeEnableHref` в [lib/rejected.ts](../web-ui/src/lib/rejected.ts); i18n `rejected.node.*`; Vitest в `RejectedTab.test.tsx`, `RejectedDrawer.test.tsx`; бандл пересобран |
+| §117 ревизия перед сдачей | ✅ Phase 117.5 | (1) узел ЧУЖОЙ команды скрыт от не-администратора — `RejectedUsecase.scopeNode` в [rejected.go](../internal/web/usecase/rejected.go), тест `TestRejected_ForeignTeamNodeHiddenFromOperator` (красный на коде 117.4); (2) `DEPLOYMENT.md` возвращены окончания строк CRLF |
+
+**Неочевидности §117:**
+
+- **Узел фиксируется при отказе, а не ищется по пути на чтении.** Путь группы — путь АДРЕСА: у
+  passthrough-хвоста (`tg/bot42:…/sendMessage` при узле `tg`), legacy-«чтения B» (`/request/a/b` →
+  группа «команда a, путь b», узел `a/b` команды default) и переименованного узла он с путём узла
+  не совпадает. Сопоставление по пути (как у страницы Kafka) промахивалось бы ровно здесь.
+- **Узел вне ключа группы, `COALESCE` при UPSERT.** Иначе переименование или пересоздание узла
+  дробило бы одну проблему клиента на группы, а отказ до резолва в ту же группу затирал бы узел.
+- **Join с узлом — только в выборках, сканирующих группу** (`rejectedGroupReadFrom`): счётчики,
+  сводка и «пометить все» идут по прежнему FROM, лишний join им не нужен.
+- **Узел чужой команды скрыт от оператора** (найдено ревизией). Группа своей команды указывает на
+  чужой узел при legacy-«чтении B»; без правила журнал раскрывал бы путь, статус и название чужой
+  команды, хотя до §117 за пределы команды не выходил.
+- **Маскирование до разбора адреса** (`rejectTarget`): токен может стоять и в первом сегменте
+  короткой формы. Накопленное с секретом удаляется миграцией 0044 — `UPDATE` с маской упёрся бы в
+  уникальный ключ (две группы одного бота с разными секретами совпали бы).
+- **`DEPLOYMENT.md` хранится с CRLF, остальные `.md` — с LF.** Правка скриптом через текстовый режим
+  Python (`open(...).read()` + запись с `newline=""`) молча переводит файл на LF, и diff ветки
+  показывает изменённым весь файл (7 761 строка вместо 21). Править такие файлы — в бинарном режиме
+  или инструментом, сохраняющим окончания строк.
+
+Handoff по §117 — [handoffs/handoff-20261124-131555.md](../handoffs/handoff-20261124-131555.md).

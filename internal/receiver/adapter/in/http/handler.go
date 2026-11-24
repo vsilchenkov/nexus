@@ -695,10 +695,14 @@ func (h *Handler) replyDomainError(c *gin.Context, err error, nodePath, op strin
 // у passthrough-узла хвост адреса несёт секреты и не ограничен, а слог в
 // legacy-адресе может оказаться частью пути. Путь — без слога команды, как у
 // меток Sender'а (иначе in/out одного узла разъезжаются на дашборде, §21).
-func nodeLabelSetter(c *gin.Context) func(teamSlug, nodePath string) {
-	return func(teamSlug, nodePath string) {
-		c.Set(metrics.NodeLabelKey, nodePath)
-		c.Set(metrics.TeamLabelKey, teamSlug)
+//
+// ID узла кладётся отдельным ключом для журнала отказов (§117.3): в метки
+// Prometheus он не идёт — у них своя кардинальность и смысл.
+func nodeLabelSetter(c *gin.Context) func(usecase.ResolvedNode) {
+	return func(n usecase.ResolvedNode) {
+		c.Set(metrics.NodeLabelKey, n.Path)
+		c.Set(metrics.TeamLabelKey, n.TeamSlug)
+		c.Set(RejectNodeIDKey, n.ID)
 	}
 }
 

@@ -2699,6 +2699,16 @@ definitions:
         type: string
       last_seen:
         type: string
+      node:
+        allOf:
+        - $ref: '#/definitions/internal_web_adapter_in_http.rejectedNodeResponse'
+        description: |-
+          Node — узел, к которому относится отказ (§117.5), по ТЕКУЩЕМУ состоянию;
+          нет — отказ до резолва или группа накоплена до §117.
+      node_deleted:
+        description: 'NodeDeleted — узел был, но удалён: показывается «узел удалён»
+          без ссылки.'
+        type: boolean
       node_path:
         type: string
       reason:
@@ -2731,6 +2741,19 @@ definitions:
         type: integer
       total:
         type: integer
+    type: object
+  internal_web_adapter_in_http.rejectedNodeResponse:
+    properties:
+      id:
+        type: string
+      path:
+        type: string
+      status:
+        type: string
+      team_name:
+        type: string
+      team_slug:
+        type: string
     type: object
   internal_web_adapter_in_http.rejectedResolveAllResponse:
     properties:

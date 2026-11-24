@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { CheckCheck, Download } from "lucide-react";
+import { ArrowUpRight, CheckCheck, Download } from "lucide-react";
 
 import { api } from "../../api/client";
 import { cn } from "../../lib/cn";
@@ -14,13 +14,14 @@ import { PREF_KEY_REJECTED_PERIOD, useTeamDefaultPeriod } from "../../lib/prefs"
 import {
   REJECT_REASONS,
   reasonLabelKey,
+  rejectedNodeHref,
   type RejectedGroup,
   type RejectedListResp,
   type RejectedSummary,
 } from "../../lib/rejected";
 import { RejectedDrawer } from "../../components/logs/RejectedDrawer";
 import { REJECTED_PARAM, withRejected } from "../../lib/rejectedShare";
-import { STRETCH_HOST, STRETCHED_LINK } from "../../lib/stretchedLink";
+import { ABOVE_STRETCH, STRETCH_HOST, STRETCHED_LINK } from "../../lib/stretchedLink";
 import {
   Button,
   Card,
@@ -363,6 +364,7 @@ function RejectedRow({
         >
           <span className="relative z-[1]">{group.node_path}</span>
         </Link>
+        <RejectedRowNode group={group} />
       </td>
       {showTeam && (
         <td className="px-3 py-2 whitespace-nowrap">
@@ -382,4 +384,40 @@ function RejectedRow({
       </td>
     </tr>
   );
+}
+
+// RejectedRowNode — переход к узлу отказа прямо из строки (§117.6), без
+// открытия карточки. Настоящая ссылка (§79/§100): Ctrl+клик и «Открыть в новой
+// вкладке» работают. Стоит СОСЕДОМ растянутой ссылки строки и поднята над ней
+// (ABOVE_STRETCH) — вложенная ссылка в ссылке невалидна, а без подъёма клик
+// уходил бы в карточку. Удалённый узел — просто текст: клик по нему, как по
+// остальной строке, открывает карточку.
+function RejectedRowNode({ group }: { group: RejectedGroup }) {
+  const { t } = useTranslation();
+  if (group.node) {
+    return (
+      <Link
+        to={rejectedNodeHref(group.node)}
+        aria-label={t("rejected.node.open_aria", { path: group.node.path })}
+        title={t("rejected.node.open_aria", { path: group.node.path })}
+        // inline, а не inline-flex: у flex-контейнера с иконкой первым элементом
+        // базовая линия уезжает, и «↗ узел» вставал выше адреса (стенд §117).
+        className={cn(
+          ABOVE_STRETCH,
+          "ml-2 whitespace-nowrap text-[11.5px] text-accent hover:underline",
+        )}
+      >
+        <ArrowUpRight className="mr-0.5 inline h-3 w-3 align-[-1px]" />
+        {t("rejected.node.row_link")}
+      </Link>
+    );
+  }
+  if (group.node_deleted) {
+    return (
+      <span className="ml-2 whitespace-nowrap text-[11.5px] text-fg-subtle">
+        {t("rejected.node.deleted")}
+      </span>
+    );
+  }
+  return null;
 }
