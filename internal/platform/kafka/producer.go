@@ -61,9 +61,15 @@ func WithMetrics(m *metrics.Metrics) ProducerOption {
 // Параметры:
 //
 //	acks=all (RequiredAcks=-1) — ждём подтверждения от всех ISR (надёжность).
-//	idempotent producer для exactly-once на retry'ах.
 //	compression: lz4.
-//	max.in.flight=5, retries=MaxInt.
+//
+// Producer НЕ идемпотентен (§118.10): segmentio/kafka-go идемпотентного
+// producer'а (PID + sequence) не поддерживает, а ключи kafka.producer.retries,
+// delivery_timeout_ms, enable_idempotence и max_in_flight_requests разбираются,
+// но здесь не применяются. Writer сам повторяет батч до MaxAttempts (по
+// умолчанию 10) — запись, сохранённую брокером без подтверждения, повтор
+// положит второй раз с тем же ID конверта. Дубль в топике отсеивает получатель
+// по X-Nexus-Id (§118.7).
 func NewProducer(cfg *config.Config, opts ...ProducerOption) *Producer {
 	brokers := splitBrokers(cfg.Kafka.Brokers)
 	w := &kafka.Writer{

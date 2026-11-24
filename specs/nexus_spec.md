@@ -471,7 +471,7 @@ UI умеет:
 | `min.insync.replicas` | 2 | Дефолт на уровне брокера |
 | `auto.create.topics.enable` | false | Топики создаёт приложение явно, со своими параметрами |
 | `delete.topic.enable` | true | Разрешить удаление через API (для DevOps-процедур) |
-| `transaction.state.log.replication.factor` | 3 | Для exactly-once семантики producer'а |
+| `transaction.state.log.replication.factor` | 3 | Для транзакций Kafka (Nexus их не использует, §118.10) |
 | `transaction.state.log.min.isr` | 2 | То же |
 | `group.initial.rebalance.delay.ms` | 3000 | Задержка перед ребалансировкой при подъёме новых consumer'ов |
 | `compression.type` | producer | Использовать сжатие, переданное producer'ом |
@@ -480,7 +480,7 @@ UI умеет:
 
 В секции `kafka.producer` конфига. Полный список и обоснование выбора:
 - `acks: all` — самая надёжная настройка, ждём подтверждения от всех ISR. С `min.insync.replicas=2` это значит подтверждение от 2 broker'ов.
-- `enable.idempotence: true` — гарантирует exactly-once на стороне producer'а в рамках одной сессии (дубликаты не создаются при retry).
+- `enable.idempotence: true` — **не применяется** (§118.10): клиент `segmentio/kafka-go` идемпотентного producer'а не поддерживает, и повтор записи может задвоить сообщение в топике (с тем же ID конверта — получатель отсеивает по `X-Nexus-Id`). Так же не применяются `retries`, `delivery.timeout.ms`, `max.in.flight`.
 - `compression.type: lz4` — сжатие на стороне producer'а, broker сохраняет как есть.
 - `linger.ms: 5` — микро-батчинг: producer ждёт до 5 мс, чтобы набрать батч сообщений. Снижает overhead per-message в 5–10 раз при высоком RPS.
 - `batch.size: 65536` (64 KB) — размер батча в байтах.
@@ -1171,10 +1171,10 @@ kafka:
     linger_ms: 5                       # микро-батчинг для throughput
     batch_size: 65536                  # 64 KB
     buffer_memory: 33554432            # 32 MB на producer
-    retries: 2147483647                # max int — фактический лимит через delivery.timeout
-    delivery_timeout_ms: 120000        # общий лимит на доставку с retry
-    enable_idempotence: true           # exactly-once семантика
-    max_in_flight_requests: 5
+    retries: 2147483647                # не применяется (§118.10): kafka-go повторяет батч сам, до 10 раз
+    delivery_timeout_ms: 120000        # не применяется (§118.10)
+    enable_idempotence: true           # не применяется (§118.10): идемпотентного producer'а в kafka-go нет
+    max_in_flight_requests: 5          # не применяется (§118.10)
     request_timeout_ms: 30000
   # === Consumer (Sender ← Kafka) ===
   consumer:
@@ -1829,7 +1829,7 @@ s.logger.ErrorWithOp("kafka publish failed", err, "sender.publishAsync",
 - При старте сервиса топики `nexus.async` и `nexus.async.dlq` автоматически создаются (если не существуют) с параметрами из конфига: 4 партиции, retention 30 дней (`retention.ms=2592000000`), `cleanup.policy=delete`, `compression.type=lz4`.
 - Команда `kafka-topics --describe --topic nexus.async` показывает retention.ms=2592000000 и все остальные параметры согласно §5.3.
 - При reset consumer offset на начало (`kafka-consumer-groups --reset-offsets --to-earliest`) Sender переобрабатывает все сообщения за последние 30 дней.
-- Producer работает с `acks=all` и `enable.idempotence=true` — повторная отправка одного и того же сообщения при ретрае не создаёт дублей в топике.
+- Producer работает с `acks=all`. Идемпотентного producer'а нет (§118.10): повтор записи может задвоить сообщение в топике — с тем же ID конверта, получатель отсеивает его по `X-Nexus-Id`.
 - Consumer коммитит offset только после успешной доставки во внешний узел (`enable.auto.commit=false`); при рестарте Sender'а в середине обработки сообщения оно обрабатывается повторно, потерь нет.
 - В Settings → Language выбор «Русский» переключает UI без перезагрузки, сохраняется в `users.lang` и подтягивается при следующем входе; язык по умолчанию для нового пользователя — English (либо определяется по `Accept-Language`, если содержит `ru`).
 - Серверные ответы API учитывают заголовок `Accept-Language` и возвращают тексты ошибок на соответствующем языке; логи в ClickHouse, stderr и метрики Prometheus остаются на английском.

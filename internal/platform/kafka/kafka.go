@@ -1,8 +1,9 @@
-// Package kafka — заглушка-фабрика на Phase 0.
+// Package kafka — работа с Kafka поверх segmentio/kafka-go: producer
+// (Receiver, а в Sender — DLQ и топик паузы), consumer-reader'ы Sender'а,
+// служебные операции (топики, offset'ы) и healthcheck подключения к брокеру.
 //
-// Реальный producer (Receiver) и consumer (Sender) с retry/DLQ/idempotence
-// появятся в Phase 2 (§5.3 ТЗ). Сейчас — только healthcheck подключения
-// к broker'у, чтобы /ready на Sender отвечал корректно.
+// Producer не идемпотентен (§118.10): kafka-go этого не умеет, повтор записи
+// может задвоить сообщение в топике — с тем же ID конверта.
 package kafka
 
 import (
