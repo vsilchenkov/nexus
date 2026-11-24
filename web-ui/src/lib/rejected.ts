@@ -17,7 +17,34 @@ export type RejectedGroup = {
   clients: number;
   resolved_at?: string;
   resolved_by?: string;
+  // §117.5: узел, к которому относится отказ, по ТЕКУЩЕМУ состоянию. Нет —
+  // отказ случился до резолва узла (или группа накоплена до §117).
+  node?: RejectedNode;
+  // Узел был, но удалён: ссылки нет, показывается «узел удалён».
+  node_deleted?: boolean;
 };
+
+// RejectedNode — узел группы отказов (§117.5).
+export type RejectedNode = {
+  id: string;
+  path: string;
+  status: "enabled" | "disabled" | "paused";
+  team_slug: string;
+  team_name: string;
+};
+
+// rejectedNodeHref — страница узла отказа. Без ?team=: страница узла сама
+// переключает команду сессии (§101.10), а /nodes/* исключён из параметра
+// команды (teamShare).
+export function rejectedNodeHref(node: RejectedNode): string {
+  return `/nodes/${node.id}`;
+}
+
+// rejectedNodeEnableHref — вкладка «Очередь» узла: там живёт смена статуса
+// (§35.4), и выключенный узел включается оттуда.
+export function rejectedNodeEnableHref(node: RejectedNode): string {
+  return `/nodes/${node.id}?tab=queue`;
+}
 
 export type RejectedListResp = {
   groups: RejectedGroup[];

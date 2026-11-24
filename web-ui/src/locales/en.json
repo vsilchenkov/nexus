@@ -972,6 +972,14 @@
       "bad_request": "bad request",
       "other": "other"
     },
+    "node": {
+      "title": "Node",
+      "row_link": "node",
+      "open_aria": "Open node {{path}}",
+      "enable": "Enable (Queue tab)",
+      "deleted": "node deleted",
+      "deleted_hint": "The node this rejection belongs to has been deleted."
+    },
     "details": {
       "seen": "First {{first}} · last {{last}} · requests: {{total}}",
       "resolved_by": "Viewed by {{who}}, {{when}}",
