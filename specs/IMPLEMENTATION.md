@@ -7981,3 +7981,4 @@ not allowed`. Копировать байтами (`sed`, `Copy-Item` + точе
   HTTP ставит их обходом карты (`Header.Set` канонизирует ключ), порядок обхода случаен: ключ
   `x-nexus-id` через раз перебивал бы значение шины.
 | §118.10 честность про producer Kafka | ✅ Phase 118.3 | Комментарии [producer.go](../internal/platform/kafka/producer.go), пакетный [kafka.go](../internal/platform/kafka/kafka.go) (был «заглушка Phase 0»), поля `KafkaProducerSection` ([config.go](../internal/platform/config/config.go)), ключи `kafka.producer.*` в [config.yml](../config/config.yml); ТЗ §5.3, §8, §15 и сводный. Поведение не меняется |
+| §118 ревизия перед сдачей | ✅ Phase 118.4 | Границы §118.9 дополнены: `X-Nexus-Id` уходит и сторонним API (случайный UUID, отключения нет); мягкая остановка опирается на порядок runner'а (чтение отменяется до `App.Stop`). Обходных путей остановки нет: скрипты деплоя не задают свой `-t` для сервисов приложения |
