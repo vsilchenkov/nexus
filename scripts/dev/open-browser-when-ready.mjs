@@ -83,8 +83,12 @@ function openBrowser(url) {
 }
 
 async function main() {
-  // Строка «waiting» печатается ВСЕГДА и первой: по ней VS Code считает фоновую
-  // задачу готовой и запускает отладку (problemMatcher в tasks.json).
+  // Две строки печатаются ВСЕГДА и первыми: «start» — начало подготовки фоновой
+  // задачи, «waiting» — её конец; по второй VS Code отпускает запуск отладки
+  // (problemMatcher в tasks.json). Строки разные намеренно: VS Code проверяет
+  // строку сначала на начало и, совпав, на конец её уже не проверяет — при
+  // одной строке на оба шаблона задача «висела» бы вечно.
+  console.log(`${PREFIX} start`);
   if (process.env.NEXUS_NO_BROWSER === "1") {
     console.log(`${PREFIX} waiting skipped (NEXUS_NO_BROWSER=1)`);
     return;

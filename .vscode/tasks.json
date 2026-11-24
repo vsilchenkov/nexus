@@ -88,9 +88,13 @@
             "problemMatcher": {
                 "owner": "nexus-open-browser",
                 "pattern": { "regexp": "^nexus-open-browser: never-matches$" },
+                // activeOnStart (не activeBegin — его VS Code молча игнорирует) и
+                // РАЗНЫЕ строки начала и конца: VS Code проверяет строку сначала
+                // на начало и, совпав, на конец уже не смотрит — с одной строкой
+                // на оба шаблона задача «висела» в Waiting for preLaunchTask.
                 "background": {
-                    "activeBegin": true,
-                    "beginsPattern": "^nexus-open-browser: waiting",
+                    "activeOnStart": true,
+                    "beginsPattern": "^nexus-open-browser: start",
                     "endsPattern": "^nexus-open-browser: waiting"
                 }
             },
