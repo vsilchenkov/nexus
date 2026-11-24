@@ -203,8 +203,14 @@ for i in $(seq 1 500); do
 done
 ```
 
-> Очередь `nexus.stand` создаётся узлом-puller'ом при старте; если её ещё нет,
-> создайте её в management UI (Queues → Add) до публикации.
+> Очередь `nexus.stand` Nexus **не создаёт**: puller объявляет её пассивно (`QueueDeclarePassive`,
+> §27 — очередь принадлежит издателю), и без неё узел уходит в деградацию с ERROR
+> `queue "nexus.stand" not found` в логе Receiver'а. У RabbitMQ стенда данные в анонимном томе —
+> после пересоздания контейнера очередь пропадает. Создать (puller подключится сам в течение минуты):
+>
+> ```bash
+> curl -fsS -u guest:guest -X PUT -H 'content-type: application/json' -d '{"durable":true}' >   http://localhost:15672/api/queues/%2F/nexus.stand
+> ```
 
 ---
 
@@ -302,7 +308,7 @@ done
 | В ответ приходит HTML index.html | Бьёте по старому `/v1/...` вместо `/api/v1/...`, либо не через единый вход |
 | 405 на всех запросах | `incoming_method` узла не совпадает с методом запроса (#5) |
 | target_url unreachable / 502 | echosrv недоступен Receiver'у — проверьте `ECHO_URL` (host.docker.internal vs localhost) |
-| RabbitMQAsync без трафика | RabbitMQ не поднят (`--profile stand`) или очередь `nexus.stand` не создана |
+| RabbitMQAsync без трафика, ERROR `rmq node degraded … queue "nexus.stand" not found` | RabbitMQ не поднят (`--profile stand`) или очередь `nexus.stand` не создана — Nexus её не создаёт, команда в §2 (RabbitMQAsync) |
 | IP в логах `::1` | проверьте, что собран код с нормализацией IPv4 (Phase D) |
 | Сервис падает с exit 1 «invalid ENCRYPTION_KEY» при `make run-*` | нативный запуск не видит `.env` — экспортируйте `ENCRYPTION_KEY` в окружение (см. Вариант B) |
 | Логи/метрики узла: `clickhouse search: code 60 ... Unknown table` | таблица логов не создана — убедитесь, что есть дефолтный CH-шаблон (узел без `clickhouse_template_id` берёт его); фикс #7 §28 |

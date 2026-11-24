@@ -3453,6 +3453,15 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   последняя, §116 обновлять было не на что) и воспроизведение
   зависания на стенде — сторож проверен на имитации «стоящей» партиции, а не на живом зависании.
 
+- **`type` записей RabbitMQAsync в логе — `requestAsync`, а не `RabbitMQAsync` (найдено стендом
+  перед 1.42.0, не регрессия — так с июня 2026).** ТЗ §27.10 обещает `type = RabbitMQAsync`, но
+  `buildSendInput` ([async_envelope.go](../internal/sender/usecase/async_envelope.go)) ставит
+  `RootMethod: RootMethodRequestAsync` для всего, что пришло через Kafka. Последствия: по `type` не
+  отличить сообщения из RabbitMQ от HTTP-async (обход — колонка IP `rabbitmq://…`); фильтр повтора
+  из логов (`ClassifyReplayCandidate`, правило «pull-запись — не async-путь») RabbitMQ-записи не
+  отсекает. Отдельное ТЗ: брать тип из узла/конверта, решить судьбу старых записей (фильтры и отчёты
+  по `type`), проверить повтор из логов RabbitMQ-узла end-to-end.
+
 - **Мажорные версии npm `web-ui` — отдельное ТЗ** (вынесено из §116.3). React 18 → 19,
   react-router 6 → 7, Tailwind 3 → 4 (конфиг в CSS), Vite 5 → 8, Vitest 1 → 5, TypeScript 5.9 → 7,
   i18next 23 → 27 (+ react-i18next, languagedetector), ESLint 9 → 10 (+ плагины react-hooks 7 с
@@ -8048,7 +8057,8 @@ Handoff по §117 — [handoffs/handoff-20261124-131555.md](../handoffs/handoff
   HTTP ставит их обходом карты (`Header.Set` канонизирует ключ), порядок обхода случаен: ключ
   `x-nexus-id` через раз перебивал бы значение шины.
 - **ID, негодный для заголовка, не ставится (найдено ревизией перед 1.42.0).** У RabbitMQAsync ID —
-  AMQP `message_id` издателя: управляющий символ (``, `
+  AMQP `message_id` издателя: управляющий символ (`
+`, `
 `, ` `) заставил бы `net/http`
   отвергать каждую попытку ещё до отправки — сообщение уходило бы в DLQ вместо доставки, хотя до
   §118 доставлялось. Проверка — `httpguts.ValidHeaderFieldValue` (та же, что в `net/http`); заголовок
