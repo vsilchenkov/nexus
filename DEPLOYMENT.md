@@ -3463,7 +3463,8 @@ cp scripts/release/release_notes_template.md desc_1.0.0.md
 #    сверху — секция CHANGELOG [1.0.0] (Added/Fixed/Changed + строка «Откат»);
 #    в шаблоне подставить версии, заполнить «Особое в этом релизе» либо убрать раздел.
 
-# 2. Создать релиз (GITLAB_TOKEN — personal access token с правом api; gitlab.vozovoz.ru).
+# 2. Создать релиз. Токен — PAT с правом api (gitlab.vozovoz.ru): GITLAB_TOKEN, иначе
+#    пароль хоста из хранилища учёток git, которым идёт push (--check покажет «передан»).
 python scripts/release/create_release.py v1.0.0 "v1.0.0" desc_1.0.0.md
 ```
 

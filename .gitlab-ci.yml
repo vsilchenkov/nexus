@@ -442,7 +442,8 @@ integration:
 # сервиса loadtest — docker присвоит `<project>-loadtest-run`.
 #
 # Required CI/CD Variables (Settings → CI/CD → Variables):
-#   - LOADTEST_ADMIN_PASSWORD — пароль admin'а (masked + protected). Задаём
+#   - LOADTEST_ADMIN_PASSWORD — пароль admin'а (masked; protected — только при
+#     защищённых тегах v*, иначе на теге пусто — TESTING.md, чек-лист). Задаём
 #     им же admin'у в свежей БД через `web --set-admin-password`, и им же
 #     loadtest логинится в Web.
 #
@@ -533,7 +534,7 @@ loadtest:
     - apk add --no-cache docker-cli-compose openssl jq
     - |
       if [ -z "$LOADTEST_ADMIN_PASSWORD" ]; then
-        echo "LOADTEST_ADMIN_PASSWORD не задан в CI/CD Variables (masked+protected)" >&2
+        echo "LOADTEST_ADMIN_PASSWORD не задан в CI/CD Variables (или protected при незащищённом теге — TESTING.md)" >&2
         exit 1
       fi
     # .env для compose-стека. Хосты — compose-имена сервисов; ENCRYPTION_KEY

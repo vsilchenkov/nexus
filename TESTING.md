@@ -310,7 +310,7 @@ RPS из-за загрузки runner-host'а. Полный capacity-bench (§10
 
 | Переменная                | Обяз. | Default | Назначение                                                                    |
 |---------------------------|-------|---------|-------------------------------------------------------------------------------|
-| `LOADTEST_ADMIN_PASSWORD` | да    | —       | пароль admin'а (masked + protected). Падает в `before_script:` если не задана |
+| `LOADTEST_ADMIN_PASSWORD` | да    | —       | пароль admin'а (masked; protected — см. чек-лист). Падает в `before_script:` если не задана |
 | `LOADTEST_TARGET_RPS`     | нет   | `300`   | целевой RPS (CI smoke-mode — см. ниже)                                        |
 | `LOADTEST_DURATION`       | нет   | `2m`    | длительность нагрузки (формат `time.Duration`)                                |
 | `LOADTEST_NODES`          | нет   | `50`    | число узлов, которые loadtest создаст через Web API                           |
@@ -344,8 +344,13 @@ pipeline'е (push в любую ветку) job `loadtest` создаётся к
 #### Pre-flight checklist для `loadtest-only`
 
 - `LOADTEST_ADMIN_PASSWORD` задан в Settings → CI/CD → Variables (Type: Variable,
-  Flags: Masked + Protected, Environment scope: `*`). Без него job упадёт в
-  `before_script:` с понятным сообщением.
+  Flags: Masked, Environment scope: `*`). Без него job упадёт в `before_script:` с
+  понятным сообщением. **Protected — только если теги `v*` защищены** (Settings →
+  Repository → Protected tags): protected-переменная видна лишь на защищённых ветках и
+  тегах, и на незащищённом теге job упадёт так же, как без переменной. На
+  gitlab.vozovoz.ru теги не защищены, поэтому переменная заведена без Protected
+  (28.11.2026; после переезда 21.10 её в проекте не было — так упал loadtest тега v1.42.0).
+  Значение — любой случайный пароль: это admin одноразового стека, не боевой секрет.
 - Runner `srv-d-android-l-docker` имеет доступ к docker daemon (через
   смонтированный `docker.sock` либо DinD service + privileged).
 - На runner'е нет других нагрузочных сценариев в это же время — хотя

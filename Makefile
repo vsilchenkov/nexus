@@ -46,6 +46,14 @@ ifeq ($(OS),Windows_NT)
     ifneq ($(wildcard C:/msys64/mingw64/bin/gcc.exe),)
         export PATH := C:\msys64\mingw64\bin;$(PATH)
     endif
+    # testcontainers v0.45 узнаёт Docker Desktop по строгому равенству
+    # OperatingSystem == "Docker Desktop", а Docker Desktop 29.x отвечает
+    # "Docker Desktop (containerized)". Проверка промахивается, и в Ryuk
+    # монтируется Windows-пайп //./pipe/docker_engine: контейнер умирает сразу
+    # после старта, и каждый integration-тест падает на «reaper: ...
+    # unexpected container status "removing"». Подставляем тот путь, который
+    # библиотека выбрала бы сама, узнав Docker Desktop. На Linux (CI) не нужно.
+    export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE ?= //var/run/docker.sock
 else
     GOEXE :=
     RM    := rm -f
