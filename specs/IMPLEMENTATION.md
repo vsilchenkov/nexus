@@ -3469,6 +3469,13 @@ vitest во фронте (было 3 теста без CI-запуска → +2 
   историю топика — для DLQ это повтор всех недоставленных за срок хранения. Комментарии конфигов и
   §8 с 1.42.0 говорят правду. Решить: применять ключ (`LastOffset` при `latest`) или удалить его.
 
+- **Полный ответ tail-poll журнала обрывает подгрузку по скроллу (найдено разбором CI 1.42.0,
+  4.104).** Когда за тик хвоста появилось ≥ `pageSize` записей, LogsTab зовёт `invalidateQueries`,
+  а его refetch с `cancelRefetch: true` отменяет идущий `fetchNextPage`: если пользователь начал
+  листать вниз в этот момент, список перечитывается с первой страницы, и листать приходится снова.
+  Случай редкий (нужен шквал записей ровно в момент скролла) и безвредный — данные не теряются.
+  Решить: не инвалидировать, пока `isFetchingNextPage`, или отложить перечитку до возврата к верху.
+
 - **Мажорные версии npm `web-ui` — отдельное ТЗ** (вынесено из §116.3). React 18 → 19,
   react-router 6 → 7, Tailwind 3 → 4 (конфиг в CSS), Vite 5 → 8, Vitest 1 → 5, TypeScript 5.9 → 7,
   i18next 23 → 27 (+ react-i18next, languagedetector), ESLint 9 → 10 (+ плагины react-hooks 7 с
@@ -8069,9 +8076,7 @@ Handoff по §117 — [handoffs/handoff-20261124-131555.md](../handoffs/handoff
   HTTP ставит их обходом карты (`Header.Set` канонизирует ключ), порядок обхода случаен: ключ
   `x-nexus-id` через раз перебивал бы значение шины.
 - **ID, негодный для заголовка, не ставится (найдено ревизией перед 1.42.0).** У RabbitMQAsync ID —
-  AMQP `message_id` издателя: управляющий символ (`
-`, `
-`, ` `) заставил бы `net/http`
+  AMQP `message_id` издателя: управляющий символ (`\r`, `\n`, `\0`) заставил бы `net/http`
   отвергать каждую попытку ещё до отправки — сообщение уходило бы в DLQ вместо доставки, хотя до
   §118 доставлялось. Проверка — `httpguts.ValidHeaderFieldValue` (та же, что в `net/http`); заголовок
   клиента при этом всё равно удаляется. Тест со стабом HTTP-клиента — регрессия на значение, а не на
@@ -8094,3 +8099,62 @@ Handoff по §117 — [handoffs/handoff-20261124-131555.md](../handoffs/handoff
 | §118 ревизия перед сдачей | ✅ Phase 118.4 | Границы §118.9 дополнены: `X-Nexus-Id` уходит и сторонним API (случайный UUID, отключения нет); мягкая остановка опирается на порядок runner'а (чтение отменяется до `App.Stop`). Обходных путей остановки нет: скрипты деплоя не задают свой `-t` для сервисов приложения |
 
 Handoff по §118 — [handoffs/handoff-20261124-133959.md](../handoffs/handoff-20261124-133959.md).
+
+### 4.104 Выпуск 1.42.1 — пайплайн тега v1.42.0: зависший `Stop`, нестабильный тест журнала
+
+Пайплайн тега v1.42.0 (GitLab 5691) упал; на бой 1.42.0 не выкатывался — вместо него 1.42.1.
+Миграций нет, поведение сервисов не меняется.
+
+| Что упало | Причина | Исправление |
+|---|---|---|
+| `integration` — `panic: test timed out after 45m0s`, висел `TestSender_PausedGate_StatusRoundTripTriggersRound` (13–19 мин) во **всех трёх** пайплайнах после слияния §118: 5655 (`dev`), 5691 (тег), 5693 (`dev`). До §118 (5587) job проходил за 29 мин | Регрессия §118.8, см. ниже | `PausedSweeper.Stop` и `DLQReprocessor.Stop` сначала `deliveries.Abort()`, потом закрывают reader ([paused_sweeper.go](../internal/sender/adapter/in/kafka/paused_sweeper.go), [dlq_reprocessor.go](../internal/sender/adapter/in/kafka/dlq_reprocessor.go)); `Shutdown` зовёт `Stop` без отдельного `Abort`. Регрессия `Test{PausedSweeper,DLQReprocessor}_Stop_AbortsInFlightDelivery` ([drain_test.go](../internal/sender/adapter/in/kafka/drain_test.go)) — красная на старом коде (Run не выходит 10 с) |
+| `ui-build` — `LogsTab.virtual.test.tsx`: `expected 50 to be 100` (5529, 5693; тег прошёл) | Мок отвечал полной страницей и на tail-poll, см. ниже | Мок отдаёт tail-poll'у (запрос с `from`) пустой список ([LogsTab.virtual.test.tsx](../web-ui/src/components/node/LogsTab.virtual.test.tsx)) |
+| `loadtest` (allow_failure) — `LOADTEST_ADMIN_PASSWORD не задан` за 22 с | После переезда GitLab (21.10.2026) в проекте нет ни одной CI/CD-переменной; теги `v*` не защищены | Переменная заведена 28.11.2026: masked, **без** protected (protected на незащищённом теге пуста). [TESTING.md](../TESTING.md) — чек-лист loadtest |
+
+**Неочевидности:**
+
+- **Commit в закрытый reader kafka-go может не вернуться никогда.** `CommitMessages` сначала
+  выбирает между `r.commits <- req` (канал буферизован, `QueueCapacity`) и `<-r.stctx.Done()`
+  («reader закрыт») — при закрытом reader'е готовы оба, и выбор случаен. Запрос, легший в буфер,
+  обслуживать некому: commit-loop вышел вместе с поколением при `Close`. Синхронный commit затем
+  ждёт ответа до отмены своего ctx. До §118.8 это был ctx Run — его отменяли перед `Stop`, и commit
+  возвращался. С §118.8 commit идёт на контексте доставки, который отменяет только `Abort`, а
+  голый `Stop()` у sweeper'а паузы и DLQ-репроцессора его не звал. **Правило: любой путь,
+  закрывающий reader при живом контексте доставки, сначала делает `Abort`** — так уже был устроен
+  `ConsumerGroup.Stop`. Бой не затронут: `App.Stop` → `Shutdown` → (дренаж) → `Abort` → `Stop`.
+  Висел только тестовый порядок `cancel(); sw.Stop(); <-done`, и чаще всего в
+  `StatusRoundTripTriggersRound`: там `stop()` попадает ровно на раунд с доставкой в полёте.
+- **Почему юнит-тесты §118 это пропустили.** Тестовый `drainReader` на commit после `Close`
+  сразу возвращал ошибку, а настоящий kafka-go так не делает. Теперь флаг `hangAfterClose`
+  моделирует его: commit ждёт только отмены ctx.
+- **Зависший цикл должен ронять свой тест, а не пакет.** Голое `<-done` в integration-хелперах
+  превратило дефект в `-timeout 45m` на весь пакет: CI показал панику со стеками вместо имени
+  теста и съел 46 мин раннера. Хелперы `startPausedSweeper`/`startGatedPausedSweeper` ждут выход
+  через `awaitLoopStopped` не дольше 30 с ([sender_async_redelivery_test.go](../tests/integration/sender_async_redelivery_test.go)).
+- **Tail-poll журнала и подгрузка по скроллу.** Tail-poll (§77.1) включается сразу после первой
+  страницы (пользователь «у верха»), а полный ответ хвоста журнал считает дырой и зовёт
+  `invalidateQueries` — у react-query это refetch с `cancelRefetch: true`, который **отменяет уже
+  идущий `fetchNextPage`**. Тест скроллит один раз на каждой итерации, и если хвост приходил, пока
+  подгрузка шла, счётчик оставался на 50. Проверено опытом: страницы по 50 мс и хвост через 10 мс
+  дают падение со старым моком в обоих тестах файла (`expected 50 to be 100`, как в CI), с
+  исправленным — 2/2 зелёные; на версиях из lock (react-query 5.108.4) — 3 прогона из 3. В продукте тот
+  же порядок возможен, когда за один тик хвоста появилось ≥ `pageSize` записей, а пользователь в
+  этот момент начал листать вниз: список перечитается с первой страницы, листать придётся ещё раз.
+  Это редкий и безвредный случай, исправление не делалось — оно в «Куда копать дальше».
+- **Локально: testcontainers не поднимал Ryuk на Docker Desktop 29.x.** testcontainers v0.45
+  узнаёт Docker Desktop по `OperatingSystem == "Docker Desktop"`, а 29.x отвечает
+  `Docker Desktop (containerized)`. Проверка промахивается, в Ryuk монтируется пайп
+  `//./pipe/docker_engine`, и каждый integration-тест падает на `reaper: … unexpected container
+  status "removing"`. На Windows [Makefile](../Makefile) задаёт
+  `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=//var/run/docker.sock`
+  ([DEVELOPMENT.md](../DEVELOPMENT.md) §7). CI (Linux) не затронут.
+- **Vitest и регистр буквы диска.** Из каталога `e:\…` Vitest пишет «No test suite found» на
+  файлы, где тесты есть: корень у него `e:/…`, путь файла — `E:/…`. Запускать из `E:\…`.
+- **Локальные `node_modules` отставали от lock.** Их ставили 07.10, а §116.3 (23.11) обновил
+  `package-lock.json`: react-query 5.100 вместо 5.108, react-virtual 3.14.10 вместо 3.14.28, ещё
+  ~170 пакетов. Фронтовые гейты молча шли на других версиях, чем в CI (`npm ci`). Признак —
+  `npm run build` даёт не тот `index-<hash>.js`, что закоммичен в `internal/web/static`, при
+  неизменных исходниках. После `npm ci` хеш совпал, гейты перепрогнаны (DEVELOPMENT.md §7).
+- **Управляющие байты в этом файле.** Ревизия перед 1.42.0 записала в 4.103 настоящие `\n` и NUL
+  вместо экранированных «`\r`, `\n`, `\0`»: из-за NUL git считал IMPLEMENTATION.md бинарным, и его
+  `diff` не читался. Исправлено; проверка — `grep -c -a -P "\x00" specs/IMPLEMENTATION.md` → 0.

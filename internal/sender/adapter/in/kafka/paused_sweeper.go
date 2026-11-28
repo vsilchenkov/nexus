@@ -252,12 +252,18 @@ func (s *PausedSweeper) Shutdown(ctx context.Context, runDone <-chan struct{}) {
 		_ = waitDone(graceCtx, runDone)
 		cancel()
 	}
-	s.deliveries.Abort()
 	s.Stop()
 }
 
-// Stop закрывает reader sweeper'а (без дренажа — штатный путь Shutdown).
+// Stop — остановка без дренажа (тесты, аварийный путь; штатный — Shutdown):
+// обрывает доставку в полёте и закрывает reader.
+//
+// Обрыв обязателен и идёт ПЕРВЫМ. Доставка и commit идут на контексте доставки
+// (§118.8), который отмена контекста Run не трогает, а commit в уже закрытый
+// reader kafka-go может ждать ответа вечно — пока не отменят его ctx. Без
+// обрыва Run висел бы в Commit, а с ним и тот, кто ждёт выхода Run.
 func (s *PausedSweeper) Stop() {
+	s.deliveries.Abort()
 	if s.consumer != nil {
 		_ = s.consumer.Close()
 	}

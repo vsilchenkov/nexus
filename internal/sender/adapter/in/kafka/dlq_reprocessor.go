@@ -222,12 +222,15 @@ func (r *DLQReprocessor) Shutdown(ctx context.Context, runDone <-chan struct{}) 
 		_ = waitDone(graceCtx, runDone)
 		cancel()
 	}
-	r.deliveries.Abort()
 	r.Stop()
 }
 
-// Stop закрывает reader DLQ-sweeper'а (без дренажа — штатный путь Shutdown).
+// Stop — остановка без дренажа (тесты, аварийный путь; штатный — Shutdown):
+// обрывает доставку в полёте и закрывает reader. Обрыв идёт ПЕРВЫМ по той же
+// причине, что у PausedSweeper.Stop: commit на контексте доставки в закрытый
+// reader kafka-go может не вернуться никогда.
 func (r *DLQReprocessor) Stop() {
+	r.deliveries.Abort()
 	if r.consumer != nil {
 		_ = r.consumer.Close()
 	}

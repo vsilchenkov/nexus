@@ -5,23 +5,25 @@
 проекта определяются по git-remote (по умолчанию `origin`), поэтому скрипт не
 привязан к адресу GitLab — переезд сервера меняет только remote. Токен —
 personal access token с правом `api` — берётся из переменной окружения
-`GITLAB_TOKEN` и никуда не записывается; для совместимости со старыми клонами
-подходит и токен, встроенный в URL remote (`oauth2:<token>@`). Deploy-токен
-(`gldt-…`, логин nexus-deploy) для API НЕ годится — им только `git fetch`.
+`GITLAB_TOKEN`; без неё — токен, встроенный в URL remote (`oauth2:<token>@`,
+старые клоны), иначе пароль хоста из хранилища учёток git — тот PAT, которым
+идёт push (как в routix). Токен никуда не записывается и не печатается.
+Deploy-токен (`gldt-…`, логин nexus-deploy) для API НЕ годится — им только
+`git fetch`.
 
 Тег должен уже существовать в GitLab (быть запушен). Тело релиза — markdown-файл
 (секция CHANGELOG + блок обновления/отката по `release_notes_template.md`);
 относительные ссылки GitLab резолвит сам, переписывать их не нужно.
 
-Usage:
-    GITLAB_TOKEN=... python scripts/release/create_release.py v1.41.1 "v1.41.1" desc_1411.md
+Usage (GITLAB_TOKEN=... перед командой — только если учётки нет в хранилище git):
+    python scripts/release/create_release.py v1.41.1 "v1.41.1" desc_1411.md
 
     # проверить доступ и увидеть, что получится, ничего не создавая:
-    GITLAB_TOKEN=... python scripts/release/create_release.py --check
+    python scripts/release/create_release.py --check
     python scripts/release/create_release.py v1.41.1 "…" desc_1411.md --dry-run
 
     # поправить описание уже опубликованного релиза:
-    GITLAB_TOKEN=... python scripts/release/create_release.py v1.41.1 "…" desc_1411.md --update
+    python scripts/release/create_release.py v1.41.1 "…" desc_1411.md --update
 """
 import argparse
 import io
@@ -53,13 +55,34 @@ def project_from_url(url: str) -> tuple[str, str]:
     sys.exit("не удалось разобрать gitlab-проект из remote: %s" % url)
 
 
-def token_from(url: str) -> str:
-    """GITLAB_TOKEN из окружения, иначе oauth2-токен, встроенный в URL remote."""
+def token_from(url: str, base: str) -> str:
+    """GITLAB_TOKEN из окружения, иначе oauth2-токен, встроенный в URL remote,
+    иначе пароль хоста GitLab из хранилища учёток git."""
     env = os.environ.get("GITLAB_TOKEN", "")
     if env:
         return env
     m = re.search(r"oauth2:([^@]+)@", url)
-    return m.group(1) if m else ""
+    if m:
+        return m.group(1)
+    return token_from_credential_store(base)
+
+
+def token_from_credential_store(base: str) -> str:
+    """Пароль хоста GitLab из хранилища учёток git — тот PAT, которым идёт push
+    (так же устроено в routix). Пустая строка, если учётки нет; ничего не
+    спрашивает: интерактивный ввод выключен."""
+    host = urllib.parse.urlsplit(base).hostname or ""
+    filled = subprocess.run(
+        ["git", "credential", "fill"],
+        # Байты, а не text=True: на Windows текстовый режим шлёт \r\n, и git
+        # молча не разбирает запрос.
+        input=f"protocol=https\nhost={host}\n\n".encode(),
+        capture_output=True,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"},
+        check=False,
+    ).stdout.decode()
+    fields = dict(line.split("=", 1) for line in filled.splitlines() if "=" in line)
+    return fields.get("password", "")
 
 
 def api(base: str, method: str, path: str, token: str, payload: dict | None = None) -> dict:
@@ -92,7 +115,7 @@ def main() -> None:
 
     url = remote_url(args.remote)
     base, project = project_from_url(url)
-    token = token_from(url)
+    token = token_from(url, base)
     enc = urllib.parse.quote(project, safe="")
 
     if args.check:
@@ -108,7 +131,8 @@ def main() -> None:
     if not (args.tag and args.name and args.descfile):
         p.error("нужны tag, name и descfile (или --check)")
     if not token and not args.dry_run:
-        sys.exit("нет GITLAB_TOKEN в окружении и токена в URL remote — без него релиз не создать")
+        sys.exit("нет токена: ни GITLAB_TOKEN, ни токена в URL remote, ни учётки GitLab "
+                 "в хранилище git — без него релиз не создать")
 
     body = io.open(args.descfile, encoding="utf-8").read()
     if args.dry_run:

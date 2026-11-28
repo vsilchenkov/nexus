@@ -564,6 +564,23 @@ go run ./cmd/web --debug --set-admin-password admin
   (`GO_TEST_FLAGS` в шапке Makefile) — обычный exe эвристику не задевает. Настоящее лечение —
   исключение в политике KES (каталог `%LOCALAPPDATA%\Temp\go-build*` либо доверенное приложение
   `go.exe`); флаг нужен потому, что прав на политику у разработчика обычно нет.
+- **Integration-тесты падают на `reaper: … unexpected container status "removing"`** — Docker
+  Desktop 29.x сообщает о себе `Docker Desktop (containerized)`, а testcontainers v0.45 узнаёт его
+  только по точному `Docker Desktop`: в контейнер-уборщик Ryuk монтируется Windows-пайп вместо
+  `//var/run/docker.sock`, и он умирает сразу после старта. `make`-цели на Windows задают
+  `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=//var/run/docker.sock` сами (шапка [Makefile](./Makefile));
+  при запуске `go test -tags=integration` руками задайте её в окружении. Из Git Bash — вместе с
+  `MSYS2_ENV_CONV_EXCL=TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`, иначе MSYS перепишет значение как
+  путь. CI (Linux-раннер) это не затрагивает.
+- **Vitest: «No test suite found in file …»** у файла, в котором тесты точно есть, — буква диска
+  в рабочем каталоге строчная (`e:\…`): корень проекта Vitest берёт из каталога (`e:/…`), а путь
+  файла — с заглавной (`E:/…`), и модуль теста не сопоставляется. Запускайте из `E:\…`
+  (`cd E:/git_rep/_go/nexus/web-ui`). `npm run lint/build` это не задевает.
+- **`npm run build` при неизменных исходниках даёт не тот `index-<hash>.js`, что в
+  `internal/web/static`** — локальные `node_modules` отстали от `package-lock.json` (его меняют
+  обновления зависимостей, а `git pull` их не переустанавливает). Тогда и lint/vitest идут не на
+  тех версиях, что в CI. Лечение — `cd web-ui && npm ci` после каждого pull, изменившего lock;
+  сборка затем воспроизводит закоммиченный хеш байт в байт.
 - **delve: «could not load source» для `embed.FS`** — не критично, на отладку не влияет
   (см. [.vscode/settings.json](./.vscode/settings.json)).
 - **Web не стартует: «database already exists on first run of this instance» (§70).** Сработал гейт

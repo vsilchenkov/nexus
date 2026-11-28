@@ -52,7 +52,15 @@ function row(i: number): LogRow {
 
 function mockServer() {
   pages = 0;
-  apiGet.mockImplementation((url: string) => {
+  apiGet.mockImplementation((url: string, params?: Record<string, unknown>) => {
+    // Tail-poll (§77.1, запрос с `from`) включается, как только пришла первая
+    // страница, — новых записей нет. Отдай мок ему полную страницу, LogsTab
+    // счёл бы это дырой и перечитал список с первой страницы, оборвав
+    // подгрузку, которую начал скролл теста: счётчик замирал на 50 — в CI так
+    // падали 2 ui-build из 4.
+    if (url === "/api/nodes/n1/logs" && params?.from !== undefined) {
+      return Promise.resolve({ items: [], logs_available: true });
+    }
     if (url === "/api/nodes/n1/logs") {
       const page = Array.from({ length: PAGE_SIZE }, (_, i) => row(pages * PAGE_SIZE + i));
       pages++;

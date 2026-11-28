@@ -22,7 +22,7 @@ import (
 
 // startGatedPausedSweeper — sweeper очереди паузы с планировщиком (§113.3), как
 // в проде (sender/app.go). signal может быть nil (без Redis).
-func (s *asyncStack) startGatedPausedSweeper(ctx context.Context, interval time.Duration, signal senderuc.PausedSweepSignaler) func() {
+func (s *asyncStack) startGatedPausedSweeper(t *testing.T, ctx context.Context, interval time.Duration, signal senderuc.PausedSweepSignaler) func() {
 	proc := s.newProcessor(senderuc.WithPausedRequeue(s.cfg.Kafka.PausedTopic))
 	offsets := kafkaoffsets.NewPausedTopic(kafkapf.NewOffsetsForBrokers(s.cfg.Kafka.Brokers, 10*time.Second),
 		s.cfg.Kafka.PausedGroup(), s.cfg.Kafka.PausedTopic)
@@ -39,7 +39,7 @@ func (s *asyncStack) startGatedPausedSweeper(ctx context.Context, interval time.
 	return func() {
 		cancel()
 		sw.Stop()
-		<-done
+		awaitLoopStopped(t, done, "gated paused sweeper")
 	}
 }
 
@@ -194,12 +194,12 @@ func TestSender_PausedGate_IdleQueueNotRewritten(t *testing.T) {
 	stack, rec, _ := setupGateStack(t, ctx, "nexus-sender-gate-idle-it", 2, paused, backlog)
 	probe := newPausedTopicProbe(stack)
 
-	stop := stack.startGatedPausedSweeper(ctx, time.Second, nil)
+	stop := stack.startGatedPausedSweeper(t, ctx, time.Second, nil)
 	quiet := probe.waitQuiet(t, ctx, 4*time.Second, 60*time.Second)
 	probe.requireStable(t, ctx, quiet, 10*time.Second)
 	stop()
 
-	stop = stack.startGatedPausedSweeper(ctx, time.Second, nil)
+	stop = stack.startGatedPausedSweeper(t, ctx, time.Second, nil)
 	defer stop()
 	pollUntil(t, 30*time.Second, func() bool { return probe.hwm(t, ctx) > quiet },
 		"после рестарта — стартовый раунд")
@@ -232,7 +232,7 @@ func TestSender_PausedGate_StatusRoundTripTriggersRound(t *testing.T) {
 	stack, rec, _ := setupGateStack(t, ctx, "nexus-sender-gate-roundtrip-it", 1, []string{"gate/rt"}, 3)
 	probe := newPausedTopicProbe(stack)
 
-	stop := stack.startGatedPausedSweeper(ctx, 3*time.Second, nil)
+	stop := stack.startGatedPausedSweeper(t, ctx, 3*time.Second, nil)
 	defer stop()
 	quiet := probe.waitQuiet(t, ctx, 8*time.Second, 90*time.Second)
 
@@ -262,7 +262,7 @@ func TestSender_PausedGate_CancelSignalDropsQueue(t *testing.T) {
 	stack.cancel = cancelSet
 	probe := newPausedTopicProbe(stack)
 
-	stop := stack.startGatedPausedSweeper(ctx, time.Second, cancelSet)
+	stop := stack.startGatedPausedSweeper(t, ctx, time.Second, cancelSet)
 	defer stop()
 	quiet := probe.waitQuiet(t, ctx, 4*time.Second, 60*time.Second)
 	require.Equal(t, int64(backlog), probe.lag(t, ctx), "живые копии очереди — за committed группы")
