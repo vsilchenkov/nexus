@@ -122,7 +122,7 @@ func TestAsyncQueue_PausedBacklog_E2E(t *testing.T) {
 
 	// 5. Отменённые не доставляются даже после снятия паузы: sweeper их дропает.
 	setNodeStatus(t, ctx, pool, "demo/qpaused", domain.NodeStatusEnabled)
-	stopSweep := stack.startPausedSweeper(ctx, time.Second)
+	stopSweep := stack.startPausedSweeper(t, ctx, time.Second)
 	defer stopSweep()
 
 	time.Sleep(10 * time.Second)

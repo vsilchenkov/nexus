@@ -30,6 +30,10 @@ type drainReader struct {
 	committed   []int64
 	closed      bool
 	commitAfter bool // commit пришёл после Close — commit через закрытый reader
+	// hangAfterClose — commit после Close ждёт только отмены ctx, как у
+	// kafka-go: CommitMessages выбирает между буфером запросов и «reader
+	// закрыт» случайно, и запрос, легший в буфер, никто уже не обслужит.
+	hangAfterClose bool
 }
 
 func (r *drainReader) FetchMessage(ctx context.Context) (kafka.Message, error) {
@@ -50,11 +54,17 @@ func (r *drainReader) Commit(ctx context.Context, msg kafka.Message) error {
 		return err
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed {
 		r.commitAfter = true
+		hang := r.hangAfterClose
+		r.mu.Unlock()
+		if hang {
+			<-ctx.Done()
+			return ctx.Err()
+		}
 		return errors.New("reader closed")
 	}
+	defer r.mu.Unlock()
 	r.committed = append(r.committed, msg.Offset)
 	return nil
 }
@@ -264,6 +274,54 @@ func TestPausedSweeper_Shutdown_DrainsInFlightDelivery(t *testing.T) {
 	assert.False(t, d.cancelled())
 	assert.Equal(t, []int64{5}, committed)
 	assert.False(t, afterClose)
+}
+
+// stopMidDelivery — сценарий integration-хелперов (§118.8): доставка в полёте,
+// контекст Run отменён, Stop закрыл reader, и только ПОСЛЕ этого получатель
+// ответил. Возвращает канал выхода Run.
+func stopMidDelivery(t *testing.T, run func(context.Context), stop func(), d *gatedDelivery) <-chan struct{} {
+	t.Helper()
+	appCtx, cancelApp := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		run(appCtx)
+	}()
+	d.waitStarted(t)
+	cancelApp()
+	stop()
+	close(d.release)
+	return runDone
+}
+
+// TestPausedSweeper_Stop_AbortsInFlightDelivery — регрессия CI выпуска 1.42.0
+// (TestSender_PausedGate_StatusRoundTripTriggersRound висел, пока не истёк
+// -timeout 45m): Stop закрывал reader, но доставку на контексте доставки не
+// обрывал, и её commit уходил в закрытый reader навсегда. Красный на коде до
+// исправления: Run не выходит.
+func TestPausedSweeper_Stop_AbortsInFlightDelivery(t *testing.T) {
+	t.Parallel()
+
+	reader := &drainReader{msgs: []kafka.Message{{Offset: 5, Value: []byte(`{}`)}}, hangAfterClose: true}
+	d := newGatedDelivery()
+	s := newTestSweeper(reader, d, 10)
+
+	waitClosed(t, stopMidDelivery(t, s.Run, s.Stop, d), "Run после Stop")
+	committed, _ := reader.snapshot()
+	assert.Empty(t, committed, "оборванная доставка не коммитится — перечитается после старта")
+}
+
+// TestDLQReprocessor_Stop_AbortsInFlightDelivery: то же для DLQ-репроцессора.
+func TestDLQReprocessor_Stop_AbortsInFlightDelivery(t *testing.T) {
+	t.Parallel()
+
+	reader := &drainReader{msgs: []kafka.Message{{Offset: 3, Value: []byte(`{}`)}}, hangAfterClose: true}
+	d := newGatedDelivery()
+	r := newTestDLQReprocessor(reader, d)
+
+	waitClosed(t, stopMidDelivery(t, r.Run, r.Stop, d), "Run после Stop")
+	committed, _ := reader.snapshot()
+	assert.Empty(t, committed, "оборванная доставка не коммитится — перечитается после старта")
 }
 
 // TestDeliveryScope_AbortBeforeBegin: остановленный компонент не доставляет —

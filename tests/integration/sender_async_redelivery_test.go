@@ -99,10 +99,10 @@ type asyncHandler interface {
 // startPausedSweeper поднимает sweeper delay-топика (§3.6) с коротким
 // интервалом. Возвращает функцию остановки; повторный вызов = рестарт sweeper'а.
 //
-// Run завершается по отмене контекста (Stop лишь закрывает reader — так же
-// устроен DLQ-репроцессор, и в проде ctx отменяет runner при shutdown), поэтому
-// здесь заводим собственный производный ctx.
-func (s *asyncStack) startPausedSweeper(ctx context.Context, interval time.Duration) func() {
+// Run завершается по отмене контекста (Stop обрывает доставку в полёте и
+// закрывает reader — так же устроен DLQ-репроцессор, и в проде ctx отменяет
+// runner при shutdown), поэтому здесь заводим собственный производный ctx.
+func (s *asyncStack) startPausedSweeper(t *testing.T, ctx context.Context, interval time.Duration) func() {
 	proc := s.newProcessor(senderuc.WithPausedRequeue(s.cfg.Kafka.PausedTopic))
 	sw := kafkaadapter.NewPausedSweeper(s.cfg, proc, interval, 100, nil, s.logger)
 	sctx, cancel := context.WithCancel(ctx)
@@ -114,7 +114,24 @@ func (s *asyncStack) startPausedSweeper(ctx context.Context, interval time.Durat
 	return func() {
 		cancel()
 		sw.Stop()
-		<-done
+		awaitLoopStopped(t, done, "paused sweeper")
+	}
+}
+
+// loopStopCeiling — сколько ждать выхода цикла после Stop. Штатно он выходит
+// за доли секунды; дольше — значит висит.
+const loopStopCeiling = 30 * time.Second
+
+// awaitLoopStopped ждёт выхода цикла после Stop, но не дольше
+// loopStopCeiling. Зависший Run обязан ронять свой тест сразу: голое `<-done`
+// в выпуске 1.42.0 (commit в закрытый reader, §118.8) повесило весь пакет до
+// -timeout 45m, и CI показал таймаут вместо имени виновника.
+func awaitLoopStopped(t *testing.T, done <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(loopStopCeiling):
+		t.Fatalf("%s: Run не завершился за %s после Stop", what, loopStopCeiling)
 	}
 }
 
@@ -344,7 +361,7 @@ func TestSender_Async_PausedDoesNotBlockNeighbor(t *testing.T) {
 
 	stop := stack.startConsumer(ctx, stack.pausedRequeueOpt())
 	defer stop()
-	stopSweep := stack.startPausedSweeper(ctx, time.Second)
+	stopSweep := stack.startPausedSweeper(t, ctx, time.Second)
 	defer stopSweep()
 
 	stack.warmupConsumer(t, ctx, rec, "demo/warmup", mock.URL+"/warmup", "/warmup")
@@ -384,7 +401,7 @@ func TestSender_Async_PausedBacklogDeliveredAfterUnpause(t *testing.T) {
 
 	stop := stack.startConsumer(ctx, stack.pausedRequeueOpt())
 	defer stop()
-	stopSweep := stack.startPausedSweeper(ctx, time.Second)
+	stopSweep := stack.startPausedSweeper(t, ctx, time.Second)
 	defer stopSweep()
 
 	stack.warmupConsumer(t, ctx, rec, "demo/warmup", mock.URL+"/warmup", "/warmup")
@@ -432,7 +449,7 @@ func TestSender_Async_PausedBacklogSurvivesSweeperRestart(t *testing.T) {
 	}
 
 	// Первый sweeper покрутил бэклог и остановился (рестарт сервиса).
-	stopSweep := stack.startPausedSweeper(ctx, time.Second)
+	stopSweep := stack.startPausedSweeper(t, ctx, time.Second)
 	time.Sleep(5 * time.Second)
 	stopSweep()
 	require.Zero(t, rec.count("/paused"), "на паузе доставки не было")
@@ -440,7 +457,7 @@ func TestSender_Async_PausedBacklogSurvivesSweeperRestart(t *testing.T) {
 	setNodeStatus(t, ctx, pool, "demo/paused", domain.NodeStatusEnabled)
 
 	// Новый sweeper той же группы обязан найти весь бэклог.
-	stopSweep2 := stack.startPausedSweeper(ctx, time.Second)
+	stopSweep2 := stack.startPausedSweeper(t, ctx, time.Second)
 	defer stopSweep2()
 
 	require.Eventually(t, func() bool { return rec.count("/paused") >= backlog },
